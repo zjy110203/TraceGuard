@@ -1,92 +1,95 @@
-# TraceGuard 工程骨架 (M0 + 阶段1 TeamFlow + 阶段2 执行内核)
+# TraceGuard — Agentic Web UI Testing & Quality Intelligence
 
-# 本目录是 v1.1 实施路线「阶段 0 工程初始化」+「阶段 1 TeamFlow 最小被测应用」
-# +「阶段 2 专业 Web UI 自动化测试框架（最小闭环）」的可运行落地。
-# 设计依据：实施线路/TraceGuard-完整项目实施路线图-v1.1.md。
-# 状态：工程默认值已本地验证可运行；P01/P03 等仍为待确认项，见 docs/。
+面向 Web UI 的**智能测试与质量分析平台**：真实 Playwright/Chrome 执行内核 +
+Event/Evidence 证据链 + 多假设诊断 + 证据图 + Oracle 保护的自愈沙箱 +
+UI-FaultBench 评测 + 产品级 Vue3 工作台。
+
+> 设计依据：`docs/design/`（11 篇规格）+ `docs/roadmap/`（十四阶段实施路线）。
+> 当前状态：第四轮（R4）完成，333 项测试全绿。阶段状态与诚实边界见下方"状态纪律"。
+> 完整文档导航见 [`docs/00-DOCUMENTATION-INDEX.md`](docs/00-DOCUMENTATION-INDEX.md)。
 
 ## 快速启动
 
-```bash
-# 1. 创建虚拟环境（本机 python 为 3.13；请用 python -m pip 避免 pip 指向旧版本）
+```powershell
+# 1. 创建虚拟环境并安装依赖
 python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-python -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 
-# 2. 复制环境变量样例（不含真实密钥，密钥不入库）
+# 2. 复制环境变量样例（真实密钥不入库；如需 DeepSeek 真实推理，在 .env 填 DEEPSEEK_API_KEY）
 cp .env.example .env
 
-# 3. 初始化数据库（默认 SQLite，零外部依赖；可切换 PostgreSQL）
-python -m scripts.init_db
-
-# 4. 启动平台主服务
-uvicorn apps.api.main:app --app-dir . --reload --port 8000
-
-# 5. 启动 TeamFlow 被测应用（另一个终端）
-uvicorn apps.teamflow.main:app --app-dir . --reload --port 8001
+# 3. 一键启动平台 API(8000) + TeamFlow(8001) + 前端工作台
+.\.venv\Scripts\python.exe -m scripts.serve
 ```
 
-启动后：
-- 平台服务健康检查：http://127.0.0.1:8000/health
-- TeamFlow 被测应用：http://127.0.0.1:8001/
-- TeamFlow 独立业务状态查询：http://127.0.0.1:8001/api/v1/projects（返回真实持久化状态）
-- Eval 控制面（Ground Truth / 故障注入）：http://127.0.0.1:8001/__eval__/docs
-  （需 `X-Eval-Token` 头，Agent 不得持有，见 docs/架构说明.md）
+打开 **http://127.0.0.1:8000** 进入工作台。健康检查：`/health`（8000 平台 / 8001 TeamFlow）。
 
-## 目录结构（对齐 v1.1 阶段 0 实施任务 1）
+Linux/macOS 将 `.\.venv\Scripts\python.exe` 换成 `.venv/bin/python` 即可。
 
-```
-apps/api          平台主服务：配置、日志、错误处理、健康检查骨架
-apps/teamflow     被测应用：项目创建/列表/详情 + 故障注入 + 独立状态查询
-apps/web          Vue3 + TS 前端骨架（阶段 0 占位）
-apps/workers      异步 Worker 骨架（阶段 3 启用，本阶段占位）
-packages/contracts C01～C12 契约 Schema 目录与版本治理
-packages/core     共享配置、结构化日志、统一错误、数据库基座
-packages/execution 确定性执行内核（阶段 2：Verdict/模型/Oracle/Runner）
-packages/agents    Agent 编排（阶段 5 填充，本阶段占位）
-packages/evidence  Event/Evidence（阶段 4 填充，本阶段占位）
-benchmark/        场景元数据与 Ground Truth 定义（阶段 1 起积累）
-tests/            单元与集成测试
-infra/            Docker Compose（PostgreSQL 可选）
-docs/             启动、架构、版本矩阵、待确认事项
-scripts/          初始化与开发工具脚本
-```
+## 核心能力
 
-## 边界纪律（贯穿全部代码）
+| 能力 | 入口 | 说明 |
+|---|---|---|
+| 真实 UI 执行 | `packages/execution/` | 真 Chrome + Playwright，Verdict 与 execution_status 分离，Trace/Locator/断言证据 |
+| 契约与审批门禁 | `packages/contracts/`、`apps/api/workbench.py` | C01～C12 Schema；Candidate 必须人工审批才能晋升 |
+| Event → Evidence 链 | `packages/evidence/` | Outbox/ConsumerInbox/缺口检测/内容寻址 Blob，append-only |
+| 智能诊断 | `packages/agents/diagnosis.py` | 八维度、多假设、双侧证据、CONFIRMED/INCONCLUSIVE 严格判定 |
+| 证据图 | `packages/agents/graph.py` | 可信关联、同源独立性、冲突分析、子图查询 |
+| 主动诊断 Planner | `packages/agents/planner.py` | Probe Registry + 审计脱敏 + EIG 评分 + 预算停止 |
+| 自愈沙箱 | `packages/execution/sandbox.py` | 子进程隔离 TeamFlow + 真回放 + Oracle 保护 + 人工审批 + CAS 晋升 |
+| UI-FaultBench | `benchmark/` | GT 隔离 + 分区版本 + 三类评测 + 消融 + DeepSeek 真实 LLM 对照 |
+| URL 安全 | `packages/core/url_guard.py` | SSRF / DNS rebinding / redirect 防护 |
+| 工作台 | `apps/web/` | Vue3 + TS，14 路由，设计系统 token，SSE 实时状态 |
 
-- Agent 输出默认是候选信息，不自动成为可信事实。
-- 业务状态以数据库为权威；独立状态查询 API 直接读库，不依赖 UI 文案。
-- Ground Truth 与故障注入配置只存在于 Eval 控制面，业务面与 Agent 不可读。
-- Verdict 聚合规则已冻结并实现（`packages/execution/verdict.py`）；Oracle 多来源优先级（P03）仍待确认，分歧一律 INCONCLUSIVE，不由 Primary 覆盖。
-- 阶段 2 不建 Celery 分布式调度、不引入 Browser Use、不让 Agent 决定测试结果。
-- 诊断（阶段 7）、Explorer/Compiler（阶段 5/6）、异步平台化（阶段 3）尚未实现。
+## 有一条命令的最小闭环演示
 
-## 看最小闭环跑起来（一条命令，推荐）
-
-无需手动起服务，脚本会自己启动 TeamFlow、用真 Chrome 跑 3 个场景，并在屏幕上打印闭环结果：
+无需手动起服务，脚本自己启动 TeamFlow、用真 Chrome 跑场景并打印闭环结果：
 
 ```powershell
-# PowerShell（Windows 用户）：在 traceguard/ 目录下
 .\.venv\Scripts\python.exe -m scripts.demo
 ```
 
-```bash
-# Git Bash / Linux / macOS
-.venv/Scripts/python.exe -m scripts.demo      # Windows venv
-# 或  python -m scripts.demo                  # 已激活 venv 时
-```
+正常路径 → `PASSED`；UI 撒谎注入 → `PASSED` 但 UI 断言失败被记录；DB 故障 → `FAILED`。
+报告 JSON 落在 `data/runs/`。
 
-> 不需要 `PYTHONPATH=.` —— `python -m` 会自动把当前目录加入模块搜索路径。
-
-你会看到：正常路径 → `PASSED`；UI 撒谎（TF-UI-001）→ `PASSED` 但 UI 断言失败被记录；DB 故障（TF-DB-001）→ `FAILED`。每场景还打印独立的真值、证据数、结论依据和报告路径。报告 JSON 落在 `data/runs/`。
-
-## 阶段 2：手动执行一条用例（最小闭环）
-
-TeamFlow 启动后（见快速启动），无需 Agent 即可用真 Playwright 驱动系统 Chrome 跑一条用例：
+## 测试与质量
 
 ```powershell
-.\.venv\Scripts\python.exe -m scripts.run_case benchmark/cases/TC_E2E_001.json --base-url http://127.0.0.1:8001 --reset
+.\.venv\Scripts\python.exe -m pytest tests/    # 333 passed
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m mypy packages apps benchmark
+cd apps/web; npm run build; npx vue-tsc --noEmit
 ```
 
-运行产物是每个 Run 独立的 JSON 报告（`data/runs/`，含 execution_status / test_verdict 分离、断言结果、证据引用、事件序列）。
-详见 `docs/架构说明与阶段2退出证据.md`。
+- 全量测试：**333 passed**（第四轮最终留档）
+- 真实浏览器 UI 验收：**65/65**（`docs/ui/R4-Frontend-Acceptance.md` + 截图）
+- 安全专项：16 项（`docs/security/R4-Security-Test-Report.md`）
+- `test_s2` 隔离后 50/50（`docs/audit/R4-test-s2-isolation-report.md`）
+- 交付报告：`docs/FINAL/TraceGuard-Fourth-Run-Report.md`
+
+## 状态纪律（不冒充完成）
+
+- 阶段 10/11/13 为 **READY_FOR_REVIEW**，阶段 5 IN_PROGRESS，阶段 12 **BLOCKED**（无外部应用授权）
+- 未批准 GT 映射前，Benchmark 准确率指标输出 `None(BLOCKED)`，不产生假数字
+- LLM 不决定 CONFIRMED / 审批；GT 不暴露给 Agent；INCONCLUSIVE 不计 PASSED
+- DeepSeek 真实推理与 Scripted Policy 严格区分标注；密钥只在本地 `.env`，不入库
+- 30 分钟长稳测试 NOT_RUN（如实标注）
+
+## 目录结构
+
+```
+apps/api          平台主服务（FastAPI）：工作台 API、治理面、Benchmark Facade
+apps/teamflow     被测应用：项目 CRUD + 可控故障注入 + 独立状态查询 + Eval 控制面
+apps/web          Vue3 + TS 产品级工作台（14 路由 + 设计系统）
+apps/workers      异步 Worker 骨架
+packages/contracts C01～C12 契约 Schema 与版本治理
+packages/core      配置、结构化日志、错误、数据库基座、UrlGuard
+packages/execution 执行内核、Oracle、Verdict、RepairSandbox
+packages/agents    Explorer / Compiler / Diagnosis / Graph / Planner / LLM Provider
+packages/evidence  Event / Evidence / Outbox / 内容寻址存储
+benchmark/         Dataset / GT / 三类评测 / 消融 / 持久化
+tests/             333 项单元与集成测试
+infra/             Docker Compose（PostgreSQL 可选）
+docs/              规格设计、调研、每轮交付与验收报告（见文档索引）
+scripts/           serve / demo / run_benchmark / ui_acceptance / verify_llm_provider
+```
