@@ -1,0 +1,47 @@
+{
+  "login.username": [
+    {"strategy": "label", "value": "用户名"},
+    {"strategy": "testid", "value": "username"}
+  ],
+  "login.password": [
+    {"strategy": "testid", "value": "password"}
+  ],
+  "login.submit": [
+    {"strategy": "role", "value": "button", "name": "登录"},
+    {"strategy": "testid", "value": "login-submit"}
+  ],
+  "login.error": [
+    {"strategy": "testid", "value": "login-error"}
+  ],
+  "nav.new_project": [
+    {"strategy": "role", "value": "link", "name": "新建项目"},
+    {"strategy": "testid", "value": "new-project-link"}
+  ],
+  "project.name": [
+    {"strategy": "label", "value": "项目名称"},
+    {"strategy": "testid", "value": "project-name"}
+  ],
+  "project.description": [
+    {"strategy": "label", "value": "描述"},
+    {"strategy": "testid", "value": "project-description"}
+  ],
+  "project.submit": [
+    {"strategy": "role", "value": "button", "name": "创建"},
+    {"strategy": "testid", "value": "create-submit"}
+  ],
+  "project.success": [
+    {"strategy": "testid", "value": "success-message"}
+  ],
+  "project.form_error": [
+    {"strategy": "testid", "value": "form-error"}
+  ],
+  "project.list": [
+    {"strategy": "testid", "value": "project-list"}
+  ],
+  "project.item": [
+    {"strategy": "testid", "value": "project-item"}
+  ],
+  "project.title": [
+    {"strategy": "testid", "value": "project-title"}
+  ]
+}

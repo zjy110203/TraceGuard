@@ -1,0 +1,9 @@
+{
+  "edge_id": "ge_0001",
+  "src": "s1",
+  "dst": "evd_0001",
+  "relation": "direct_causal",
+  "basis_fields": "",
+  "rule_id": "R-EDGE-001",
+  "rule_version": "1.0.0"
+}

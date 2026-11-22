@@ -1,0 +1,15 @@
+{
+  "primary": {
+    "oracle_id": "o-a1-ui",
+    "source_type": "ui",
+    "source_ref": "ui.s10.passed",
+    "expected": "PASSED",
+    "version": "1.0.0",
+    "source": "stage2 manual case library v1 (human approved)",
+    "approved_by": "human",
+    "approved": true,
+    "expected_value": true
+  },
+  "supporting": [],
+  "adjudication_rule": "frozen_fallback_inconclusive_on_conflict"
+}

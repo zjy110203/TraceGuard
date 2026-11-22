@@ -1,0 +1,8 @@
+{
+  "src": "s1",
+  "dst": "evd_0001",
+  "relation": "emitted_by",
+  "basis_fields": "step_id,evidence_id",
+  "rule_id": "R-EDGE-001",
+  "rule_version": "1.0.0"
+}

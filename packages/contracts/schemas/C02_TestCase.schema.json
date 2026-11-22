@@ -1,0 +1,285 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://traceguard.local/contracts/C02/0.2.0-draft",
+  "title": "TestCase",
+  "description": "不可变 TestCaseVersion：append-only，版本号单调递增。",
+  "status": "draft",
+  "$ref": "#/$defs/TestCaseVersion",
+  "$defs": {
+    "TestCaseVersion": {
+      "type": "object",
+      "properties": {
+        "case_id": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "title": {
+          "type": "string"
+        },
+        "intent": {
+          "$ref": "#/$defs/TestIntent"
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TestStep"
+          }
+        },
+        "assertions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AssertionSpec"
+          }
+        },
+        "oracle_bindings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OracleBinding"
+          }
+        },
+        "preconditions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Precondition"
+          }
+        },
+        "postconditions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Postcondition"
+          }
+        },
+        "data_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TestDataRef"
+          }
+        },
+        "cleanup": {
+          "$ref": "#/$defs/CleanupPolicy"
+        },
+        "compiled_from": {
+          "type": "string"
+        },
+        "approved_by": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "case_id",
+        "version",
+        "title",
+        "intent",
+        "steps",
+        "assertions",
+        "oracle_bindings"
+      ],
+      "additionalProperties": false
+    },
+    "TestIntent": {
+      "type": "object",
+      "properties": {
+        "intent_id": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "source_ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "intent_id",
+        "description"
+      ],
+      "additionalProperties": false
+    },
+    "TestStep": {
+      "type": "object",
+      "properties": {
+        "step_id": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        },
+        "expected": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "step_id",
+        "action",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "AssertionSpec": {
+      "type": "object",
+      "properties": {
+        "assertion_id": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "source_ref": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "assertion_id",
+        "description"
+      ],
+      "additionalProperties": false
+    },
+    "OracleBinding": {
+      "type": "object",
+      "properties": {
+        "assertion_id": {
+          "type": "string"
+        },
+        "primary": {
+          "$ref": "#/$defs/OracleSpec"
+        },
+        "supporting": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OracleSpec"
+          }
+        },
+        "adjudication_rule": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "assertion_id",
+        "primary"
+      ],
+      "additionalProperties": false
+    },
+    "OracleSpec": {
+      "type": "object",
+      "properties": {
+        "oracle_id": {
+          "type": "string"
+        },
+        "source_type": {
+          "type": "string"
+        },
+        "source_ref": {
+          "type": "string"
+        },
+        "expected": {
+          "type": "string",
+          "enum": [
+            "PASSED",
+            "FAILED",
+            "UNAVAILABLE"
+          ]
+        },
+        "version": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "approved_by": {
+          "type": "string"
+        },
+        "approved": {
+          "type": "boolean"
+        },
+        "expected_value": {}
+      },
+      "required": [
+        "oracle_id",
+        "source_type",
+        "source_ref"
+      ],
+      "additionalProperties": false
+    },
+    "Precondition": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "setup_action": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "description"
+      ],
+      "additionalProperties": false
+    },
+    "Postcondition": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "cleanup_action": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "description"
+      ],
+      "additionalProperties": false
+    },
+    "TestDataRef": {
+      "type": "object",
+      "properties": {
+        "ref_id": {
+          "type": "string"
+        },
+        "locator": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref_id",
+        "locator",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "CleanupPolicy": {
+      "type": "object",
+      "properties": {
+        "strategy": {
+          "type": "string"
+        },
+        "reset_endpoint": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  }
+}

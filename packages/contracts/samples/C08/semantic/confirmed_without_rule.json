@@ -1,0 +1,44 @@
+{
+  "diagnosis_id": "dg_sample_0001",
+  "run_id": "run_sample_0001",
+  "symptom": "assertion s10 failed while independent state stayed intact",
+  "failure_domain": "PLATFORM",
+  "failure_mechanism": "UI_RENDERING",
+  "root_causes": [
+    "ui_feedback_lost"
+  ],
+  "contributing_factors": [
+    "fault_injection_armed"
+  ],
+  "flaky_characteristic": "NOT_DETERMINED",
+  "diagnosis_status": "CONFIRMED",
+  "disposition": "PLATFORM_ISSUE",
+  "hypotheses": [
+    {
+      "hypothesis_id": "h_ui",
+      "statement": "UI 反馈丢失但数据已持久化",
+      "failure_domain": "PLATFORM",
+      "failure_mechanism": "UI_RENDERING",
+      "status": "CONFIRMED",
+      "supporting": [
+        {
+          "ref_id": "ev_step",
+          "source": "step",
+          "role": "support",
+          "detail": "s10 failed"
+        },
+        {
+          "ref_id": "ev_state",
+          "source": "state",
+          "role": "support",
+          "detail": "project_count=1"
+        }
+      ],
+      "contradicting": [],
+      "confirmation_rule": ""
+    }
+  ],
+  "notes": [
+    "synthetic sample constructed from the real dataclass"
+  ]
+}

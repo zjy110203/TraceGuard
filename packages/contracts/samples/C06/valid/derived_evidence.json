@@ -1,0 +1,21 @@
+{
+  "evidence_id": "evd_0002",
+  "evidence_type": "trace_summary",
+  "raw": false,
+  "source": "browser",
+  "run_id": "run_sample_0001",
+  "step_id": null,
+  "recorded_at": "2026-11-22T04:00:12+00:00",
+  "summary": "trace zip summarised",
+  "attachment_ref": "",
+  "integrity_check": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "source_trust": "observed",
+  "derived_from": [
+    "evd_0001"
+  ],
+  "redacted": false,
+  "retention": "run_scoped",
+  "payload": {
+    "actions": 12
+  }
+}

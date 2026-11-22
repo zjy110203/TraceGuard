@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://traceguard.local/contracts/C12/0.2.0-draft",
+  "title": "Benchmark",
+  "description": "数据集、实验、Ground Truth 与指标口径四类记录。",
+  "status": "draft",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/Dataset"
+    },
+    {
+      "$ref": "#/$defs/ExperimentResult"
+    },
+    {
+      "$ref": "#/$defs/GroundTruthRecord"
+    },
+    {
+      "$ref": "#/$defs/MetricDefinition"
+    }
+  ],
+  "$defs": {
+    "Dataset": {
+      "type": "object",
+      "properties": {
+        "dataset_id": {
+          "type": "string"
+        },
+        "partition": {
+          "type": "string"
+        },
+        "scenario_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "version": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "dataset_id",
+        "partition",
+        "scenario_ids",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "ExperimentResult": {
+      "type": "object",
+      "properties": {
+        "experiment_id": {
+          "type": "string"
+        },
+        "track": {
+          "type": "string"
+        },
+        "method": {
+          "type": "string"
+        },
+        "dataset_id": {
+          "type": "string"
+        },
+        "scenario_count": {
+          "type": "integer"
+        },
+        "metrics": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "per_scenario": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "status": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "experiment_id",
+        "track",
+        "method",
+        "dataset_id",
+        "scenario_count",
+        "metrics"
+      ],
+      "additionalProperties": false
+    },
+    "GroundTruthRecord": {
+      "type": "object",
+      "properties": {
+        "scenario_id": {
+          "type": "string"
+        },
+        "expected_verdict": {
+          "type": "string"
+        },
+        "primary_cause": {
+          "type": "string"
+        },
+        "fault_class": {
+          "type": "string"
+        },
+        "dataset_version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "scenario_id",
+        "expected_verdict",
+        "primary_cause",
+        "fault_class",
+        "dataset_version"
+      ],
+      "additionalProperties": false
+    },
+    "MetricDefinition": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "numerator": {
+          "type": "string"
+        },
+        "denominator": {
+          "type": "string"
+        },
+        "exclusions": {
+          "type": "string"
+        },
+        "missing_value": {
+          "type": "string"
+        },
+        "multi_root": {
+          "type": "string"
+        },
+        "variance": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "unit",
+        "numerator",
+        "denominator",
+        "exclusions",
+        "missing_value",
+        "multi_root",
+        "variance"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

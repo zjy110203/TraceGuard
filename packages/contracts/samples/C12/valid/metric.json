@@ -1,0 +1,10 @@
+{
+  "name": "false_pass_rate",
+  "unit": "ratio",
+  "numerator": "runs with verdict PASSED and GT FAILED",
+  "denominator": "all runs with GT FAILED",
+  "exclusions": "aborted runs",
+  "missing_value": "excluded from denominator",
+  "multi_root": "counted once per run",
+  "variance": "reported across seeds"
+}

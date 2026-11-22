@@ -1,0 +1,22 @@
+{
+  "probe_id": "DB_STATE_READ",
+  "input_schema": {
+    "type": "object",
+    "required": [
+      "workspace_id"
+    ]
+  },
+  "target_scope": "workspace",
+  "permission_required": "diagnosis.probe.readonly",
+  "read_only": true,
+  "side_effects": "none",
+  "estimated_cost": 0.1,
+  "estimated_duration": 0.5,
+  "risk_level": "LOW",
+  "timeout": 5.0,
+  "retry_policy": "none",
+  "output_schema": {
+    "type": "object"
+  },
+  "cleanup_policy": "none"
+}

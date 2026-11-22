@@ -1,0 +1,14 @@
+# TraceGuard runtime dependencies.
+# 说明：以下版本区间经过本地实际安装验证（见 docs/版本锁定与兼容矩阵.md）。
+# 纪律：P01「技术版本锁定」在 v1.1 中仍为待确认项；本文件是工程默认值，
+#       供 M0 骨架可复现启动使用，不代表团队已冻结。团队评审后以锁定文件为准。
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30,<1
+pydantic>=2.9,<3
+pydantic-settings>=2.5,<3
+SQLAlchemy>=2.0,<3
+alembic>=1.13,<2
+Jinja2>=3.1,<4
+python-multipart>=0.0.9,<1
+httpx>=0.27,<1
+playwright>=1.49,<2

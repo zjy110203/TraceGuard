@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://traceguard.local/contracts/C11/0.2.0-draft",
+  "title": "Repair",
+  "description": "修复提案：11 态状态机，禁止改 Oracle/删断言，晋升需人工批准。",
+  "status": "draft",
+  "$ref": "#/$defs/RepairProposal",
+  "$defs": {
+    "RepairProposal": {
+      "type": "object",
+      "properties": {
+        "proposal_id": {
+          "type": "string"
+        },
+        "case_id": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "change_kinds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "diff": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiffEntry"
+          }
+        },
+        "base_testcase_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "candidate_testcase_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "promotion_target_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "promotion_record": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "validation_notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "approved_by": {
+          "type": "string"
+        },
+        "approval_record": {
+          "type": "string"
+        },
+        "failure_reason": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "proposal_id",
+        "case_id"
+      ],
+      "additionalProperties": false
+    },
+    "DiffEntry": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "before": {
+          "type": "string"
+        },
+        "after": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "target",
+        "before",
+        "after"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

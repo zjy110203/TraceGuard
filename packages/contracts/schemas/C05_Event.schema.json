@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://traceguard.local/contracts/C05/0.2.0-draft",
+  "title": "Event",
+  "description": "至少一次投递的事件信封：producer 实例、单调 sequence、幂等键。",
+  "status": "draft",
+  "$ref": "#/$defs/EventEnvelope",
+  "$defs": {
+    "EventEnvelope": {
+      "type": "object",
+      "properties": {
+        "event_id": {
+          "type": "string"
+        },
+        "event_type": {
+          "type": "string"
+        },
+        "schema_version": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "step_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "producer_id": {
+          "type": "string"
+        },
+        "producer_instance_id": {
+          "type": "string"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "occurred_at": {
+          "type": "string"
+        },
+        "recorded_at": {
+          "type": "string"
+        },
+        "idempotency_key": {
+          "type": "string"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "run_id",
+        "step_id",
+        "producer_id",
+        "producer_instance_id",
+        "sequence",
+        "occurred_at",
+        "recorded_at",
+        "idempotency_key"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

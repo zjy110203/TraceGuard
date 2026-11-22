@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://traceguard.local/contracts/C06/0.2.0-draft",
+  "title": "Evidence",
+  "description": "证据记录：raw/normalized/derived 分层，SHA-256 完整性，可脱敏。",
+  "status": "draft",
+  "$ref": "#/$defs/EvidenceRecord",
+  "$defs": {
+    "EvidenceRecord": {
+      "type": "object",
+      "properties": {
+        "evidence_id": {
+          "type": "string"
+        },
+        "evidence_type": {
+          "type": "string"
+        },
+        "raw": {
+          "type": "boolean"
+        },
+        "source": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "step_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "recorded_at": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "attachment_ref": {
+          "type": "string"
+        },
+        "integrity_check": {
+          "type": "string"
+        },
+        "source_trust": {
+          "type": "string"
+        },
+        "derived_from": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "redacted": {
+          "type": "boolean"
+        },
+        "retention": {
+          "type": "string"
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "evidence_id",
+        "evidence_type",
+        "raw",
+        "source",
+        "run_id",
+        "step_id",
+        "recorded_at",
+        "summary"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

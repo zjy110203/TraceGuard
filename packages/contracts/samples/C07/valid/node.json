@@ -1,0 +1,9 @@
+{
+  "node_id": "evd_0001",
+  "node_type": "Evidence",
+  "source_ref": "evd_0001",
+  "independence_group": "browser",
+  "properties": {
+    "kind": "screenshot"
+  }
+}

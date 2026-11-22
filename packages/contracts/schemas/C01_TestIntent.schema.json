@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://traceguard.local/contracts/C01/0.2.0-draft",
+  "title": "TestIntent",
+  "description": "测试意图：人类可读的目标声明，是 Explorer 与 Compiler 的输入。",
+  "status": "draft",
+  "$ref": "#/$defs/TestIntent",
+  "$defs": {
+    "TestIntent": {
+      "type": "object",
+      "properties": {
+        "intent_id": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "source_ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "intent_id",
+        "description"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

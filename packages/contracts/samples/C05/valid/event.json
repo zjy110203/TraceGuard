@@ -1,0 +1,17 @@
+{
+  "event_id": "evt_0001",
+  "event_type": "run.finished",
+  "schema_version": "0.1.0",
+  "run_id": "run_sample_0001",
+  "step_id": null,
+  "producer_id": "orchestrator",
+  "producer_instance_id": "pi_0001",
+  "sequence": 1,
+  "occurred_at": "2026-11-22T04:00:12+00:00",
+  "recorded_at": "2026-11-22T04:00:12+00:00",
+  "idempotency_key": "run_sample_0001:finished",
+  "correlation_id": "",
+  "payload": {
+    "status": "COMPLETED"
+  }
+}

@@ -1,0 +1,83 @@
+{
+  "case_id": "TC-LOGIN-001",
+  "version": 1,
+  "title": "login and land on projects page (logical locators)",
+  "intent": {
+    "intent_id": "i-TC-LOGIN-001",
+    "description": "a valid tester can log in and reach the project list",
+    "source_ref": ""
+  },
+  "steps": [
+    {
+      "step_id": "s1",
+      "action": "navigate",
+      "target": "/",
+      "value": "",
+      "expected": ""
+    },
+    {
+      "step_id": "s2",
+      "action": "fill",
+      "target": "loc:login.username",
+      "value": "tester",
+      "expected": ""
+    },
+    {
+      "step_id": "s3",
+      "action": "fill",
+      "target": "loc:login.password",
+      "value": "test-pass-123",
+      "expected": ""
+    },
+    {
+      "step_id": "s4",
+      "action": "click",
+      "target": "loc:login.submit",
+      "value": "",
+      "expected": ""
+    },
+    {
+      "step_id": "s5",
+      "action": "assert_visible",
+      "target": "loc:nav.new_project",
+      "value": "",
+      "expected": ""
+    }
+  ],
+  "assertions": [
+    {
+      "assertion_id": "a1",
+      "description": "project list link visible after login",
+      "required": true,
+      "source_ref": "",
+      "notes": []
+    }
+  ],
+  "oracle_bindings": [
+    {
+      "assertion_id": "a1",
+      "primary": {
+        "oracle_id": "o-a1-ui",
+        "source_type": "ui",
+        "source_ref": "ui.s5.passed",
+        "expected": "PASSED",
+        "version": "1.0.0",
+        "source": "stage2 manual case library v1 (human approved)",
+        "approved_by": "human",
+        "approved": true,
+        "expected_value": true
+      },
+      "supporting": [],
+      "adjudication_rule": "frozen_fallback_inconclusive_on_conflict"
+    }
+  ],
+  "preconditions": [],
+  "postconditions": [],
+  "data_refs": [],
+  "cleanup": {
+    "strategy": "eval_reset",
+    "reset_endpoint": "/__eval__/data/reset"
+  },
+  "compiled_from": "manual",
+  "approved_by": "human"
+}

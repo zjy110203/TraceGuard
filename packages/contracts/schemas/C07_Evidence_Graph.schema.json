@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://traceguard.local/contracts/C07/0.2.0-draft",
+  "title": "Evidence Graph",
+  "description": "证据图节点或边；边必须声明规则与依据字段，direct_causal 额外要求可信依据。",
+  "status": "draft",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/GraphNode"
+    },
+    {
+      "$ref": "#/$defs/GraphEdge"
+    }
+  ],
+  "$defs": {
+    "GraphNode": {
+      "type": "object",
+      "properties": {
+        "node_id": {
+          "type": "string"
+        },
+        "node_type": {
+          "type": "string"
+        },
+        "source_ref": {
+          "type": "string"
+        },
+        "independence_group": {
+          "type": "string"
+        },
+        "properties": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": true
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "node_id",
+        "node_type"
+      ],
+      "additionalProperties": false
+    },
+    "GraphEdge": {
+      "type": "object",
+      "properties": {
+        "edge_id": {
+          "type": "string"
+        },
+        "src": {
+          "type": "string"
+        },
+        "dst": {
+          "type": "string"
+        },
+        "relation": {
+          "type": "string"
+        },
+        "basis_fields": {
+          "type": "string"
+        },
+        "rule_id": {
+          "type": "string"
+        },
+        "rule_version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "edge_id",
+        "src",
+        "dst",
+        "relation"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

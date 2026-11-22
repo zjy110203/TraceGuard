@@ -1,0 +1,9 @@
+{
+  "diagnosis_id": "dg_sample_0001",
+  "run_id": "run_sample_0001",
+  "diagnosis_status": "CONFIRMED",
+  "disposition": "PLATFORM_ISSUE",
+  "notes": [
+    "synthetic sample constructed from the real dataclass"
+  ]
+}

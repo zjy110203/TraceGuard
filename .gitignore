@@ -1,0 +1,48 @@
+# 密钥与环境
+.env
+*.env.local
+*.env.*.local
+
+# 数据库与数据
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# 测试与覆盖率
+.coverage
+htmlcov/
+coverage.xml
+
+# PostgreSQL（切换到 PG 时的本地文件）
+infra/pgdata/
+
+# 日志
+*.log
+logs/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Node（apps/web）
+node_modules/
+apps/web/dist/
+
+# R4 本地临时产物（日志/测试 basetemp/隔离证据；46M，不入库）
+.traceguard-tmp/

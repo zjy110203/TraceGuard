@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>{{ project.name }} · TeamFlow</title>
+</head>
+<body>
+  <h1 data-testid="project-title">{{ project.name }}</h1>
+  <a href="/projects">返回列表</a>
+  <dl>
+    <dt>ID</dt><dd data-testid="project-id">{{ project.id }}</dd>
+    <dt>描述</dt><dd data-testid="project-description">{{ project.description or '' }}</dd>
+    <dt>状态</dt><dd data-testid="project-status">{{ project.status }}</dd>
+    <dt>创建时间</dt><dd>{{ project.created_at }}</dd>
+  </dl>
+</body>
+</html>

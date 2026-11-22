@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://traceguard.local/contracts/C03/0.2.0-draft",
+  "title": "Oracle",
+  "description": "断言到 Oracle 的绑定：primary 为主判据，supporting 仅作佐证。",
+  "status": "draft",
+  "$ref": "#/$defs/OracleBinding",
+  "$defs": {
+    "OracleBinding": {
+      "type": "object",
+      "properties": {
+        "assertion_id": {
+          "type": "string"
+        },
+        "primary": {
+          "$ref": "#/$defs/OracleSpec"
+        },
+        "supporting": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OracleSpec"
+          }
+        },
+        "adjudication_rule": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "assertion_id",
+        "primary"
+      ],
+      "additionalProperties": false
+    },
+    "OracleSpec": {
+      "type": "object",
+      "properties": {
+        "oracle_id": {
+          "type": "string"
+        },
+        "source_type": {
+          "type": "string"
+        },
+        "source_ref": {
+          "type": "string"
+        },
+        "expected": {
+          "type": "string",
+          "enum": [
+            "PASSED",
+            "FAILED",
+            "UNAVAILABLE"
+          ]
+        },
+        "version": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "approved_by": {
+          "type": "string"
+        },
+        "approved": {
+          "type": "boolean"
+        },
+        "expected_value": {}
+      },
+      "required": [
+        "oracle_id",
+        "source_type",
+        "source_ref"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

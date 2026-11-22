@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://traceguard.local/contracts/C11_Repair.schema.json",
+  "title": "C11 RepairProposal — DRAFT (stage 10 illustrative, NOT frozen)",
+  "description": "DRAFT 非冻结示例结构。Oracle 不属于 RepairProposal 可修改范围；APPROVED 不等于 PROMOTED；晋升需 CAS 版本校验。正式状态转换以路线图状态机为准。",
+  "type": "object",
+  "required": [
+    "proposal_id", "case_id", "state", "revision", "change_kinds",
+    "base_testcase_version", "candidate_testcase_version", "promotion_target_version"
+  ],
+  "properties": {
+    "proposal_id": {"type": "string", "minLength": 1},
+    "case_id": {"type": "string", "minLength": 1},
+    "state": {"enum": ["DRAFT","VALIDATING","VALIDATION_FAILED","VALIDATED","PENDING_APPROVAL","REJECTED","APPROVED","PROMOTING","PROMOTED","PROMOTION_FAILED","ROLLED_BACK"]},
+    "revision": {"type": "integer", "minimum": 1},
+    "change_kinds": {
+      "type": "array",
+      "items": {"enum": ["locator_update","wait_condition","test_step_fix","data_ref_fix","automation_config"]},
+      "minItems": 1
+    },
+    "base_testcase_version": {"type": "integer", "minimum": 1},
+    "candidate_testcase_version": {"type": "integer", "minimum": 1},
+    "promotion_target_version": {"type": "integer", "minimum": 1},
+    "approval_record": {"type": "string"},
+    "approved_by": {"type": "string"},
+    "promotion_record": {"type": "object"},
+    "failure_reason": {"type": "string"}
+  },
+  "additionalProperties": true
+}

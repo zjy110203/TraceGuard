@@ -1,0 +1,155 @@
+{
+  "case_id": "TC-CREATE-DUP-001",
+  "version": 1,
+  "title": "duplicate project name is rejected",
+  "intent": {
+    "intent_id": "i-TC-CREATE-DUP-001",
+    "description": "a duplicate name shows a form error and does not persist twice",
+    "source_ref": ""
+  },
+  "steps": [
+    {
+      "step_id": "s1",
+      "action": "navigate",
+      "target": "/",
+      "value": "",
+      "expected": ""
+    },
+    {
+      "step_id": "s2",
+      "action": "fill",
+      "target": "[data-testid=username]",
+      "value": "tester",
+      "expected": ""
+    },
+    {
+      "step_id": "s3",
+      "action": "fill",
+      "target": "[data-testid=password]",
+      "value": "test-pass-123",
+      "expected": ""
+    },
+    {
+      "step_id": "s4",
+      "action": "click",
+      "target": "[data-testid=login-submit]",
+      "value": "",
+      "expected": ""
+    },
+    {
+      "step_id": "s5",
+      "action": "assert_visible",
+      "target": "[data-testid=new-project-link]",
+      "value": "",
+      "expected": ""
+    },
+    {
+      "step_id": "s6",
+      "action": "click",
+      "target": "[data-testid=new-project-link]",
+      "value": "",
+      "expected": ""
+    },
+    {
+      "step_id": "s7",
+      "action": "fill",
+      "target": "[data-testid=project-name]",
+      "value": "Proj Alpha",
+      "expected": ""
+    },
+    {
+      "step_id": "s8",
+      "action": "click",
+      "target": "[data-testid=create-submit]",
+      "value": "",
+      "expected": ""
+    },
+    {
+      "step_id": "s9",
+      "action": "navigate",
+      "target": "/projects/new",
+      "value": "",
+      "expected": ""
+    },
+    {
+      "step_id": "s10",
+      "action": "fill",
+      "target": "[data-testid=project-name]",
+      "value": "Proj Alpha",
+      "expected": ""
+    },
+    {
+      "step_id": "s11",
+      "action": "click",
+      "target": "[data-testid=create-submit]",
+      "value": "",
+      "expected": ""
+    },
+    {
+      "step_id": "s12",
+      "action": "assert_visible",
+      "target": "[data-testid=form-error]",
+      "value": "",
+      "expected": ""
+    }
+  ],
+  "assertions": [
+    {
+      "assertion_id": "a1",
+      "description": "duplicate-name form error visible",
+      "required": true,
+      "source_ref": "",
+      "notes": []
+    },
+    {
+      "assertion_id": "a2",
+      "description": "project_count == 1 in independent state",
+      "required": true,
+      "source_ref": "",
+      "notes": []
+    }
+  ],
+  "oracle_bindings": [
+    {
+      "assertion_id": "a1",
+      "primary": {
+        "oracle_id": "o-a1-ui",
+        "source_type": "ui",
+        "source_ref": "ui.s12.passed",
+        "expected": "PASSED",
+        "version": "1.0.0",
+        "source": "stage2 manual case library v1 (human approved)",
+        "approved_by": "human",
+        "approved": true,
+        "expected_value": true
+      },
+      "supporting": [],
+      "adjudication_rule": "frozen_fallback_inconclusive_on_conflict"
+    },
+    {
+      "assertion_id": "a2",
+      "primary": {
+        "oracle_id": "o-a2-state",
+        "source_type": "independent_api",
+        "source_ref": "state.project_count",
+        "expected": "PASSED",
+        "version": "1.0.0",
+        "source": "stage2 manual case library v1 (human approved)",
+        "approved_by": "human",
+        "approved": true,
+        "expected_value": 1
+      },
+      "supporting": [],
+      "adjudication_rule": "frozen_fallback_inconclusive_on_conflict"
+    }
+  ],
+  "preconditions": [],
+  "postconditions": [],
+  "data_refs": [],
+  "cleanup": {
+    "strategy": "eval_reset",
+    "reset_endpoint": "/__eval__/data/reset"
+  },
+  "compiled_from": "manual",
+  "approved_by": "human"
+}

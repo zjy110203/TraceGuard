@@ -1,0 +1,28 @@
+# TraceGuard infrastructure — local development services.
+# NOTE: Docker daemon is NOT required for M0. Default DATABASE_URL is SQLite,
+# so `python -m scripts.init_db` + uvicorn work with zero containers.
+# PostgreSQL is provided here for the v1.1 production target; switch via:
+#   DATABASE_URL=postgresql+psycopg://tg:tg@localhost:5432/traceguard
+#
+# Redis / Celery / MinIO are intentionally omitted in M0 — v1.1 stage 0 says
+# they may be reserved but must not be hard blockers.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: tg
+      POSTGRES_PASSWORD: tg
+      POSTGRES_DB: traceguard
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tg"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  pgdata:

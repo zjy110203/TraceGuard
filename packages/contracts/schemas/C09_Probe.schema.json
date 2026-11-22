@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://traceguard.local/contracts/C09/0.2.0-draft",
+  "title": "Probe",
+  "description": "受控只读探针的规格、请求与结果三态。",
+  "status": "draft",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/ProbeSpec"
+    },
+    {
+      "$ref": "#/$defs/ProbeRequest"
+    },
+    {
+      "$ref": "#/$defs/ProbeResult"
+    }
+  ],
+  "$defs": {
+    "ProbeSpec": {
+      "type": "object",
+      "properties": {
+        "probe_id": {
+          "type": "string"
+        },
+        "input_schema": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "target_scope": {
+          "type": "string"
+        },
+        "permission_required": {
+          "type": "string"
+        },
+        "read_only": {
+          "type": "boolean"
+        },
+        "side_effects": {
+          "type": "string"
+        },
+        "estimated_cost": {
+          "type": "number",
+          "minimum": 0
+        },
+        "estimated_duration": {
+          "type": "number",
+          "minimum": 0
+        },
+        "risk_level": {
+          "type": "string"
+        },
+        "timeout": {
+          "type": "number",
+          "minimum": 0
+        },
+        "retry_policy": {
+          "type": "string"
+        },
+        "output_schema": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "cleanup_policy": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "probe_id",
+        "input_schema",
+        "target_scope",
+        "permission_required",
+        "read_only",
+        "side_effects",
+        "estimated_cost",
+        "estimated_duration",
+        "risk_level",
+        "timeout",
+        "retry_policy",
+        "output_schema",
+        "cleanup_policy"
+      ],
+      "additionalProperties": false
+    },
+    "ProbeRequest": {
+      "type": "object",
+      "properties": {
+        "probe_id": {
+          "type": "string"
+        },
+        "params": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "workspace_id": {
+          "type": "string"
+        },
+        "caller": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "probe_id",
+        "params",
+        "workspace_id"
+      ],
+      "additionalProperties": false
+    },
+    "ProbeResult": {
+      "type": "object",
+      "properties": {
+        "probe_id": {
+          "type": "string"
+        },
+        "executed": {
+          "type": "boolean"
+        },
+        "data": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "provenance": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "probe_hash": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "probe_id",
+        "executed",
+        "data",
+        "provenance"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

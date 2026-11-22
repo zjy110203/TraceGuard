@@ -1,0 +1,6 @@
+{
+  "expected_verdict": "FAILED",
+  "primary_cause": "ui_feedback_lost",
+  "fault_class": "TF-UI-001",
+  "dataset_version": "2026.11.22"
+}

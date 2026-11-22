@@ -1,0 +1,13 @@
+{
+  "dataset_id": "trusted_v1",
+  "partition": "trusted",
+  "scenario_ids": [
+    "S1",
+    "S5",
+    "S8"
+  ],
+  "version": "2026.11.22",
+  "metadata": {
+    "seed": 42
+  }
+}

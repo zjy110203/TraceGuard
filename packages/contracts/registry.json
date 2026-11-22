@@ -1,0 +1,237 @@
+{
+  "baseline": "v1.1",
+  "generated_by": "scripts.build_contracts",
+  "note": "Schema 由真实 dataclass 生成（packages/contracts/schema_gen.py）；status=draft 表示未经人工冻结，不得当作已批准契约。语义规则见 packages/contracts/semantic.py 的 SEMANTIC_RULES。",
+  "contracts": [
+    {
+      "id": "C01",
+      "name": "TestIntent",
+      "version": "0.2.0-draft",
+      "status": "draft",
+      "owner_role": "待分配",
+      "schema_file": "C01_TestIntent.schema.json",
+      "valid_samples": [
+        "intent.json"
+      ],
+      "invalid_samples": [
+        "intent__missing_intent_id.json"
+      ],
+      "semantic_samples": [
+        "blank_intent_id.json"
+      ],
+      "semantic_rule_count": 2
+    },
+    {
+      "id": "C02",
+      "name": "TestCase",
+      "version": "0.2.0-draft",
+      "status": "draft",
+      "owner_role": "待分配",
+      "schema_file": "C02_TestCase.schema.json",
+      "valid_samples": [
+        "create_project_case.json"
+      ],
+      "invalid_samples": [
+        "create_project_case__missing_case_id.json"
+      ],
+      "semantic_samples": [
+        "oracle_binding_missing.json"
+      ],
+      "semantic_rule_count": 10
+    },
+    {
+      "id": "C03",
+      "name": "Oracle",
+      "version": "0.2.0-draft",
+      "status": "draft",
+      "owner_role": "待分配",
+      "schema_file": "C03_Oracle.schema.json",
+      "valid_samples": [
+        "binding.json"
+      ],
+      "invalid_samples": [
+        "binding__missing_assertion_id.json"
+      ],
+      "semantic_samples": [
+        "supporting_duplicates_primary.json"
+      ],
+      "semantic_rule_count": 8
+    },
+    {
+      "id": "C04",
+      "name": "Execution",
+      "version": "0.2.0-draft",
+      "status": "draft",
+      "owner_role": "待分配",
+      "schema_file": "C04_Execution.schema.json",
+      "valid_samples": [
+        "run_report.json"
+      ],
+      "invalid_samples": [
+        "run_report__missing_run_id.json"
+      ],
+      "semantic_samples": [
+        "terminal_without_finished_at.json"
+      ],
+      "semantic_rule_count": 6
+    },
+    {
+      "id": "C05",
+      "name": "Event",
+      "version": "0.2.0-draft",
+      "status": "draft",
+      "owner_role": "待分配",
+      "schema_file": "C05_Event.schema.json",
+      "valid_samples": [
+        "event.json"
+      ],
+      "invalid_samples": [
+        "event__missing_event_id.json"
+      ],
+      "semantic_samples": [
+        "recorded_before_occurred.json"
+      ],
+      "semantic_rule_count": 8
+    },
+    {
+      "id": "C06",
+      "name": "Evidence",
+      "version": "0.2.0-draft",
+      "status": "draft",
+      "owner_role": "待分配",
+      "schema_file": "C06_Evidence.schema.json",
+      "valid_samples": [
+        "derived_evidence.json",
+        "raw_evidence.json"
+      ],
+      "invalid_samples": [
+        "derived_evidence__missing_evidence_id.json",
+        "raw_evidence__missing_evidence_id.json"
+      ],
+      "semantic_samples": [
+        "raw_with_parents.json"
+      ],
+      "semantic_rule_count": 8
+    },
+    {
+      "id": "C07",
+      "name": "Evidence Graph",
+      "version": "0.2.0-draft",
+      "status": "draft",
+      "owner_role": "待分配",
+      "schema_file": "C07_Evidence_Graph.schema.json",
+      "valid_samples": [
+        "edge.json",
+        "node.json"
+      ],
+      "invalid_samples": [
+        "edge__missing_edge_id.json",
+        "node__missing_node_id.json"
+      ],
+      "semantic_samples": [
+        "causal_without_basis.json"
+      ],
+      "semantic_rule_count": 8
+    },
+    {
+      "id": "C08",
+      "name": "Diagnosis",
+      "version": "0.2.0-draft",
+      "status": "draft",
+      "owner_role": "待分配",
+      "schema_file": "C08_Diagnosis.schema.json",
+      "valid_samples": [
+        "diagnosis.json"
+      ],
+      "invalid_samples": [
+        "diagnosis__missing_diagnosis_id.json"
+      ],
+      "semantic_samples": [
+        "confirmed_without_rule.json"
+      ],
+      "semantic_rule_count": 13
+    },
+    {
+      "id": "C09",
+      "name": "Probe",
+      "version": "0.2.0-draft",
+      "status": "draft",
+      "owner_role": "待分配",
+      "schema_file": "C09_Probe.schema.json",
+      "valid_samples": [
+        "request.json",
+        "result.json",
+        "spec.json"
+      ],
+      "invalid_samples": [
+        "request__missing_probe_id.json",
+        "result__missing_probe_id.json",
+        "spec__missing_probe_id.json"
+      ],
+      "semantic_samples": [
+        "non_readonly_without_side_effects.json"
+      ],
+      "semantic_rule_count": 9
+    },
+    {
+      "id": "C10",
+      "name": "Disposition",
+      "version": "0.2.0-draft",
+      "status": "draft",
+      "owner_role": "待分配",
+      "schema_file": "C10_Disposition.schema.json",
+      "valid_samples": [
+        "disposition.json"
+      ],
+      "invalid_samples": [
+        "disposition__missing_diagnosis_id.json"
+      ],
+      "semantic_samples": [
+        "confirmed_routed_to_more_evidence.json"
+      ],
+      "semantic_rule_count": 5
+    },
+    {
+      "id": "C11",
+      "name": "Repair",
+      "version": "0.2.0-draft",
+      "status": "draft",
+      "owner_role": "待分配",
+      "schema_file": "C11_Repair.schema.json",
+      "valid_samples": [
+        "proposal.json"
+      ],
+      "invalid_samples": [
+        "proposal__missing_proposal_id.json"
+      ],
+      "semantic_samples": [
+        "forbidden_oracle_change.json"
+      ],
+      "semantic_rule_count": 10
+    },
+    {
+      "id": "C12",
+      "name": "Benchmark",
+      "version": "0.2.0-draft",
+      "status": "draft",
+      "owner_role": "待分配",
+      "schema_file": "C12_Benchmark.schema.json",
+      "valid_samples": [
+        "dataset.json",
+        "experiment.json",
+        "ground_truth.json",
+        "metric.json"
+      ],
+      "invalid_samples": [
+        "dataset__missing_dataset_id.json",
+        "experiment__missing_experiment_id.json",
+        "ground_truth__missing_scenario_id.json",
+        "metric__missing_name.json"
+      ],
+      "semantic_samples": [
+        "not_run_with_metrics.json"
+      ],
+      "semantic_rule_count": 14
+    }
+  ]
+}

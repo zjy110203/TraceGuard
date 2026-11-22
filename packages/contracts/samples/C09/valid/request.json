@@ -1,0 +1,8 @@
+{
+  "probe_id": "DB_STATE_READ",
+  "params": {
+    "workspace_id": "ws_default"
+  },
+  "workspace_id": "ws_default",
+  "caller": "planner"
+}

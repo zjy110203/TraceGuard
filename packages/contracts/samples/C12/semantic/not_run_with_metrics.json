@@ -1,0 +1,16 @@
+{
+  "experiment_id": "exp_0001",
+  "track": "diagnosis",
+  "method": "graph_plus_active",
+  "dataset_id": "trusted_v1",
+  "scenario_count": 3,
+  "metrics": {
+    "macro_f1": 0.99
+  },
+  "per_scenario": [],
+  "metadata": {
+    "seed": 42
+  },
+  "status": "NOT_RUN",
+  "note": ""
+}

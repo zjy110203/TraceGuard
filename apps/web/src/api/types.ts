@@ -1,0 +1,328 @@
+// Shapes mirror what the FastAPI routers actually return. Fields are optional
+// where a run may not have reached that stage yet — the UI must not invent them.
+
+export interface RunBrief {
+  run_id: string
+  task_id: string
+  case_id: string
+  attempt: number
+  status: string
+  execution_status: string
+  test_verdict: string
+  created_at: string
+  finished_at: string
+}
+
+export interface Overview {
+  tasks: number
+  runs: number
+  runs_by_status: Record<string, number>
+  runs_by_verdict: Record<string, number>
+  recent_runs: RunBrief[]
+  cases: number
+  events: number
+  evidence: number
+  repairs_pending: number
+}
+
+export interface IntentRow {
+  intent_id: string
+  description: string
+  source_ref: string
+  case_id: string | null
+  case_version: number | null
+  origin: 'case' | 'library'
+}
+
+export interface CaseRow {
+  case_id: string
+  version: number
+  title: string
+  steps: number
+  assertions: number
+  compiled_from: string
+  approved_by: string | null
+}
+
+export interface TestStep {
+  step_id: string
+  action: string
+  target: string
+  value: string
+  expected: string
+}
+
+export interface AssertionSpec {
+  assertion_id: string
+  description: string
+  required: boolean
+  source_ref: string
+  notes: string[]
+}
+
+export interface OracleSpec {
+  oracle_id: string
+  source_type: string
+  source_ref: string
+  expected: string
+  version: string
+  approved: boolean
+  expected_value: unknown
+}
+
+export interface OracleBinding {
+  assertion_id: string
+  primary: OracleSpec
+  supporting: OracleSpec[]
+  adjudication_rule: string
+}
+
+export interface CaseVersionRef {
+  version: number
+  file: string
+  compiled_from: string
+}
+
+export interface CaseDetail {
+  case_id: string
+  version: number
+  title: string
+  intent: { intent_id: string; description: string; source_ref: string }
+  steps: TestStep[]
+  assertions: AssertionSpec[]
+  oracle_bindings: OracleBinding[]
+  preconditions: { description: string; setup_action: string }[]
+  postconditions: { description: string; cleanup_action: string }[]
+  cleanup: { strategy: string; reset_endpoint: string }
+  compiled_from: string
+  approved_by: string
+  source_file: string
+  versions: CaseVersionRef[]
+}
+
+export interface TaskRow {
+  task_id: string
+  case_id: string
+  title: string
+  status: string
+  created_at: string
+}
+
+export interface RunRow {
+  run_id: string
+  task_id: string
+  case_id: string
+  attempt: number
+  status: string
+  execution_status: string
+  test_verdict: string
+  diagnosis_status: string
+  diagnosis_outcome: string
+  created_at: string
+  started_at: string
+  finished_at: string
+  heartbeat_at: string
+  abort_reason?: string
+  worker_id?: string
+}
+
+export interface StepRow {
+  index: number
+  step_id: string
+  action: string
+  ok: boolean
+  detail: string
+}
+
+export interface StepReport {
+  step_id: string
+  action: string
+  ok: boolean
+  detail: string
+  evidence_ids: string[]
+}
+
+export interface AssertionResult {
+  assertion_id: string
+  required: boolean
+  verdict: string
+  oracle_available: boolean
+  oracle_conflict: boolean
+  evaluated: boolean
+  evidence_refs: string[]
+  reason: string
+}
+
+export interface RunReport {
+  run_id: string
+  case_id: string
+  case_version: number
+  started_at: string
+  finished_at: string
+  execution_status: string
+  test_verdict: string
+  steps: StepReport[]
+  assertion_results: AssertionResult[]
+  observations: Record<string, unknown>
+  verdict_notes: string[]
+  evidence: Record<string, unknown>[]
+  events: Record<string, unknown>[]
+  aborted_reason: string
+}
+
+export interface RunDetail extends RunRow {
+  steps: StepRow[]
+}
+
+export interface EventRow {
+  event_id: string
+  event_type: string
+  sequence?: number
+  run_id?: string
+  step_id?: string | null
+  producer_id?: string
+  producer_instance_id?: string
+  occurred_at?: string
+  recorded_at?: string
+  idempotency_key?: string
+  payload?: Record<string, unknown>
+}
+
+export interface EvidenceRow {
+  evidence_id: string
+  evidence_type: string
+  raw: boolean
+  source: string
+  run_id: string
+  step_id: string | null
+  recorded_at: string
+  summary: string
+  integrity_check: string
+  derived_from: string[]
+  redacted: boolean
+  retention: string
+  payload: Record<string, unknown>
+}
+
+export interface GraphNode {
+  node_id: string
+  node_type: string
+  source_ref: string
+  independence_group: string
+  properties: Record<string, unknown> | null
+}
+
+export interface GraphEdge {
+  edge_id: string
+  src: string
+  dst: string
+  relation: string
+  basis_fields: string
+  rule_id: string
+  rule_version: string
+}
+
+export interface EvidenceRef {
+  ref_id: string
+  source: string
+  role: string
+  detail: string
+}
+
+export interface Hypothesis {
+  hypothesis_id: string
+  statement: string
+  failure_domain: string
+  failure_mechanism: string
+  status: string
+  supporting: EvidenceRef[]
+  contradicting: EvidenceRef[]
+  confirmation_rule: string
+}
+
+export interface Diagnosis {
+  diagnosis_id: string
+  run_id: string
+  symptom: string
+  failure_domain: string
+  failure_mechanism: string
+  root_causes: string[]
+  contributing_factors: string[]
+  flaky_characteristic: string
+  diagnosis_status: string
+  disposition: string
+  hypotheses: Hypothesis[]
+  notes: string[]
+}
+
+export interface EvidenceAuditRow {
+  action: string
+  detail: string
+  recorded_at: string
+}
+
+export interface ProbeSpecRow {
+  probe_id: string
+  target_scope: string
+  permission_required: string
+  read_only: boolean
+  side_effects: string
+  estimated_cost: number
+  estimated_duration: number
+  risk_level: string
+  timeout: number
+  retry_policy: string
+  cleanup_policy: string
+}
+
+export interface AuditRow {
+  probe_id: string
+  caller: string
+  decision: string
+  reason: string
+  check: string
+  at: string
+}
+
+export interface DiffEntry {
+  kind: string
+  target: string
+  before: string
+  after: string
+}
+
+export interface RepairProposal {
+  proposal_id: string
+  case_id: string
+  state: string
+  revision: number
+  change_kinds: string[]
+  diff: DiffEntry[]
+  base_testcase_version: number
+  candidate_testcase_version: number
+  promotion_target_version: number
+  validation_notes: string[]
+  approved_by: string
+  approval_record: string
+  failure_reason: string
+  created_at: string
+}
+
+export interface DatasetRow {
+  dataset_id: string
+  partition: string
+  scenario_ids: string[]
+  version: string
+  metadata: Record<string, unknown>
+}
+
+export interface ExperimentRow {
+  experiment_id: string
+  track: string
+  method: string
+  dataset_id: string
+  scenario_count: number
+  metrics: Record<string, number | null>
+  status: string
+  note: string
+}

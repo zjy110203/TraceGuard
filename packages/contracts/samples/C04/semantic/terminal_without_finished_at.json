@@ -1,0 +1,30 @@
+{
+  "run_id": "run_sample_0001",
+  "case_id": "TC-CREATE-001",
+  "case_version": 1,
+  "started_at": "2026-11-22T04:00:00+00:00",
+  "finished_at": "",
+  "execution_status": "COMPLETED",
+  "test_verdict": "PASSED",
+  "diagnosis_status": "NOT_STARTED",
+  "diagnosis_outcome": "NOT_STARTED",
+  "steps": [
+    {
+      "step_id": "s1",
+      "action": "goto",
+      "ok": true,
+      "detail": "navigated to /login",
+      "evidence_ids": [
+        "ev_0001"
+      ]
+    }
+  ],
+  "assertion_results": [],
+  "observations": {
+    "project_count": 1
+  },
+  "verdict_notes": [],
+  "evidence": [],
+  "events": [],
+  "aborted_reason": ""
+}

@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://traceguard.local/contracts/C04/0.2.0-draft",
+  "title": "Execution",
+  "description": "一次执行的报告：步骤、断言结果、证据引用，与 Run 行一一对应。",
+  "status": "draft",
+  "$ref": "#/$defs/RunReport",
+  "$defs": {
+    "RunReport": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "case_id": {
+          "type": "string"
+        },
+        "case_version": {
+          "type": "integer"
+        },
+        "started_at": {
+          "type": "string"
+        },
+        "finished_at": {
+          "type": "string"
+        },
+        "execution_status": {
+          "type": "string",
+          "enum": [
+            "QUEUED",
+            "PREPARING",
+            "RUNNING",
+            "FINALIZING",
+            "COMPLETED",
+            "FAILED",
+            "TIMED_OUT",
+            "CANCELLED"
+          ]
+        },
+        "test_verdict": {
+          "type": "string"
+        },
+        "diagnosis_status": {
+          "type": "string"
+        },
+        "diagnosis_outcome": {
+          "type": "string"
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/StepReport"
+          }
+        },
+        "assertion_results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "observations": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "verdict_notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "aborted_reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "case_id",
+        "case_version",
+        "started_at"
+      ],
+      "additionalProperties": false
+    },
+    "StepReport": {
+      "type": "object",
+      "properties": {
+        "step_id": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "step_id",
+        "action",
+        "ok",
+        "detail"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

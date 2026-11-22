@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://traceguard.local/contracts/C05_Event.schema.json",
+  "title": "C05 Event Envelope — DRAFT (stage 4 illustrative, NOT frozen)",
+  "description": "DRAFT 非冻结示例结构。正式字段与约束以评审批准版本为准。字段语义取自 v1.1 阶段4；status=draft，不得当作正式契约引用。",
+  "type": "object",
+  "required": [
+    "event_id", "event_type", "schema_version", "context_refs", "producer_id",
+    "producer_instance_id", "sequence", "occurred_at", "observed_at",
+    "idempotency_key", "payload"
+  ],
+  "properties": {
+    "event_id": {"type": "string", "minLength": 1},
+    "event_type": {"type": "string", "minLength": 1},
+    "schema_version": {"type": "string"},
+    "context_refs": {
+      "type": "object",
+      "required": ["workspace_id"],
+      "properties": {
+        "workspace_id": {"type": "string", "minLength": 1},
+        "project_id": {"type": ["string", "null"]},
+        "task_id": {"type": ["string", "null"]},
+        "run_id": {"type": ["string", "null"]},
+        "exploration_id": {"type": ["string", "null"]},
+        "probe_execution_id": {"type": ["string", "null"]},
+        "experiment_id": {"type": ["string", "null"]},
+        "trace_id": {"type": ["string", "null"]},
+        "span_id": {"type": ["string", "null"]},
+        "request_id": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "producer_id": {"type": "string", "minLength": 1},
+    "producer_instance_id": {"type": "string", "minLength": 1},
+    "sequence": {"type": "integer", "minimum": 1},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "observed_at": {"type": "string", "format": "date-time"},
+    "idempotency_key": {"type": "string", "minLength": 1},
+    "payload": {"type": "object"}
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,276 @@
+/* TraceGuard Design System v1.0 — global tokens + shared utilities.
+   Per-view scoped styles keep ONLY page-specific structure; everything
+   shared lives here (see docs/ui/TraceGuard-Design-System.md). */
+
+:root {
+  --tg-bg: #f7f7f5;
+  --tg-panel: #ffffff;
+  --tg-panel-2: #f2f2ef;
+  --tg-border: rgba(0, 0, 0, 0.14);
+  --tg-border-strong: rgba(0, 0, 0, 0.28);
+  --tg-text: #1f1e1c;
+  --tg-muted: #6f6d69;
+  --tg-accent: #185fa5;
+  --tg-accent-bg: rgba(24, 95, 165, 0.1);
+  --tg-success: #1d7a3d;
+  --tg-danger: #b3261e;
+  --tg-warn: #8a5a00;
+  --tg-info: #5b4ea6;
+  --tg-radius: 8px;
+  --tg-control-h: 30px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --tg-bg: #171716;
+    --tg-panel: #202020;
+    --tg-panel-2: #2a2a29;
+    --tg-border: rgba(255, 255, 255, 0.15);
+    --tg-border-strong: rgba(255, 255, 255, 0.3);
+    --tg-text: #ecebe8;
+    --tg-muted: #a5a4a0;
+    --tg-accent: #7fb6e8;
+    --tg-accent-bg: rgba(127, 182, 232, 0.16);
+    --tg-success: #7ed49a;
+    --tg-danger: #ef9a9a;
+    --tg-warn: #f2c14e;
+    --tg-info: #b3a8ec;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--tg-bg);
+  color: var(--tg-text);
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    'Microsoft YaHei',
+    sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+h1 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+}
+
+h2 {
+  font-size: 14px;
+  font-weight: 500;
+  margin: 24px 0 8px;
+}
+
+a {
+  color: var(--tg-accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  background: var(--tg-panel-2);
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+
+:focus-visible {
+  outline: 2px solid var(--tg-accent);
+  outline-offset: 1px;
+}
+
+/* ---- table ---- */
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+th {
+  text-align: left;
+  font-weight: 500;
+  font-size: 12px;
+  color: var(--tg-muted);
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--tg-border);
+  white-space: nowrap;
+  background: var(--tg-panel-2);
+}
+
+td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--tg-border);
+  vertical-align: top;
+}
+
+/* ---- utilities ---- */
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+}
+
+.muted {
+  color: var(--tg-muted);
+}
+
+.small {
+  font-size: 12px;
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--tg-muted);
+  margin: 4px 0 12px;
+}
+
+.card {
+  background: var(--tg-panel);
+  border: 1px solid var(--tg-border);
+  border-radius: var(--tg-radius);
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+
+.split {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+/* Grid children must be allowed to shrink below content width, otherwise a
+   wide table forces the whole page to overflow on narrow screens. */
+.split > * {
+  min-width: 0;
+}
+
+/* Horizontal scroll container for wide tables on narrow viewports. */
+.table-wrap {
+  overflow-x: auto;
+}
+
+.kv {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: 13px;
+}
+
+.kv li {
+  display: flex;
+  justify-content: space-between;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--tg-border);
+}
+
+.plain {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.error-text {
+  color: var(--tg-danger);
+  font-size: 12px;
+}
+
+.notice-text {
+  color: var(--tg-success);
+  font-size: 12px;
+}
+
+/* ---- form controls ---- */
+
+input,
+select,
+textarea {
+  border: 1px solid var(--tg-border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 13px;
+  background: var(--tg-panel);
+  color: var(--tg-text);
+  height: var(--tg-control-h);
+  font-family: inherit;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--tg-accent);
+}
+
+/* ---- buttons ---- */
+
+.btn {
+  border: 1px solid var(--tg-border-strong);
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 13px;
+  background: var(--tg-panel);
+  color: var(--tg-text);
+  cursor: pointer;
+  height: var(--tg-control-h);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--tg-accent);
+  color: var(--tg-accent);
+}
+
+.btn.primary {
+  background: var(--tg-accent);
+  border-color: var(--tg-accent);
+  color: #ffffff;
+}
+
+.btn.primary:hover:not(:disabled) {
+  color: #ffffff;
+  filter: brightness(1.08);
+}
+
+.btn.danger {
+  border-color: var(--tg-danger);
+  color: var(--tg-danger);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.page {
+  max-width: 1280px;
+}

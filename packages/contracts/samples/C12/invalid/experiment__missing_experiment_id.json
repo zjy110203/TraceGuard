@@ -1,0 +1,15 @@
+{
+  "track": "diagnosis",
+  "method": "graph_plus_active",
+  "dataset_id": "trusted_v1",
+  "scenario_count": 3,
+  "metrics": {
+    "macro_f1": 0.83
+  },
+  "per_scenario": [],
+  "metadata": {
+    "seed": 42
+  },
+  "status": "COMPLETED",
+  "note": ""
+}

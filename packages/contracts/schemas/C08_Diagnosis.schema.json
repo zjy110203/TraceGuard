@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://traceguard.local/contracts/C08/0.2.0-draft",
+  "title": "Diagnosis",
+  "description": "八维度诊断：域与机制分离，CONFIRMED 必须由确定性规则支撑。",
+  "status": "draft",
+  "$ref": "#/$defs/Diagnosis",
+  "$defs": {
+    "Diagnosis": {
+      "type": "object",
+      "properties": {
+        "diagnosis_id": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "symptom": {
+          "type": "string"
+        },
+        "failure_domain": {
+          "type": "string"
+        },
+        "failure_mechanism": {
+          "type": "string"
+        },
+        "root_causes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "contributing_factors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "flaky_characteristic": {
+          "type": "string"
+        },
+        "diagnosis_status": {
+          "type": "string"
+        },
+        "disposition": {
+          "type": "string"
+        },
+        "hypotheses": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Hypothesis"
+          }
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "diagnosis_id",
+        "run_id",
+        "symptom",
+        "failure_domain",
+        "failure_mechanism",
+        "root_causes",
+        "contributing_factors",
+        "flaky_characteristic",
+        "diagnosis_status",
+        "disposition",
+        "hypotheses"
+      ],
+      "additionalProperties": false
+    },
+    "Hypothesis": {
+      "type": "object",
+      "properties": {
+        "hypothesis_id": {
+          "type": "string"
+        },
+        "statement": {
+          "type": "string"
+        },
+        "failure_domain": {
+          "type": "string"
+        },
+        "failure_mechanism": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "supporting": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EvidenceRef"
+          }
+        },
+        "contradicting": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EvidenceRef"
+          }
+        },
+        "confirmation_rule": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "hypothesis_id",
+        "statement",
+        "failure_domain",
+        "failure_mechanism"
+      ],
+      "additionalProperties": false
+    },
+    "EvidenceRef": {
+      "type": "object",
+      "properties": {
+        "ref_id": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref_id",
+        "source",
+        "role"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

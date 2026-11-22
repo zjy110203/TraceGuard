@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>项目列表 · TeamFlow</title>
+</head>
+<body>
+  <h1>项目列表</h1>
+  <nav><a href="/projects/new" data-testid="new-project-link">新建项目</a> | <a href="/logout">退出</a></nav>
+
+  {% if request.query_params.get('created') and not hide_success %}
+  <p style="color:#0a7d28" data-testid="success-message">项目创建成功</p>
+  {% endif %}
+  {% if hide_success %}
+  <p data-testid="success-message-hidden" style="display:none">项目创建成功</p>
+  {% endif %}
+
+  {% if refresh_delay_ms %}
+  <div id="delayed-list" data-delay-ms="{{ refresh_delay_ms }}" data-testid="delayed-list">
+    <p>列表加载中…</p>
+  </div>
+  <script>
+    setTimeout(function () {
+      document.getElementById('delayed-list').innerHTML = {{ projects | tojson }}.map(function (p) {
+        return '<li data-testid="project-item" data-project-id="' + p.id + '"><a href="/projects/' + p.id + '">' + p.name + '</a></li>';
+      }).join('');
+    }, {{ refresh_delay_ms }});
+  </script>
+  {% else %}
+  <ul data-testid="project-list">
+    {% for project in projects %}
+    <li data-testid="project-item" data-project-id="{{ project.id }}">
+      <a href="/projects/{{ project.id }}" data-testid="project-link-{{ project.id }}">{{ project.name }}</a>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</body>
+</html>

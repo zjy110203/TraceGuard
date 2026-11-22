@@ -1,0 +1,19 @@
+{
+  "evidence_type": "screenshot",
+  "raw": true,
+  "source": "browser",
+  "run_id": "run_sample_0001",
+  "step_id": "s1",
+  "recorded_at": "2026-11-22T04:00:05+00:00",
+  "summary": "login form after fill",
+  "attachment_ref": "blobs/evd_0001.png",
+  "integrity_check": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "source_trust": "observed",
+  "derived_from": [],
+  "redacted": false,
+  "retention": "run_scoped",
+  "payload": {
+    "width": 1280,
+    "height": 800
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "traceguard/C12_Benchmark.schema.json",
+  "title": "C12 Benchmark — Scenario / GroundTruth (DRAFT, stage-1 illustrative)",
+  "description": "示例结构，非冻结契约。阶段1用于记录 TeamFlow 场景元数据与 Ground Truth。正式字段待评审冻结。",
+  "type": "object",
+  "required": ["scenario_id", "ground_truth"],
+  "properties": {
+    "scenario_id": {"type": "string"},
+    "fault_id": {"type": ["string", "null"], "description": "关联故障机制，如 TF-API-001；正常场景为 null"},
+    "description": {"type": "string"},
+    "teamflow_version": {"type": "string"},
+    "data_seed": {"type": "string", "description": "数据种子标识，保证可重复"},
+    "injection_config": {"type": "object", "description": "故障注入参数"},
+    "cleanup_method": {"type": "string"},
+    "ground_truth": {
+      "type": "object",
+      "description": "预期真实业务状态；评测侧权威，Agent 不可读",
+      "required": ["expected_project_count"],
+      "properties": {
+        "expected_project_count": {"type": "integer", "minimum": 0},
+        "expected_project_status": {"type": "string"},
+        "expected_verdict": {"type": "string", "enum": ["PASSED", "FAILED", "INCONCLUSIVE"]},
+        "notes": {"type": "string"}
+      }
+    }
+  },
+  "additionalProperties": false
+}
