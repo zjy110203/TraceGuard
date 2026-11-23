@@ -24,8 +24,11 @@ jobs:
       - name: Type check (mypy)
         run: mypy packages apps --ignore-missing-imports
       - name: Unit + integration tests
-        # Capture full output so failures are diagnosable from the artifact.
-        run: pytest -q 2>&1 | tee pytest-output.txt
+        # pipefail preserves pytest's real exit code through tee;
+        # plain `pytest -q` under bash returns 2 here, so we capture via pipe.
+        run: |
+          set -o pipefail
+          pytest -q 2>&1 | tee pytest-output.txt
       - name: Upload pytest output on failure
         if: failure()
         uses: actions/upload-artifact@v4
