@@ -23,14 +23,8 @@ jobs:
         run: ruff format --check .
       - name: Type check (mypy)
         run: mypy packages apps --ignore-missing-imports
-      - name: Diagnose collection (temporary)
-        run: |
-          echo "=== python/deps ==="
-          python --version
-          python -m pip show pytest pytest-cov | grep -E 'Name|Version' || true
-          echo "=== collect-only (exposes import/collection errors) ==="
-          pytest --collect-only -q 2>&1 | tail -40
-          echo "=== files needed by tests ==="
-          ls -la benchmark/cases/ | head -5
       - name: Unit + integration tests
-        run: pytest -q --cov=packages --cov=apps --cov-report=term-missing
+        # Coverage reporting is validated locally; CI runs the suite without
+        # --cov because pytest-cov 7.x on ubuntu/python3.13 exits with code 2
+        # in this project's isolated-subprocess test environment.
+        run: pytest -q
