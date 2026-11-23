@@ -28,15 +28,6 @@ jobs:
         run: |
           set -o pipefail
           pytest -q 2>&1 | tee pytest-output.txt
-      - name: Surface pytest error as annotation
-        if: failure()
-        run: |
-          echo "::group::pytest tail"
-          tail -40 pytest-output.txt
-          echo "::endgroup::"
-          # Emit the last error lines as a check annotation (readable via public API)
-          ERR=$(grep -E "ERROR|error|FAILED|E   |ImportError|ModuleNotFound|exit code" pytest-output.txt | tail -8 | tr '\n' ' ')
-          echo "::error::PYTEST_DIAG: ${ERR:0:600}"
       - name: Upload pytest output on failure
         if: failure()
         uses: actions/upload-artifact@v4
