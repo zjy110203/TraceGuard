@@ -55,6 +55,10 @@ class BlobStore(Protocol):
 
     def exists(self, key: str) -> bool: ...
 
+    def verify(self, key: str) -> bool:
+        """Re-hash the stored bytes; the content-addressed integrity check."""
+        ...
+
 
 class LocalBlobStore:
     """Content-addressed store on the local filesystem, sharded two levels deep."""
@@ -165,6 +169,9 @@ class S3BlobStore:
 
     def exists(self, key: str) -> bool:  # pragma: no cover
         return False
+
+    def verify(self, key: str) -> bool:  # pragma: no cover
+        raise StorageError("S3BlobStore.verify is not implemented (unverified)")
 
 
 def _now() -> str:

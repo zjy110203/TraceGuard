@@ -26,6 +26,7 @@ from playwright.sync_api import sync_playwright
 
 from apps.api.main import build_app
 from packages.core.config import Settings
+from packages.execution.browser import browser_channel
 
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "apps" / "web" / "dist"
@@ -92,7 +93,7 @@ def test_workbench_renders_real_cases_and_probes(served: str) -> None:
     console_errors: list[str] = []
     not_found: list[str] = []
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(channel="chrome", headless=True)
+        browser = pw.chromium.launch(channel=browser_channel(), headless=True)
         page = browser.new_page(viewport={"width": 1360, "height": 900})
         page.on("console", lambda m: console_errors.append(m.text) if m.type == "error" else None)
         page.on("pageerror", lambda e: console_errors.append(str(e)))
@@ -136,7 +137,7 @@ def test_workbench_renders_real_cases_and_probes(served: str) -> None:
 def test_empty_pages_state_their_emptiness(served: str) -> None:
     """A page with no data must say so instead of inventing rows."""
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(channel="chrome", headless=True)
+        browser = pw.chromium.launch(channel=browser_channel(), headless=True)
         page = browser.new_page()
         page.goto(served + "/#/repairs", wait_until="networkidle")
         page.wait_for_selector("main")

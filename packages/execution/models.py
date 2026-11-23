@@ -220,6 +220,20 @@ class TestCaseVersion:
                     "placeholder as an input value"
                 )
 
+        # R5-4.7: a SENSITIVE TestDataRef must have an EMPTY value — the
+        # plaintext lives in the deployment's TestDataProvider, never in the
+        # case file. A credential-shaped ref with an inlined value is a defect
+        # even when no step references it.
+        from packages.execution.dataref import SENSITIVE_HINT
+
+        for ref in self.data_refs:
+            if ref.value and SENSITIVE_HINT.search(ref.ref_id):
+                raise ValueError(
+                    f"{self.case_id} v{self.version}: sensitive data ref {ref.ref_id!r} "
+                    "carries an inline value; it must be resolved by the deployment-level "
+                    "TestDataProvider at run time"
+                )
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 

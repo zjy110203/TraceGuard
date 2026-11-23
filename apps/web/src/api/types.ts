@@ -355,6 +355,20 @@ export interface PolicyCatalogue {
   policies: PolicyRow[]
   active_policy: string
   llm_blocked_reason: string
+  /** Registered business scenarios; anything else is UNSUPPORTED_SCENARIO. */
+  supported_scenarios: Record<string, string>
+}
+
+/** Goal verification check: evidence-backed, or explicitly deferred. */
+export interface GoalCheck {
+  name: string
+  expected: string
+  observed: string
+  ok: boolean
+  evaluated: boolean
+  deferred: boolean
+  evidence: string
+  note: string
 }
 
 export interface ExplorationSummary {
@@ -364,8 +378,13 @@ export interface ExplorationSummary {
   policy: string
   policy_label: string
   is_llm: boolean
+  /** Execution status of the exploration process: COMPLETED / FAILED / ... */
   status: string
+  /** Why the loop stopped — never a goal verdict by itself. */
   stop_reason: string
+  /** Business-goal verdict, deliberately separate from status/stop_reason. */
+  goal_status: string
+  goal_reason: string
   step_count: number
   started_at: string
   finished_at: string
@@ -393,18 +412,46 @@ export interface ExplorationTrace extends ExplorationSummary {
   evidence_refs: string[]
   /** Count of credential-shaped args masked server-side before storage. */
   redacted_fields?: number
+  /** The full TestIntent, embedded in the trace and covered by its hash. */
+  test_intent?: {
+    intent_id: string
+    description: string
+    source_ref: string
+    scenario?: string
+    goal: string
+    expected_outcomes: string[]
+    target: string
+    required_assertions: string[]
+    constraints: string[]
+  }
+  goal_checks?: GoalCheck[]
+}
+
+export interface ReviewChecklistItem {
+  id: string
+  text: string
+  required: boolean
+}
+
+export interface TestDataRefRow {
+  ref_id: string
+  locator: string
+  value: string
 }
 
 export interface CandidateRow {
   candidate_id: string
   case_id: string
   title: string
+  target?: string
   status: 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED' | string
   source_exploration_id: string
   source_trace_hash: string
   step_count: number
   assertion_count: number
   uncertainty_notes: string[]
+  review_checklist: ReviewChecklistItem[]
+  goal_status?: string
   model_version: string
   is_llm: boolean
   created_at: string
@@ -419,6 +466,7 @@ export interface CandidateStep {
   target: string
   value: string
   expected: string
+  value_ref?: string
 }
 
 export interface CandidateOracleSpec {
@@ -429,10 +477,20 @@ export interface CandidateOracleSpec {
   approved: boolean
   approved_by: string
   source: string
+  expected_value?: unknown
 }
 
 export interface CandidateDetail extends CandidateRow {
-  intent: { intent_id: string; description: string; source_ref: string }
+  intent: {
+    intent_id: string
+    description: string
+    source_ref: string
+    goal?: string
+    expected_outcomes?: string[]
+    target?: string
+    required_assertions?: string[]
+    constraints?: string[]
+  }
   steps: CandidateStep[]
   oracle_bindings: {
     assertion_id: string
@@ -444,6 +502,12 @@ export interface CandidateDetail extends CandidateRow {
   prompt_version: string
   compiled_from: string
   rejection_reason: string
+  observations?: Record<string, unknown>[]
+  data_refs?: TestDataRefRow[]
+  review_checklist: ReviewChecklistItem[]
+  goal_status?: string
+  goal_checks?: GoalCheck[]
+  goal_reason?: string
 }
 
 export interface ChainStageRow {

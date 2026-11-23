@@ -275,15 +275,33 @@ class Orchestrator:
         self.runs.transition(run_id, RunStatus.RUNNING)
         self.bus.publish("run.running", run_id, task_id, attempt=view.attempt)
 
-        report = chain.run(
-            scenario_id or case.case_id,
-            case,
-            fault_events=fault_events,
-            probe_requests=probe_requests,
-            workspace_id=workspace_id,
-            run_id_override=run_id,
-            cancel_check=lambda: self.runs.is_cancel_requested(run_id),
-        )
+        report: Any
+        try:
+            report = chain.run(
+                scenario_id or case.case_id,
+                case,
+                fault_events=fault_events,
+                probe_requests=probe_requests,
+                workspace_id=workspace_id,
+                run_id_override=run_id,
+                cancel_check=lambda: self.runs.is_cancel_requested(run_id),
+            )
+        except Exception as exc:
+            # R5-4.6 §4.4: a chain that blows up must never leave its Run row
+            # RUNNING. Finalize it as FAILED with the reason, then re-raise so
+            # the caller sees the real error.
+            logger.error("chain_execution_error: %s: %s", run_id, exc)
+            self.runs.transition(run_id, RunStatus.FINALIZING)
+            self.runs.finalize(
+                run_id,
+                status=RunStatus.FAILED,
+                execution_status="FAILED",
+                test_verdict="NOT_EVALUATED",
+                report={"error": f"{type(exc).__name__}: {exc}"[:1000]},
+                error=f"{type(exc).__name__}: {exc}"[:1000],
+            )
+            self.bus.publish("run.finished", run_id, task_id, status="FAILED", error=str(exc))
+            raise
 
         self.runs.transition(run_id, RunStatus.FINALIZING)
         self.bus.publish(
@@ -296,13 +314,31 @@ class Orchestrator:
             try:
                 persisted = after_run(report) or {}
             except Exception as exc:  # noqa: BLE001 - persistence failure is a finding
-                persisted = {"error": f"{type(exc).__name__}: {exc}"[:500]}
+                # R5-4.7 §4.3: a persistence blow-up must still land as a
+                # FAILED stage on the run — an empty {"error"} dict hid it.
+                persisted = {
+                    "status": "FAILED",
+                    "error": f"{type(exc).__name__}: {exc}"[:500],
+                    "stages": [
+                        {
+                            "name": "persistence",
+                            "status": "FAILED",
+                            "detail": f"{type(exc).__name__}: {exc}"[:500],
+                        }
+                    ],
+                }
+            from packages.execution.pipeline import ChainStage
+
             for entry in persisted.get("stages", []):
-                progress(
+                stage = ChainStage(
                     str(entry.get("name", "persistence")),
                     str(entry.get("status", "FAILED")),
                     str(entry.get("detail", "")),
                 )
+                # The stage must be visible BOTH live (progress) and in the
+                # final report the chain record aggregates.
+                report.stages.append(stage)
+                progress(stage.name, stage.status, stage.detail)
             report.persisted = persisted
 
         cancelled = bool(report.cancelled)

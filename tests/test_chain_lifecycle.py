@@ -239,6 +239,82 @@ def test_stage_failure_is_not_hidden(client: TestClient, monkeypatch: pytest.Mon
     assert run["error"]
 
 
+def test_chain_exception_finalizes_the_run_as_failed(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R5-4.7 §4.4: a chain that RAISES must never leave its Run RUNNING."""
+
+    class ExplodingChain:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        def run(self, scenario_id: str, case: Any, **_kwargs: Any) -> FullChainReport:
+            raise RuntimeError("graph backend exploded mid-chain")
+
+    monkeypatch.setattr("packages.execution.pipeline.FullChain", ExplodingChain)
+    with pytest.raises(RuntimeError, match="graph backend exploded"):
+        client.post("/api/v1/chains", json={"case_id": "TC-LIFE-001"})
+    # the route surfaces the real error (500), but the Run row must be terminal
+    run_rows = client.get("/api/v1/tasks/task_TC-LIFE-001/runs").json()
+    assert run_rows, "the run row exists even though the chain exploded"
+    latest = run_rows[-1]
+    assert latest["status"] == "FAILED", latest
+    assert latest["finished_at"], "the run was finalized, not left RUNNING"
+    assert "graph backend exploded" in (latest.get("abort_reason") or latest.get("error") or "")
+
+
+def test_after_run_persistence_failure_is_a_visible_failed_stage(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R5-4.7 §4.3 D: persistence failure can never read as a clean success."""
+
+    class OkChain:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        def run(self, scenario_id: str, case: Any, **kwargs: Any) -> FullChainReport:
+            report = FullChainReport(
+                scenario_id=scenario_id, chain_id=f"chain_{kwargs.get('run_id_override')}"
+            )
+            report.completed = True
+            report.execution = {
+                "run_id": kwargs.get("run_id_override"),
+                "execution_status": "COMPLETED",
+                "test_verdict": "PASSED",
+            }
+            return report
+
+    def broken_persist(report: Any) -> dict[str, Any]:
+        raise RuntimeError("ChainStore save failed: disk full")
+
+    monkeypatch.setattr("packages.execution.pipeline.FullChain", OkChain)
+    from apps.api import chain_api as chain_api_module
+
+    original = chain_api_module._persist_events
+
+    def persist_boom(*_args: Any, **_kw: Any) -> dict[str, Any]:
+        raise RuntimeError("EventStore unavailable")
+
+    monkeypatch.setattr(chain_api_module, "_persist_events", persist_boom)
+    body = client.post("/api/v1/chains", json={"case_id": "TC-LIFE-001"}).json()
+    monkeypatch.setattr(chain_api_module, "_persist_events", original)
+
+    # execution itself was fine...
+    assert body["execution_status"] == "COMPLETED"
+    # ...but the persistence failure is visible on every surface
+    assert body["persisted"].get("status") == "FAILED"
+    assert body["persistence_status"] == "FAILED"
+    assert body["chain_status"] == "FAILED"
+    assert any(s["name"] == "persistence" and s["status"] == "FAILED" for s in body["stages"])
+    run = client.get(f"/api/v1/runs/{body['run_id']}").json()
+    # The five axes stay SEPARATE (spec §4.3 D): the run's execution status is
+    # COMPLETED, but the persistence failure is queryable on the run's report
+    # and dominates the chain completion status.
+    assert run["status"] == "COMPLETED"
+    run_report = client.get(f"/api/v1/runs/{body['run_id']}/report").json()
+    assert run_report.get("persisted", {}).get("status") == "FAILED"
+
+
 def test_cleanup_policy_is_planned_and_recorded(client: TestClient) -> None:
     """Cleanup is decided before a run and its outcome recorded separately."""
     from packages.execution.models import CleanupPolicy, TestCaseVersion, TestIntent

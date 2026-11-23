@@ -38,6 +38,7 @@ from packages.agents.exploration import (
     verify_trace_record,
 )
 from packages.agents.explorer import Explorer
+from packages.agents.scripted_agent import ScriptedAgentPolicy, teamflow_login_agent_steps
 from packages.core.errors import ConflictError, NotFoundError, ValidationError
 from packages.core.logging import get_logger
 from packages.execution.dataref import REDACTED_MARKER
@@ -77,7 +78,19 @@ POLICIES: list[dict[str, Any]] = [
         "is_llm": False,
         "verified": True,
         "agent_version": "scripted-policy-1.0.0-NOT-LLM",
-        "note": "确定性导航脚本；不调用任何模型，动作仍经安全网关校验。",
+        "note": "固定导航脚本；不消费观察结果，不调用任何模型，动作仍经安全网关校验。",
+    },
+    {
+        "id": "scripted-agent",
+        "label": "Scripted Agent (simulated decisions)",
+        "kind": "scripted-agent",
+        "is_llm": False,
+        "verified": True,
+        "agent_version": "scripted-agent-1.0.0-NOT-REAL-INFERENCE",
+        "note": (
+            "模拟决策环：Observation → LLMPolicy → ScriptedProvider → ToolGateway → 真实浏览器。"
+            "决策为预编排 JSON（NOT_REAL_INFERENCE），每步必须与当前观察匹配。"
+        ),
     },
     {
         "id": "llm",
@@ -89,6 +102,46 @@ POLICIES: list[dict[str, Any]] = [
         "note": "接入接口已保留；本轮未执行真实模型调用（费用未获批），状态 BLOCKED。",
     },
 ]
+
+# The honest scenario registry (R5-4.6 §3.1.1): the Explorer implements exactly
+# ONE business scenario. Anything else is refused as UNSUPPORTED_SCENARIO
+# instead of silently replaying the login script and claiming success.
+SUPPORTED_SCENARIOS: dict[str, str] = {
+    "teamflow-login": "登录 TeamFlow 并进入项目列表（已实现；动作仍经安全网关校验）",
+}
+
+
+def build_policy(policy_id: str, settings: Any, base_url: str) -> tuple[Any, str]:
+    """Build the named policy. Returns (policy, agent_version).
+
+    ``scripted``      — fixed ToolCall script, decisions never read the page.
+    ``scripted-agent``— Observation→LLMPolicy→ScriptedProvider loop; every
+    decision is a structured JSON answer guarded by an expectation on the
+    CURRENT page, so a drifted page stops the loop loudly.
+    """
+    if policy_id == "scripted":
+        return ScriptedPolicy(_login_script(settings, base_url)), ("scripted-policy-1.0.0-NOT-LLM")
+    if policy_id == "scripted-agent":
+        steps = teamflow_login_agent_steps(
+            base_url=base_url,
+            username=str(settings.teamflow_test_user),
+            password=str(settings.teamflow_test_password),
+        )
+        return (
+            ScriptedAgentPolicy(
+                steps,
+                goal=SUPPORTED_SCENARIOS["teamflow-login"],
+            ),
+            "scripted-agent-1.0.0-NOT-REAL-INFERENCE",
+        )
+    raise ConflictError(
+        "policy is not available in this build",
+        details={
+            "policy": policy_id,
+            "available": ["scripted", "scripted-agent"],
+            "llm_reason": "真实 LLM 调用未获批（D8）。",
+        },
+    )
 
 
 # ----------------------------------------------------------------- storage
@@ -174,13 +227,18 @@ def _summary(record: dict[str, Any]) -> dict[str, Any]:
         "policy": record.get("policy") or "scripted",
         "policy_label": record.get("policy_label") or "",
         "is_llm": bool(record.get("is_llm")),
+        # execution status of the exploration process: COMPLETED/FAILED/CANCELLED
         "status": record.get("status") or "UNKNOWN",
         "stop_reason": record.get("stop_reason") or "",
+        # business-goal verdict, deliberately separate from status/stop_reason
+        "goal_status": record.get("goal_status") or "",
+        "goal_reason": record.get("goal_reason") or "",
         "step_count": record.get("step_count", 0),
         "observation_count": len(record.get("observations") or []),
         "started_at": record.get("started_at") or "",
         "finished_at": record.get("finished_at") or "",
         "source_trace_hash": record.get("source_trace_hash") or "",
+        "hash_version": record.get("hash_version"),
         "trace_integrity_verified": record.get("trace_integrity_verified"),
         "security_event_count": len(record.get("security_events") or []),
         "error": record.get("error"),
@@ -192,14 +250,16 @@ def _summary(record: dict[str, Any]) -> dict[str, Any]:
 
 class RunExplorationRequest(BaseModel):
     intent_ref: str = ""
-    # R5-4.1: the goal, not just a label. Without these, a compiled candidate
-    # can only say "an action succeeded"; with them it can say what was meant
-    # to be true afterwards.
+    # R5-4.6: the FULL TestIntent travels with the request, is persisted with
+    # the trace, covered by the trace hash, and is the compiler's input.
     goal: str = ""
     expected_outcomes: list[str] = []
     target: str = ""
     required_assertions: list[str] = []
     constraints: list[str] = []
+    # Declared business scenario (§3.1.1). Only registered scenarios run; an
+    # unknown one gets UNSUPPORTED_SCENARIO instead of a silent login replay.
+    scenario: str = "teamflow-login"
     base_url: str = "http://127.0.0.1:8001"
     policy: str = "scripted"
     max_steps: int = 8
@@ -216,6 +276,7 @@ def list_policies() -> dict[str, Any]:
         "policies": POLICIES,
         "active_policy": "scripted",
         "llm_blocked_reason": "真实模型调用未获批（D8）；本轮仅验证受控调用链。",
+        "supported_scenarios": SUPPORTED_SCENARIOS,
     }
 
 
@@ -248,13 +309,26 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
     Declared as a sync ``def`` on purpose: the Playwright sync API cannot run
     inside the event loop, and FastAPI executes sync handlers in a threadpool.
     """
-    if body.policy != "scripted":
+    if body.policy == "llm":
         raise ConflictError(
             "LLM policy is not available in this build",
             details={
                 "policy": body.policy,
-                "reason": "真实 LLM 调用未获批（D8）；请使用 scripted 策略。",
-                "available": ["scripted"],
+                "reason": "真实 LLM 调用未获批（D8）；请使用 scripted 或 scripted-agent 策略。",
+                "available": ["scripted", "scripted-agent"],
+            },
+        )
+    if body.scenario not in SUPPORTED_SCENARIOS:
+        # §3.1.1: unsupported goals must be REJECTED, never silently executed
+        # as the login script while claiming to satisfy the user's business
+        # goal.
+        raise ValidationError(
+            f"UNSUPPORTED_SCENARIO: scenario {body.scenario!r} is not implemented; "
+            "the Explorer will not replay the login script as a stand-in",
+            details={
+                "code": "UNSUPPORTED_SCENARIO",
+                "requested_scenario": body.scenario,
+                "supported_scenarios": SUPPORTED_SCENARIOS,
             },
         )
 
@@ -268,11 +342,12 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
     if not 1 <= body.max_steps <= 30:
         raise ValidationError("max_steps must be between 1 and 30")
 
-    title = next((p["label"] for p in POLICIES if p["id"] == "scripted"), "Scripted Policy")
+    title = next((p["label"] for p in POLICIES if p["id"] == body.policy), body.policy)
     started = datetime.now(UTC).isoformat()
 
+    policy, agent_version = build_policy(body.policy, request.app.state.settings, body.base_url)
     explorer = Explorer(
-        policy=ScriptedPolicy(_login_script(request.app.state.settings, body.base_url)),
+        policy=policy,
         budget=Budget(
             max_steps=body.max_steps,
             max_tool_calls=body.max_steps * 2 + 4,
@@ -282,12 +357,30 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
             # of the permission (R5-4.3 §5.3).
             allowed_origins=(origin_of(body.base_url),),
         ),
+        application_version=f"teamflow-0.1.0 ({body.scenario})",
     )
+    # The TestIntent is assembled ONCE here, embedded into the trace before
+    # finalize (so the v2 hash covers it), and is the exact input the compiler
+    # and the reviewer see later.
+    test_intent: dict[str, Any] = {
+        "intent_id": body.intent_ref or f"i-{explorer.trace.exploration_id}",
+        "description": body.goal or body.intent_ref or SUPPORTED_SCENARIOS[body.scenario],
+        "source_ref": body.intent_ref,
+        "scenario": body.scenario,
+        "goal": body.goal,
+        "expected_outcomes": [str(o) for o in body.expected_outcomes if str(o).strip()],
+        # No silent fallback: an undeclared target stays undeclared, so a
+        # goal-less exploration evaluates to NOT_EVALUATED instead of being
+        # "verified" against the entry page it started on.
+        "target": str(body.target or "").strip(),
+        "required_assertions": [str(a) for a in body.required_assertions if str(a).strip()],
+        "constraints": [str(c) for c in body.constraints if str(c).strip()],
+    }
 
     status = "COMPLETED"
     error: str | None = None
     try:
-        trace = explorer.explore(body.intent_ref, body.base_url)
+        trace = explorer.explore(body.intent_ref, body.base_url, intent=test_intent)
         payload = trace.to_dict()
     except Exception as exc:  # noqa: BLE001 - surface target/execution failure honestly
         status = "FAILED"
@@ -299,20 +392,12 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
 
     record: dict[str, Any] = {
         **payload,
-        "policy": "scripted",
+        "policy": body.policy,
         "policy_label": title,
         "is_llm": False,
+        "agent_version": payload.get("agent_version") or agent_version,
         "target": body.base_url,
-        "test_intent": {
-            "intent_id": body.intent_ref or f"i-{payload.get('exploration_id', '')}",
-            "description": body.goal or body.intent_ref,
-            "source_ref": body.intent_ref,
-            "goal": body.goal,
-            "expected_outcomes": list(body.expected_outcomes),
-            "target": body.target or body.base_url,
-            "required_assertions": list(body.required_assertions),
-            "constraints": list(body.constraints),
-        },
+        "test_intent": payload.get("test_intent") or test_intent,
         "status": status,
         "error": error,
         "step_count": len([a for a in payload.get("action_sequence", []) if not a.get("rejected")]),

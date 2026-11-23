@@ -46,7 +46,12 @@ from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
 
-from packages.agents.exploration import ExplorationTrace
+from packages.agents.exploration import (
+    ExplorationTrace,
+    GoalStatus,
+    evaluate_goal,
+    intent_of,
+)
 from packages.core.errors import ValidationError
 from packages.execution.dataref import derive_value_ref, is_placeholder
 from packages.execution.models import (
@@ -61,11 +66,32 @@ from packages.execution.models import (
 )
 from packages.execution.verdict import OracleVerdict
 
-COMPILER_VERSION = "1.1.0"
+COMPILER_VERSION = "1.2.0"
 LOCATOR_STRATEGY_VERSION = "1.0.0"
 
 _STATE_ASSERTION = re.compile(r"^state\.([A-Za-z0-9_.]+)\s*=\s*(.+)$")
 _NAV_TOOLS = {"navigate", "fill", "click", "wait", "snapshot"}
+
+GOAL_REFUSAL_CODE = "GOAL_NOT_VERIFIED"
+
+
+def _normalize_target_path(raw: str) -> str:
+    path = raw.strip()
+    if not path:
+        return ""
+    if "://" in path:
+        path = urlparse(path).path
+    if not path.startswith("/"):
+        path = f"/{path}"
+    return path.rstrip("/") or "/"
+
+
+def _dedupe_checklist(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Stable de-duplication by id; the first occurrence wins."""
+    seen: dict[str, dict[str, Any]] = {}
+    for item in items:
+        seen.setdefault(str(item.get("id")), item)
+    return list(seen.values())
 
 
 def _now() -> str:
@@ -99,7 +125,15 @@ class CandidateTestCase:
     target: str = ""
     observations: tuple[dict[str, Any], ...] = ()
     data_refs: tuple[TestDataRef, ...] = ()
-    review_checklist: tuple[str, ...] = ()
+    # Structured review checklist (R5-4.6): every item has a stable id, text and
+    # a required flag; the approve route refuses to promote until every
+    # required id is explicitly confirmed by the reviewer.
+    review_checklist: tuple[dict[str, Any], ...] = ()
+    # Goal evidence carried into review: the reviewer must see WHY compilation
+    # claimed the goal was verified, not just that it did.
+    goal_status: str = ""
+    goal_checks: tuple[dict[str, Any], ...] = ()
+    goal_reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -170,16 +204,21 @@ class TestCaseCompiler:
         trace: ExplorationTrace,
         steps: list[TestStep],
         intent: TestIntent | None,
-    ) -> tuple[list[TestStep], list[_AssertionDraft], list[str], list[str]]:
+    ) -> tuple[list[TestStep], list[_AssertionDraft], list[str], list[dict[str, Any]]]:
         """Assertion Constructor + Oracle Binder.
 
         Returns (extra_steps, drafts, notes, checklist). Every draft carries the
         step that produces its observation and a Primary Oracle whose ``source``
         names the evidence it came from.
+
+        R5-4.6: the expected page comes from the human's ``intent.target`` ONLY.
+        The observed final path is *evidence*, never an expectation — a trace
+        that ends on the login page can no longer compile a candidate whose
+        "expected" page is the login page itself.
         """
         observations = self._observations(trace)
         notes: list[str] = []
-        checklist: list[str] = []
+        checklist: list[dict[str, Any]] = []
         drafts: list[_AssertionDraft] = []
         extra_steps: list[TestStep] = []
         next_step = len(steps) + 1
@@ -199,27 +238,60 @@ class TestCaseCompiler:
         initial_testids = set(initial_order)
         final_testids = set(final_order)
 
-        expected_path = self._expected_path(intent, final_path)
-        path_expectation_source = (
-            f"intent.target={intent.target!r}"
-            if intent and intent.target
-            else "observed transition"
-        )
-        checklist.append(
-            f"确认目标路径 {expected_path!r} 是否代表业务成功（来源：{path_expectation_source}）"
-        )
-        drafts.append(
-            self._draft(
-                assertion_id=f"a{len(drafts) + 1}",
-                description=f"页面到达目标路径 {expected_path}",
-                oracle_id="o-url-path",
-                source_type="ui",
-                source_ref="ui.url_path",
-                expected_value=expected_path,
-                source=f"observed exploration {trace.exploration_id} / {path_expectation_source}",
-                required=True,
+        expected_path = self._expected_path(intent)
+        if expected_path:
+            # Hard admission rule: the trace must actually show the goal page.
+            # "wrong password stays on /login" therefore cannot compile a
+            # success candidate, and "budget ran out on /login" cannot either.
+            observed_normalized = final_path.rstrip("/") or "/"
+            if observed_normalized != expected_path:
+                raise ValidationError(
+                    "exploration did not reach the declared target page; refusing to compile",
+                    details={
+                        "code": GOAL_REFUSAL_CODE,
+                        "exploration_id": trace.exploration_id,
+                        "expected_target": expected_path,
+                        "observed_final_path": observed_normalized,
+                        "hint": (
+                            "re-explore with a goal the scenario can reach, "
+                            "or fix the intent target"
+                        ),
+                    },
+                )
+            checklist.append(
+                {
+                    "id": "chk-target-path",
+                    "text": (
+                        f"确认目标路径 {expected_path!r} 是人类声明的业务成功页面"
+                        f"（来源：intent.target，非探索观察结果）"
+                    ),
+                    "required": True,
+                }
             )
-        )
+            drafts.append(
+                self._draft(
+                    assertion_id=f"a{len(drafts) + 1}",
+                    description=f"页面到达目标路径 {expected_path}",
+                    oracle_id="o-url-path",
+                    source_type="ui",
+                    source_ref="ui.url_path",
+                    expected_value=expected_path,
+                    source=f"intent.target (human-declared); observed in {trace.exploration_id}",
+                    required=True,
+                )
+            )
+        else:
+            notes.append(
+                "intent declares no target page: no url assertion was generated; the candidate "
+                "relies on declared expected_outcomes / required_assertions only"
+            )
+            checklist.append(
+                {
+                    "id": "chk-no-target",
+                    "text": "意图未声明目标页面：请人工确认断言依据是否足以判定业务成功",
+                    "required": True,
+                }
+            )
 
         # 2. Destination marker: an element that the goal page has and the entry
         #    page did not. This is what proves the transition, not the click.
@@ -243,7 +315,13 @@ class TestCaseCompiler:
                     step=step,
                 )
             )
-            checklist.append(f"确认 {marker} 是否确实是目标页面的稳定标识（而非临时元素）")
+            checklist.append(
+                {
+                    "id": "chk-destination-marker",
+                    "text": f"确认 {marker} 是目标页面的稳定标识（而非临时元素）",
+                    "required": True,
+                }
+            )
         else:
             notes.append(
                 "no new data-testid appeared on the final page; destination could not be "
@@ -300,7 +378,13 @@ class TestCaseCompiler:
                     )
                 )
             else:
-                checklist.append(f"预期结果未在探索轨迹中观察到，需人工确认：{text}")
+                checklist.append(
+                    {
+                        "id": f"chk-outcome-unobserved-{len(checklist)}",
+                        "text": f"预期结果未在探索轨迹中观察到，需人工确认：{text}",
+                        "required": True,
+                    }
+                )
 
         # 5. Independent business-state Oracles: only when a human wrote the
         #    expected value into the intent. The compiler never guesses one.
@@ -308,7 +392,13 @@ class TestCaseCompiler:
             match = _STATE_ASSERTION.match(str(requirement).strip())
             if not match:
                 if str(requirement).strip():
-                    checklist.append(f"未自动生成（非 state.<key>=<json> 形式）：{requirement}")
+                    checklist.append(
+                        {
+                            "id": f"chk-assertion-unparsed-{len(checklist)}",
+                            "text": f"未自动生成（非 state.<key>=<json> 形式）：{requirement}",
+                            "required": True,
+                        }
+                    )
                 continue
             key, raw_expected = match.group(1), match.group(2)
             try:
@@ -340,9 +430,26 @@ class TestCaseCompiler:
         title: str,
         intent: TestIntent | None = None,
     ) -> CandidateTestCase:
+        # R5-4.6 admission: the SAME TestIntent the Explorer was given is the
+        # compiler's input (the explicit argument wins; otherwise the intent
+        # embedded in the trace). Without a verifiable business goal the
+        # compiler refuses — observations alone never define the expectation.
+        effective_intent = intent or self._embedded_intent(trace)
+        if effective_intent is None:
+            # _require_verified_goal refuses this shape; the fallback keeps the
+            # type checker honest about the unreachable path.
+            effective_intent = TestIntent(
+                intent_id=f"i-{trace.exploration_id}",
+                description=f"compiled from exploration {trace.exploration_id}",
+                source_ref=trace.test_intent_ref,
+            )
+        evaluation = self._require_verified_goal(trace, effective_intent)
+
         actions = self.normalize(trace)
         steps, data_refs, step_notes = self.extract(actions)
-        extra_steps, drafts, oracle_notes, checklist = self.build_assertions(trace, steps, intent)
+        extra_steps, drafts, oracle_notes, checklist = self.build_assertions(
+            trace, steps, effective_intent
+        )
         if not drafts:
             raise ValidationError(
                 "candidate has no business-meaningful assertion; refusing to compile a case "
@@ -357,12 +464,16 @@ class TestCaseCompiler:
                 "business persistence NOT verified (no independent state assertion supplied "
                 "in intent.required_assertions)"
             )
-
-        effective_intent = intent or TestIntent(
-            intent_id=f"i-{trace.exploration_id}",
-            description=f"compiled from exploration {trace.exploration_id}",
-            source_ref=trace.test_intent_ref,
+        checklist.append(
+            {
+                "id": "chk-oracle-basis",
+                "text": (
+                    "逐条确认每个正式 Oracle 的来源与预期值（value_ref / expected_value / source）"
+                ),
+                "required": True,
+            }
         )
+
         candidate = CandidateTestCase(
             candidate_id=f"cand_{hashlib.sha256(trace.source_trace_hash.encode()).hexdigest()[:10]}",
             case_id=case_id,
@@ -378,10 +489,62 @@ class TestCaseCompiler:
             target=str(effective_intent.target or ""),
             observations=tuple(self._observations(trace)[-4:]),
             data_refs=tuple(data_refs),
-            review_checklist=tuple(dict.fromkeys(checklist)),
+            review_checklist=tuple(_dedupe_checklist(checklist)),
+            goal_status=evaluation.status,
+            goal_checks=tuple(c.to_dict() for c in evaluation.checks),
+            goal_reason=evaluation.reason,
         )
         self.validate(candidate)
         return candidate
+
+    # ------------------------------------------------------------- admission
+
+    @staticmethod
+    def _embedded_intent(trace: ExplorationTrace) -> TestIntent | None:
+        """The intent persisted WITH the trace, when no explicit one is given."""
+        raw = intent_of(trace.test_intent)
+        if not raw:
+            return None
+        return TestIntent(
+            intent_id=str(raw.get("intent_id") or f"i-{trace.exploration_id}"),
+            description=str(raw.get("description") or ""),
+            source_ref=str(raw.get("source_ref") or ""),
+            goal=str(raw.get("goal") or ""),
+            expected_outcomes=tuple(raw.get("expected_outcomes") or ()),
+            target=str(raw.get("target") or ""),
+            required_assertions=tuple(raw.get("required_assertions") or ()),
+            constraints=tuple(raw.get("constraints") or ()),
+        )
+
+    @staticmethod
+    def _require_verified_goal(trace: ExplorationTrace, intent: TestIntent | None):
+        """No verified goal evidence -> no candidate. Full stop.
+
+        This is the gate for scenarios B/C/D/E of the R5-4.6 spec:
+
+        * wrong password (still on the login page) -> NOT_VERIFIED -> refused;
+        * budget exhausted before reaching the goal -> NOT_VERIFIED/INCONCLUSIVE
+          -> refused (a clean loop exit is not goal evidence);
+        * no declared goal at all -> NOT_EVALUATED -> refused;
+        * goal page does not match the declared target -> NOT_VERIFIED -> refused.
+        """
+        evaluation = evaluate_goal(intent, trace.observations)
+        if evaluation.status != GoalStatus.VERIFIED:
+            raise ValidationError(
+                "business goal is not verified by the exploration trace; refusing to compile",
+                details={
+                    "code": GOAL_REFUSAL_CODE,
+                    "exploration_id": trace.exploration_id,
+                    "goal_status": evaluation.status,
+                    "reason": evaluation.reason,
+                    "checks": [c.to_dict() for c in evaluation.checks],
+                    "hint": (
+                        "declare a reachable target/expected_outcomes in the TestIntent "
+                        "and re-explore, or have a human author the case directly"
+                    ),
+                },
+            )
+        return evaluation
 
     # -------------------------------------------------------------- validation
 
@@ -466,15 +629,18 @@ class TestCaseCompiler:
         return out
 
     @staticmethod
-    def _expected_path(intent: TestIntent | None, observed_final: str) -> str:
-        """Where the goal lives: the human's target wins over what was observed."""
+    def _expected_path(intent: TestIntent | None) -> str:
+        """Where the goal lives — the human's declared target, nothing else.
+
+        R5-4.6: the observed final path is no longer a fallback. Observations
+        are evidence, never the definition of expected behaviour; a compiler
+        that takes its expectation from the trace would certify whatever the
+        trace happened to do.
+        """
         raw = (intent.target if intent else "") or ""
-        if raw:
-            parsed = urlparse(raw) if "://" in raw else None
-            path = parsed.path if parsed else raw
-            if path and path.startswith("/"):
-                return path.rstrip("/") or "/"
-        return observed_final or "/"
+        if not raw.strip():
+            return ""
+        return _normalize_target_path(raw)
 
     @staticmethod
     def _destination_marker(

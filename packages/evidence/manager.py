@@ -23,7 +23,7 @@ from typing import Any
 from sqlalchemy import JSON, Integer, String, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
-from packages.core.errors import ConflictError
+from packages.core.errors import ConflictError, ValidationError
 from packages.evidence.storage import BlobStore
 
 
@@ -243,6 +243,17 @@ class EvidenceManager:
             raise ConflictError("import_record requires an evidence_id")
         existing = self.get(evidence_id)
         if existing is not None:
+            # R5-4.7: idempotency is content-aware. Re-importing the SAME
+            # capture is a safe no-op; reusing an evidence_id for DIFFERENT
+            # captured bytes (different integrity hash) is a conflict, not a
+            # duplicate — silently keeping the old row would hide a swap.
+            incoming_check = str(record.get("integrity_check") or "")
+            existing_check = str(existing.get("integrity_check") or "")
+            if incoming_check and existing_check and incoming_check != existing_check:
+                raise ValidationError(
+                    f"evidence_id {evidence_id!r} was reused with different content: "
+                    f"stored {existing_check} != incoming {incoming_check}"
+                )
             return existing
         derived_from = tuple(record.get("derived_from") or ())
         is_raw = bool(record.get("raw", True))
@@ -265,6 +276,24 @@ class EvidenceManager:
                     payload["blob"] = {"key": ref.key, "size": ref.size, "sha256": digest}
                 payload["byte_length"] = len(raw_bytes)
                 payload["binary_sha256"] = digest
+                # R5-4.7: write the persisted state BACK into the caller's
+                # record so the chain report (and the conditional byte-stripper)
+                # can see whether the bytes are confirmed in the blob store.
+                # The hex payload itself is NOT removed here — the report keeps
+                # it until the strip step has VERIFIED the blob; otherwise a
+                # failed or unverifiable write would silently destroy the only
+                # recovery copy.
+                in_record = record.get("payload")
+                if isinstance(in_record, dict):
+                    in_record.update(
+                        {
+                            k: payload[k]
+                            for k in ("blob", "byte_length", "binary_sha256")
+                            if k in payload
+                        }
+                    )
+                    if "image_hex_invalid" in payload:
+                        in_record["image_hex_invalid"] = True
         return self._add(
             evidence_id=evidence_id,
             layer="raw" if is_raw else "derived",

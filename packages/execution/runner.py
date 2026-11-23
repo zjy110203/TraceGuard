@@ -297,6 +297,9 @@ class LocalRunner:
                 # which is exactly what the compiler says it verified.
                 ui_observations[f"{step.step_id}.passed"] = result.ok
             browser.network_evidence(run_id)
+            # Any request the page attempted against a non-approved origin is
+            # part of the security record (R5-4.7 network gateway).
+            browser.security_evidence(run_id)
             # Page-level observations: a business assertion may legitimately be
             # "we ended up on /projects", which no per-step flag can express.
             page = browser.page

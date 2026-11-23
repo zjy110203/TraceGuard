@@ -50,6 +50,7 @@ const bindingByAssertion = computed(() => {
       <button
         class="btn primary"
         type="button"
+        data-testid="run-chain"
         :disabled="!approved || chainBusy"
         :title="approved ? '执行真实浏览器全链（约数十秒）' : '未通过人工批准的用例不可执行'"
         @click="runChain"

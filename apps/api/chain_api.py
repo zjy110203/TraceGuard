@@ -116,6 +116,11 @@ def _summary(report: dict[str, Any]) -> dict[str, Any]:
         "disposition": report.get("disposition"),
         "completed": bool(report.get("completed")),
         "cancelled": bool(report.get("cancelled")),
+        # Five separate status axes (R5-4.7 §4.3 D): never collapse persistence
+        # or graph failures into "the chain succeeded".
+        "persistence_status": report.get("persistence_status") or persisted.get("status", ""),
+        "graph_status": report.get("graph_status", ""),
+        "chain_status": report.get("chain_status", ""),
         "cleanup": report.get("cleanup") or {},
         # Non-duplicate graph write failures (R5-4.5): an empty list is the only
         # proof the Graph page can actually show this run.
@@ -123,7 +128,6 @@ def _summary(report: dict[str, Any]) -> dict[str, Any]:
         "started_at": report.get("started_at"),
         "duration_s": report.get("duration_s"),
         "persisted": persisted,
-        "persistence_status": persisted.get("status", ""),
         "stages": [
             {"name": s.get("name"), "status": s.get("status"), "detail": s.get("detail")}
             for s in report.get("stages", [])
@@ -168,6 +172,11 @@ def _persist_events(
 
     Previously *any* exception counted as a duplicate, so a genuine storage
     failure was indistinguishable from normal de-duplication.
+
+    R5-4.7: ``register_producer`` moved INSIDE the classified path — it talks
+    to the database, so an unavailable EventStore surfaces as
+    DEPENDENCY_UNAVAILABLE / FAILED per event instead of a raw 500 that hid
+    which stage broke.
     """
     store = request.app.state.event_store
     counter = OutcomeCounter()
@@ -178,8 +187,8 @@ def _persist_events(
         if not producer_instance:
             counter.add(PersistenceOutcome.FAILED, event_id, "missing producer_instance_id")
             continue
-        store.register_producer(producer_instance, producer_id)
         try:
+            store.register_producer(producer_instance, producer_id)
             store.append(
                 event_id=event_id,
                 event_type=str(event["event_type"]),
@@ -223,29 +232,76 @@ def _blob_store(request: Request) -> BlobStore | None:
 
 def _persist_evidence(
     request: Request, evidence: list[dict[str, Any]], blob_store: BlobStore | None
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    """Persist evidence records; return (summary, per-record outcome map).
+
+    R5-4.7: the per-record map lets the caller decide which records may have
+    their binary payloads stripped from the report — only records whose bytes
+    are confirmed in the blob store.
+    """
     manager = request.app.state.evidence_manager
     counter = OutcomeCounter()
+    outcomes: dict[str, dict[str, Any]] = {}
     for record in evidence:
         evidence_id = str(record.get("evidence_id") or "")
         try:
             manager.import_record(record, blob_store=blob_store)
             counter.add(PersistenceOutcome.WRITTEN, evidence_id)
+            outcomes[evidence_id] = {"status": PersistenceOutcome.WRITTEN.value}
         except Exception as exc:  # noqa: BLE001 - classified, never hidden
-            counter.add(classify_error(exc), evidence_id, f"{type(exc).__name__}: {exc}")
-    return counter.summary()
+            outcome = classify_error(exc)
+            counter.add(outcome, evidence_id, f"{type(exc).__name__}: {exc}")
+            outcomes[evidence_id] = {
+                "status": outcome.value,
+                "detail": f"{type(exc).__name__}: {exc}"[:300],
+            }
+    return counter.summary(), outcomes
 
 
-def _strip_screenshot_bytes(evidence: list[dict[str, Any]]) -> None:
-    """Drop the base64 payloads after the blob store has the real bytes.
+def _strip_screenshot_bytes(
+    evidence: list[dict[str, Any]],
+    *,
+    blob_store: BlobStore | None,
+    persisted: dict[str, dict[str, Any]],
+) -> list[str]:
+    """Drop hex screenshot payloads ONLY where the bytes are confirmed safe.
 
-    The image is already content-addressed on disk; keeping a hex copy inside
-    the append-only run report duplicated megabytes per step.
+    R5-4.7 fix: stripping used to run unconditionally after the persistence
+    attempt, so a failed blob write silently destroyed the only copy of the
+    screenshot. Now every condition must hold before the payload is removed:
+
+      * the evidence record persisted (WRITTEN, or DUPLICATE of an equal one);
+      * a blob key is attached and readable from the blob store;
+      * re-hashing the stored bytes matches the recorded digest.
+
+    Returns the ids of records whose bytes could NOT be confirmed — their
+    ``payload['image']`` stays in the report as recovery data.
     """
+    retained: list[str] = []
     for item in evidence:
         payload = item.get("payload")
-        if isinstance(payload, dict):
+        if not isinstance(payload, dict) or "image" not in payload:
+            continue
+        evidence_id = str(item.get("evidence_id") or "")
+        outcome = persisted.get(evidence_id, {}).get("status")
+        blob_meta = payload.get("blob") or {}
+        key = str(blob_meta.get("key") or "")
+        # digests are recorded with the "sha256:" scheme prefix; the blob key
+        # is the bare hex. Compare the digest CONTENT, not the notation.
+        recorded_digest = str(blob_meta.get("sha256") or "").removeprefix("sha256:")
+        safe = (
+            blob_store is not None
+            and outcome in {PersistenceOutcome.WRITTEN.value, PersistenceOutcome.DUPLICATE.value}
+            and key
+            and blob_store.exists(key)
+            and blob_store.verify(key)
+            and (not recorded_digest or recorded_digest == key)
+        )
+        if safe:
             payload.pop("image", None)
+        else:
+            retained.append(evidence_id)
+    return retained
 
 
 # ------------------------------------------------------------------ routes
@@ -294,9 +350,25 @@ def run_chain(request: Request, body: RunChainRequest) -> dict[str, Any]:
         """Persist the chain's artifacts while the Run is FINALIZING."""
         blob = _blob_store(request)
         events = _persist_events(request, report.events, workspace_id)
-        evidence = _persist_evidence(request, report.evidence, blob)
-        # Strip the bytes only after the blob store actually has them.
-        _strip_screenshot_bytes(report.evidence)
+        evidence, evidence_outcomes = _persist_evidence(request, report.evidence, blob)
+        # Strip the bytes only where the blob store provably has them; anything
+        # else keeps its payload in the report as recovery data.
+        retained = _strip_screenshot_bytes(
+            report.evidence, blob_store=blob, persisted=evidence_outcomes
+        )
+        if retained:
+            evidence["failures"].append(
+                {
+                    "ref": ",".join(retained[:5]),
+                    "outcome": "RETAINED_FOR_RECOVERY",
+                    "detail": (
+                        "screenshot bytes could not be confirmed in the blob store; "
+                        "hex payloads kept in the chain report"
+                    ),
+                }
+            )
+            if evidence["status"] == "OK":
+                evidence["status"] = "PARTIAL"
         stages = [
             {
                 "name": "event_persistence",
@@ -313,11 +385,15 @@ def run_chain(request: Request, body: RunChainRequest) -> dict[str, Any]:
         ]
         for entry in stages:
             report.stages.append(ChainStage(entry["name"], entry["status"], entry["detail"]))
-        status = (
-            "PARTIAL"
-            if "PARTIAL" in (events["status"], evidence["status"])
-            else ("FAILED" if "FAILED" in (events["status"], evidence["status"]) else "OK")
-        )
+        # R5-4.7: FAILED dominates PARTIAL. A total failure must not be
+        # beautified because some other stage got a partial write through.
+        statuses = (events["status"], evidence["status"])
+        if "FAILED" in statuses:
+            status = "FAILED"
+        elif "PARTIAL" in statuses:
+            status = "PARTIAL"
+        else:
+            status = "OK"
         return {
             "events": events,
             "evidence": evidence,
@@ -334,6 +410,18 @@ def run_chain(request: Request, body: RunChainRequest) -> dict[str, Any]:
 
     payload = report.to_dict()
     started_at = run_view.created_at or started_clock.isoformat()
+    persistence_status = str((report.persisted or {}).get("status") or "")
+    # R5-4.7: the five status axes stay separate. `completed` means the chain
+    # ran to its end; `chain_status` additionally requires persistence (and
+    # graph) stages to be clean — a persistence failure can never read as a
+    # fully successful chain.
+    stage_statuses = [s.status for s in report.stages]
+    if "FAILED" in stage_statuses:
+        chain_status = "FAILED"
+    elif "PARTIAL" in stage_statuses:
+        chain_status = "PARTIAL"
+    else:
+        chain_status = "OK" if report.completed else "FAILED"
     record: dict[str, Any] = {
         **payload,
         "case_id": case.case_id,
@@ -345,6 +433,9 @@ def run_chain(request: Request, body: RunChainRequest) -> dict[str, Any]:
         "started_at": started_at,
         "duration_s": round((datetime.now(UTC) - started_clock).total_seconds(), 2),
         "persisted": report.persisted,
+        "persistence_status": persistence_status,
+        "graph_status": "OK" if not report.graph_errors else "PARTIAL",
+        "chain_status": chain_status,
     }
     store: ChainStore = request.app.state.chain_store
     store.save(record)

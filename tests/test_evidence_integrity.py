@@ -192,7 +192,8 @@ def test_trace_hash_is_computed_after_redaction_and_verifies(teamflow: str) -> N
     tampered["action_sequence"][0]["args"]["url"] = "http://127.0.0.1:9/evil"
     assert verify_trace_record(tampered) is False
 
-    # And the hash is stable: recomputation over the same input is identical.
+    # And the hash is stable: recomputation over the same input is identical,
+    # now over the full v2 scope (intent + decisions + versions included).
     assert (
         compute_trace_hash(
             exploration_id=trace.exploration_id,
@@ -200,6 +201,16 @@ def test_trace_hash_is_computed_after_redaction_and_verifies(teamflow: str) -> N
             observations=trace.observations,
             security_events=trace.security_events,
             stop_reason=trace.stop_reason,
+            test_intent=trace.test_intent,
+            agent_decisions=trace.agent_decisions,
+            versions={
+                "agent_version": trace.agent_version,
+                "prompt_version": trace.prompt_version,
+                "tool_version": trace.tool_version,
+                "application_version": trace.application_version,
+                "browser_version": trace.browser_version,
+            },
+            hash_version=trace.hash_version,
         )
         == trace.source_trace_hash
     )

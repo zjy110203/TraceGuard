@@ -3,19 +3,44 @@
 Uses Playwright with ``channel="chrome"`` to reuse the system-installed Chrome
 (no browser download). All actions are deterministic and synchronous.
 Screenshots + DOM snapshots + network responses are captured as C06 evidence.
+
+R5-4.7 network gateway: the formal execution path now has the SAME network
+boundary as the Explorer — every request the page makes (subresource, redirect,
+iframe, websocket) passes an OriginPolicy derived from the approved target
+origin. A legal click that triggers an illegal request gets that request
+aborted and recorded; it never silently egresses.
 """
 
 from __future__ import annotations
 
+import os
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
 
+from packages.core.errors import ForbiddenError
 from packages.execution.events import EventCollector, EvidenceRecord
 from packages.execution.locators import LocatorRegistry
 from packages.execution.models import TestStep
+from packages.execution.netpolicy import OriginPolicy
+
+
+def browser_channel() -> str | None:
+    """The Chromium channel every test/production launch must use.
+
+    Default is the system Chrome (``channel="chrome"``) — the product contract.
+    CI has no system Chrome, so it sets ``TRACEGUARD_BROWSER_CHANNEL=""`` to
+    run against Playwright's bundled Chromium instead. The override is an
+    environment decision, never a per-call-site decision, so the channel cannot
+    drift between the Explorer and the formal runner.
+    """
+    raw = os.environ.get("TRACEGUARD_BROWSER_CHANNEL")
+    if raw is None:
+        return "chrome"
+    return raw or None
 
 
 @dataclass(frozen=True)
@@ -38,25 +63,88 @@ class BrowserManager:
         locators: LocatorRegistry | None = None,
         trace_dir: Path | None = None,
         run_id: str = "",
+        origin_policy: OriginPolicy | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.collector = collector
         self.locators = locators
         self.trace_dir = trace_dir
         self.run_id = run_id
+        # Default permission: exactly the approved target origin. Callers may
+        # narrow (never widen) it by passing an explicit policy.
+        self.origin_policy = origin_policy or OriginPolicy.for_base_url(base_url)
         self._pw: Any | None = None
         self.browser: Browser | None = None
         self.context: BrowserContext | None = None
         self.page: Page | None = None
         self._evidence: list[EvidenceRecord] = []
         self._network: list[dict[str, Any]] = []
+        self.blocked_requests: list[dict[str, str]] = []
         self._trace_path: Path | None = None
+        self._network_guard = threading.Lock()
+
+    def _guard_route(self, route: Any) -> None:
+        """The network security gateway: default-deny for every request."""
+        url = str(route.request.url)
+        if self.origin_policy.allows(url):
+            route.continue_()
+            return
+        reason = self.origin_policy.refusal_reason(url)
+        with self._network_guard:
+            if len(self.blocked_requests) < 50:  # bounded: a page spamming
+                # blocked requests must not balloon the trace
+                self.blocked_requests.append({"url": url[:300], "reason": reason})
+        try:
+            route.abort()
+        except Exception:  # noqa: BLE001 - a dead page must not break the guard
+            pass
+
+    def _on_popup(self, popup: Any) -> None:
+        """Popups are an egress channel: close before they load anything."""
+        try:
+            popup.close()
+        except Exception:  # noqa: BLE001
+            pass
+        with self._network_guard:
+            if len(self.blocked_requests) < 50:
+                self.blocked_requests.append(
+                    {"url": str(getattr(popup, "url", ""))[:300], "reason": "popup closed"}
+                )
+
+    def _on_download(self, download: Any) -> None:
+        try:
+            download.cancel()
+        except Exception:  # noqa: BLE001
+            pass
+        with self._network_guard:
+            if len(self.blocked_requests) < 50:
+                self.blocked_requests.append(
+                    {
+                        "url": str(getattr(download, "url", ""))[:300],
+                        "reason": "download cancelled",
+                    }
+                )
+
+    def _on_websocket(self, ws: Any) -> None:
+        url = str(getattr(ws, "url", ""))
+        if not self.origin_policy.allows(url):
+            try:
+                ws.close()
+            except Exception:  # noqa: BLE001
+                pass
+            with self._network_guard:
+                if len(self.blocked_requests) < 50:
+                    self.blocked_requests.append({"url": url[:300], "reason": "websocket closed"})
 
     def __enter__(self) -> BrowserManager:
         self._pw = sync_playwright()
         playwright = self._pw.__enter__()
-        self.browser = playwright.chromium.launch(channel="chrome", headless=True)
+        self.browser = playwright.chromium.launch(channel=browser_channel(), headless=True)
         self.context = self.browser.new_context(viewport={"width": 1280, "height": 800})
+        # EVERY request the page makes is checked against the approved origin —
+        # navigation, subresources, iframes, fetch/XHR, websockets. A legal
+        # click that triggers an off-origin request gets that request aborted.
+        self.context.route("**/*", self._guard_route)
         if self.trace_dir is not None:
             self.trace_dir.mkdir(parents=True, exist_ok=True)
             self._trace_path = self.trace_dir / f"trace_{self.run_id or 'session'}.zip"
@@ -64,6 +152,9 @@ class BrowserManager:
             self.context.tracing.start(screenshots=True, snapshots=True, sources=True)
         self.page = self.context.new_page()
         self.page.on("response", self._on_response)
+        self.page.on("popup", self._on_popup)
+        self.page.on("download", self._on_download)
+        self.page.on("websocket", self._on_websocket)
         return self
 
     def __exit__(self, *exc: object) -> None:
@@ -107,6 +198,26 @@ class BrowserManager:
                     "method": response.request.method,
                 }
             )
+
+    def security_evidence(self, run_id: str) -> EvidenceRecord | None:
+        """One evidence record for every blocked network attempt (if any)."""
+        if not self.blocked_requests:
+            return None
+        ev = EvidenceRecord.create(
+            evidence_type="network_blocked",
+            source="browser:network-gateway",
+            run_id=run_id,
+            step_id=None,
+            summary=f"{len(self.blocked_requests)} request(s) blocked by the origin policy",
+            source_trust="observed",
+            payload={"blocked": list(self.blocked_requests)},
+        )
+        self._evidence.append(ev)
+        self.collector.emit(
+            "security.request_blocked",
+            payload={"count": len(self.blocked_requests)},
+        )
+        return ev
 
     def evidence(self) -> tuple[EvidenceRecord, ...]:
         return tuple(self._evidence)
@@ -174,8 +285,20 @@ class BrowserManager:
                     url = step.target
                 else:
                     url = f"{self.base_url}{step.target}"
+                # The requested URL must be approved BEFORE the browser moves.
+                if not self.origin_policy.allows(url):
+                    raise ForbiddenError(self.origin_policy.refusal_reason(url))
                 page.goto(url, wait_until="domcontentloaded", timeout=15000)
-                detail = f"navigated to {url}"
+                # A redirect may land somewhere unapproved: verify the FINAL
+                # url, not just the requested one (same rule as the Explorer).
+                if not self.origin_policy.allows(page.url):
+                    final = page.url
+                    try:
+                        page.goto("about:blank")
+                    except Exception:  # noqa: BLE001
+                        pass
+                    raise ForbiddenError(f"navigation ended on an unapproved origin: {final}")
+                detail = f"navigated to {page.url}"
             elif step.action == "fill":
                 selector = self._target(step.target)
                 page.locator(selector).fill(step.value, timeout=10000)

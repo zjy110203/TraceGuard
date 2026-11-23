@@ -452,7 +452,10 @@ class ProductFlow:
                 "intent_ref": f"r5-4-5-{self.stamp}",
                 "goal": goal,
                 "expected_outcomes": ["新建项目"],
-                "target": tf_base,
+                # R5-4.6: the target is the human-declared SUCCESS page, not
+                # the entry URL — the compiler verifies the trace actually
+                # reached it before any candidate is produced.
+                "target": "/projects",
                 "required_assertions": ["state.project_count=0"],
                 "constraints": ["仅访问本地 TeamFlow", "不得使用真实外部账号"],
                 "base_url": tf_base,
@@ -465,6 +468,7 @@ class ProductFlow:
         explored = (
             status == 201
             and expl.get("status") == "COMPLETED"
+            and expl.get("goal_status") == "VERIFIED"
             and expl.get("is_llm") is False
             and int(expl.get("step_count") or 0) >= 4
         )
@@ -472,6 +476,7 @@ class ProductFlow:
             "explore-real-browser",
             explored,
             f"http={status} id={expl_id} status={expl.get('status')} "
+            f"goal={expl.get('goal_status')} stop={expl.get('stop_reason')} "
             f"steps={expl.get('step_count')} policy={expl.get('policy')} "
             f"is_llm={expl.get('is_llm')} inference=NOT_REAL_INFERENCE",
         )
@@ -544,11 +549,25 @@ class ProductFlow:
             f"cases_in_library={written} POST /chains -> {status} blocked={blocked_code}",
         )
 
-        # ---- 10. human approval ------------------------------------------
+        # ---- 10. human approval (server-enforced review gate, R5-4.6) -----
         self.begin()
+        status, cand_detail = api.get(f"/api/v1/candidates/{cand_id}")
+        cand_detail = cand_detail if isinstance(cand_detail, dict) else {}
+        required_ids = [
+            str(item.get("id"))
+            for item in cand_detail.get("review_checklist") or []
+            if item.get("required", True)
+        ]
         status, approved = api.post(
             f"/api/v1/candidates/{cand_id}/approve",
-            {"reviewer": self.username, "approval_record": f"R5-4-5-REV-{self.stamp}"},
+            {
+                "reviewer": self.username,
+                "approval_record": f"R5-4-5-REV-{self.stamp}",
+                # The server refuses approval without explicit confirmation of
+                # every required checklist item and of the uncertainty notes.
+                "review_confirmed": required_ids,
+                "uncertainty_acknowledged": True,
+            },
         )
         approved = approved if isinstance(approved, dict) else {}
         case_file = str(approved.get("case_file") or "")
@@ -935,7 +954,7 @@ class ProductFlow:
                 "intent_ref": f"r5-4-5-negative-{self.stamp}",
                 "goal": "负向对照：登录动作成功但业务状态不满足预期",
                 "expected_outcomes": ["新建项目"],
-                "target": tf_base,
+                "target": "/projects",
                 "required_assertions": ["state.project_count=1"],
                 "base_url": tf_base,
                 "policy": "scripted",
@@ -956,9 +975,21 @@ class ProductFlow:
         if status != 201:
             self.check("negative-control", False, f"compile failed: http={status} {cand}")
             return
+        status, neg_detail = api.get(f"/api/v1/candidates/{cand_id}")
+        neg_required = [
+            str(item.get("id"))
+            for item in (neg_detail if isinstance(neg_detail, dict) else {}).get("review_checklist")
+            or []
+            if item.get("required", True)
+        ]
         api.post(
             f"/api/v1/candidates/{cand_id}/approve",
-            {"reviewer": self.username, "approval_record": f"R5-4-5-NEG-{self.stamp}"},
+            {
+                "reviewer": self.username,
+                "approval_record": f"R5-4-5-NEG-{self.stamp}",
+                "review_confirmed": neg_required,
+                "uncertainty_acknowledged": True,
+            },
         )
         # Approving the control case would pollute the library if it silently
         # failed, so refuse to continue unless it is really in the library.

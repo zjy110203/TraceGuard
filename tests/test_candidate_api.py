@@ -6,7 +6,6 @@ explorer store, so these tests pin the pipeline contract rather than execution.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections.abc import Iterator
 from pathlib import Path
@@ -16,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.main import build_app
+from packages.agents.exploration import compute_trace_hash
 from packages.core.config import Settings
 
 TRACE_ACTIONS = [
@@ -76,13 +76,59 @@ TRACE_INTENT = {
 }
 
 
-def _trace_hash(actions: list[dict[str, Any]]) -> str:
-    canonical = json.dumps(
-        {"exploration_id": "exp_test_1", "action_sequence": actions, "stop_reason": "GOAL_REACHED"},
-        ensure_ascii=False,
-        sort_keys=True,
+def _trace_hash(record: dict[str, Any]) -> str:
+    """v2 trace hash over exactly what the compile gate verifies."""
+    return compute_trace_hash(
+        exploration_id=str(record["exploration_id"]),
+        action_sequence=list(record["action_sequence"]),
+        observations=list(record.get("observations") or []),
+        security_events=list(record.get("security_events") or []),
+        stop_reason=str(record.get("stop_reason") or ""),
+        test_intent=dict(record.get("test_intent") or {}),
+        agent_decisions=list(record.get("agent_decisions") or []),
+        versions={
+            "agent_version": str(record.get("agent_version") or ""),
+            "prompt_version": str(record.get("prompt_version") or ""),
+            "tool_version": str(record.get("tool_version") or ""),
+            "application_version": str(record.get("application_version") or ""),
+            "browser_version": str(record.get("browser_version") or ""),
+        },
+        hash_version=2,
     )
-    return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
+
+
+TRACE_AGENT_VERSION = "scripted-policy-1.0.0-NOT-LLM"
+
+
+def _trace_record() -> dict[str, Any]:
+    """A compileable persisted trace: R5-4.6 shape (intent embedded, v2 hash)."""
+    record = {
+        "exploration_id": "exp_test_1",
+        "test_intent_ref": "i-1",
+        "application_version": "r5",
+        "browser_version": "chrome",
+        "agent_version": TRACE_AGENT_VERSION,
+        "prompt_version": "none",
+        "tool_version": "1.0.0",
+        "test_intent": TRACE_INTENT,
+        "action_sequence": TRACE_ACTIONS,
+        "observations": TRACE_OBSERVATIONS,
+        "agent_decisions": [],
+        "security_events": [],
+        "page_state_ref": "",
+        "event_refs": [],
+        "evidence_refs": [],
+        "stop_reason": "GOAL_VERIFIED",
+        "hash_version": 2,
+        "goal_status": "VERIFIED",
+        "goal_checks": [],
+        "goal_reason": "",
+        "started_at": "2026-01-01T00:00:00+00:00",
+        "finished_at": "2026-01-01T00:00:10+00:00",
+        "status": "COMPLETED",
+    }
+    record["source_trace_hash"] = _trace_hash(record)
+    return record
 
 
 @pytest.fixture()
@@ -90,30 +136,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     explor_dir = tmp_path / "explorations"
     explor_dir.mkdir(parents=True, exist_ok=True)
     (explor_dir / "exp_test_1.json").write_text(
-        json.dumps(
-            {
-                "exploration_id": "exp_test_1",
-                "test_intent_ref": "i-1",
-                "application_version": "r5",
-                "browser_version": "chrome",
-                "agent_version": "scripted-policy-1.0.0-NOT-LLM",
-                "prompt_version": "none",
-                "tool_version": "1.0.0",
-                "action_sequence": TRACE_ACTIONS,
-                "observations": TRACE_OBSERVATIONS,
-                "test_intent": TRACE_INTENT,
-                "page_state_ref": "",
-                "event_refs": [],
-                "evidence_refs": [],
-                "stop_reason": "GOAL_REACHED",
-                "source_trace_hash": _trace_hash(TRACE_ACTIONS),
-                "started_at": "2026-01-01T00:00:00+00:00",
-                "finished_at": "2026-01-01T00:00:10+00:00",
-                "status": "COMPLETED",
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
+        json.dumps(_trace_record(), ensure_ascii=False), encoding="utf-8"
     )
     case_dir = tmp_path / "cases"
     case_dir.mkdir(parents=True, exist_ok=True)
@@ -135,6 +158,23 @@ def _compile(client: TestClient, **body: Any) -> dict[str, Any]:
     resp = client.post("/api/v1/explorations/exp_test_1/compile", json=body)
     assert resp.status_code == 201, resp.text
     return resp.json()
+
+
+def _required_checklist_ids(client: TestClient, candidate_id: str) -> list[str]:
+    detail = client.get(f"/api/v1/candidates/{candidate_id}").json()
+    return [item["id"] for item in detail.get("review_checklist", []) if item.get("required", True)]
+
+
+def _approve(client: TestClient, candidate_id: str, **extra: Any) -> Any:
+    """Approve the way the product must: confirm every required checklist item."""
+    body: dict[str, Any] = {
+        "reviewer": "qa-lead",
+        "approval_record": "REV-1",
+        "review_confirmed": _required_checklist_ids(client, candidate_id),
+        "uncertainty_acknowledged": True,
+        **extra,
+    }
+    return client.post(f"/api/v1/candidates/{candidate_id}/approve", json=body)
 
 
 def test_compile_produces_pending_candidate(client: TestClient) -> None:
@@ -181,12 +221,57 @@ def test_approve_requires_reviewer_and_record(client: TestClient) -> None:
     assert client.post(url, json={"reviewer": "qa", "approval_record": ""}).status_code == 422
 
 
+def test_approve_requires_checklist_confirmation(client: TestClient) -> None:
+    """Server-side gate: no approval without explicit per-item confirmation."""
+    cand = _compile(client)
+    url = f"/api/v1/candidates/{cand['candidate_id']}/approve"
+    required = _required_checklist_ids(client, cand["candidate_id"])
+    assert required, "the compiled candidate must carry a non-empty required checklist"
+
+    # One-click approval with an empty confirmation list is refused (422) and
+    # names exactly which items are missing.
+    resp = client.post(url, json={"reviewer": "qa", "approval_record": "REV-1"})
+    assert resp.status_code == 422
+    missing = resp.json()["error"]["details"]["missing_confirmations"]
+    assert sorted(missing) == sorted(required)
+
+    # Partial confirmation is still refused.
+    resp = client.post(
+        url,
+        json={
+            "reviewer": "qa",
+            "approval_record": "REV-1",
+            "review_confirmed": required[:1],
+        },
+    )
+    assert resp.status_code == 422
+
+    # Unknown ids are refused too (no confirming items that do not exist).
+    resp = client.post(
+        url,
+        json={
+            "reviewer": "qa",
+            "approval_record": "REV-1",
+            "review_confirmed": [*required, "chk-does-not-exist"],
+            "uncertainty_acknowledged": True,
+        },
+    )
+    assert resp.status_code == 422
+
+
+def test_approve_requires_uncertainty_acknowledgement(client: TestClient) -> None:
+    cand = _compile(client)
+    assert cand["uncertainty_notes"], "fixture candidate must carry uncertainty notes"
+    resp = _approve(client, cand["candidate_id"], uncertainty_acknowledged=False)
+    assert resp.status_code == 422
+    # ...but confirming every item and acknowledging them passes.
+    resp = _approve(client, cand["candidate_id"])
+    assert resp.status_code == 200, resp.text
+
+
 def test_approve_creates_formal_case_with_approved_oracle(client: TestClient) -> None:
     cand = _compile(client, case_id="TC-CAND-001", title="compiled login")
-    resp = client.post(
-        f"/api/v1/candidates/{cand['candidate_id']}/approve",
-        json={"reviewer": "qa-lead", "approval_record": "REV-1"},
-    )
+    resp = _approve(client, cand["candidate_id"])
     assert resp.status_code == 200, resp.text
     assert resp.json()["status"] == "APPROVED"
 
@@ -202,10 +287,20 @@ def test_approve_creates_formal_case_with_approved_oracle(client: TestClient) ->
 
 def test_approve_is_single_use(client: TestClient) -> None:
     cand = _compile(client)
-    url = f"/api/v1/candidates/{cand['candidate_id']}/approve"
-    body = {"reviewer": "qa", "approval_record": "REV-1"}
-    assert client.post(url, json=body).status_code == 200
-    assert client.post(url, json=body).status_code == 409
+    assert _approve(client, cand["candidate_id"]).status_code == 200
+    assert _approve(client, cand["candidate_id"]).status_code == 409
+
+
+def test_approve_refuses_tampered_source_trace(client: TestClient) -> None:
+    """Provenance re-check: editing the trace after compile must block approval."""
+    cand = _compile(client)
+    record = _trace_record()
+    record["action_sequence"][0]["args"]["url"] = "http://127.0.0.1:9/evil"
+    path = client.app.state.exploration_store.root / "exp_test_1.json"
+    path.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+    resp = _approve(client, cand["candidate_id"])
+    assert resp.status_code == 409
+    assert "integrity" in resp.json()["error"]["message"]
 
 
 def test_reject_closes_candidate_without_writing_case(client: TestClient) -> None:

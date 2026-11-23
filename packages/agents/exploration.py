@@ -46,12 +46,237 @@ def _now() -> str:
 
 
 class StopReason:
-    GOAL_REACHED = "GOAL_REACHED"
+    """Why the execution loop stopped — NEVER a business-goal verdict.
+
+    R5-4.6 separates "the loop ended" from "the goal was verified":
+
+    * ``PLAN_EXHAUSTED`` means a scripted plan ran out of steps. It says
+      nothing about the business goal. Only the goal evaluator
+      (:func:`evaluate_goal`) may return ``GOAL_VERIFIED`` evidence.
+    """
+
+    GOAL_VERIFIED = "GOAL_VERIFIED"
+    PLAN_EXHAUSTED = "PLAN_EXHAUSTED"
     STEP_BUDGET = "STEP_BUDGET"
     TIME_BUDGET = "TIME_BUDGET"
     TOOL_CALL_BUDGET = "TOOL_CALL_BUDGET"
     POLICY_STOP = "POLICY_STOP"
     ERROR = "ERROR"
+
+
+class ExplorationStatus:
+    """Execution-level status of the exploration process itself."""
+
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
+class GoalStatus:
+    """Business-goal verification outcome, independent of execution status."""
+
+    VERIFIED = "VERIFIED"
+    NOT_VERIFIED = "NOT_VERIFIED"
+    INCONCLUSIVE = "INCONCLUSIVE"
+    NOT_EVALUATED = "NOT_EVALUATED"
+
+
+# --------------------------------------------------------------- goal model
+
+
+def _normalize_path(raw: str) -> str:
+    path = raw.strip()
+    if not path:
+        return "/"
+    if "://" in path:  # a full URL: keep only its path component
+        path = urlparse(path).path or "/"
+    if not path.startswith("/"):
+        path = f"/{path}"
+    return path.rstrip("/") or "/"
+
+
+def intent_of(raw: Any) -> dict[str, Any]:
+    """Canonical intent dict from a ``TestIntent`` or a persisted mapping.
+
+    Accepts both shapes so the live path (dataclass) and the reload path (JSON)
+    share one goal-evaluation implementation.
+    """
+    if raw is None:
+        return {}
+    if isinstance(raw, dict):
+        return dict(raw)
+    return {
+        "intent_id": getattr(raw, "intent_id", ""),
+        "description": getattr(raw, "description", ""),
+        "source_ref": getattr(raw, "source_ref", ""),
+        "goal": getattr(raw, "goal", ""),
+        "expected_outcomes": list(getattr(raw, "expected_outcomes", ()) or ()),
+        "target": getattr(raw, "target", ""),
+        "required_assertions": list(getattr(raw, "required_assertions", ()) or ()),
+        "constraints": list(getattr(raw, "constraints", ()) or ()),
+    }
+
+
+@dataclass(frozen=True)
+class GoalCheck:
+    """One goal condition with its evidence. ``ok`` is only meaningful when
+    ``evaluated`` is True; otherwise the check could not be judged here."""
+
+    name: str
+    expected: str
+    observed: str
+    ok: bool = False
+    evaluated: bool = True
+    deferred: bool = False  # verified at formal-run time, not during exploration
+    evidence: str = ""
+    note: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "expected": self.expected,
+            "observed": self.observed,
+            "ok": self.ok,
+            "evaluated": self.evaluated,
+            "deferred": self.deferred,
+            "evidence": self.evidence,
+            "note": self.note,
+        }
+
+
+@dataclass(frozen=True)
+class GoalEvaluation:
+    status: str
+    checks: tuple[GoalCheck, ...]
+    reason: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "reason": self.reason,
+            "checks": [c.to_dict() for c in self.checks],
+        }
+
+
+_STATE_ASSERTION_FORM = re.compile(r"^state\.([A-Za-z0-9_.]+)\s*=")
+
+
+def evaluate_goal(intent: Any, observations: Any) -> GoalEvaluation:
+    """Judge the business goal against *observed evidence only*.
+
+    Rules (deterministic, no invention):
+
+    * No declared goal at all -> ``NOT_EVALUATED`` (case D: refuse to compile).
+    * A declared target or expected outcome that contradicts the final
+      observation -> ``NOT_VERIFIED`` (cases B and E).
+    * ``state.*`` required assertions cannot be read from the page; they are
+      marked ``deferred`` (evaluated by the independent Oracle at formal-run
+      time) and never count as failure, but at least one *observable* check
+      must pass for VERIFIED.
+    * No usable observation -> ``INCONCLUSIVE``.
+    """
+    data = intent_of(intent)
+    checks: list[GoalCheck] = []
+
+    target = str(data.get("target") or "").strip()
+    outcomes = [str(o).strip() for o in (data.get("expected_outcomes") or ()) if str(o).strip()]
+    required = [str(a).strip() for a in (data.get("required_assertions") or ()) if str(a).strip()]
+    goal = str(data.get("goal") or "").strip()
+
+    if not (target or outcomes or required or goal):
+        return GoalEvaluation(
+            GoalStatus.NOT_EVALUATED,
+            (),
+            "no explicit business goal declared (goal/target/expected_outcomes all empty)",
+        )
+
+    usable = [
+        o
+        for o in observations or ()
+        if str((o or {}).get("url") or "")
+        and not str((o or {}).get("url") or "").startswith("about:")
+    ]
+    if not usable:
+        return GoalEvaluation(
+            GoalStatus.INCONCLUSIVE,
+            (),
+            "no usable page observation to verify the goal against",
+        )
+    final = dict(usable[-1])
+    final_path = _normalize_path(str(final.get("url_path") or "/"))
+    final_text = str(final.get("text_excerpt") or "")
+
+    if target:
+        expected_path = _normalize_path(target)
+        checks.append(
+            GoalCheck(
+                name="target_path",
+                expected=expected_path,
+                observed=final_path,
+                ok=expected_path == final_path,
+                evidence=f"observations[{len(usable) - 1}].url_path",
+            )
+        )
+    else:
+        checks.append(
+            GoalCheck(
+                name="target_path",
+                expected="",
+                observed=final_path,
+                evaluated=False,
+                note="intent declares no target page; goal cannot be anchored to a route",
+            )
+        )
+
+    for text in outcomes:
+        checks.append(
+            GoalCheck(
+                name="expected_outcome",
+                expected=text,
+                observed=final_text[:200],
+                ok=text in final_text,
+                evidence=f"observations[{len(usable) - 1}].text_excerpt",
+            )
+        )
+
+    for requirement in required:
+        if _STATE_ASSERTION_FORM.match(requirement):
+            checks.append(
+                GoalCheck(
+                    name="required_assertion",
+                    expected=requirement,
+                    observed="",
+                    evaluated=False,
+                    deferred=True,
+                    note="independent business-state assertion; evaluated by the formal Oracle",
+                )
+            )
+        else:
+            checks.append(
+                GoalCheck(
+                    name="required_assertion",
+                    expected=requirement,
+                    observed="",
+                    evaluated=False,
+                    note="non state.<key>=<json> form; cannot be machine-verified in exploration",
+                )
+            )
+
+    evaluated = [c for c in checks if c.evaluated]
+    observable = [c for c in evaluated if not c.deferred]
+    failed = [c for c in evaluated if not c.ok]
+    if failed:
+        reasons = "; ".join(
+            f"{c.name}: expected {c.expected!r}, observed {c.observed!r}" for c in failed
+        )
+        return GoalEvaluation(GoalStatus.NOT_VERIFIED, tuple(checks), reasons)
+    if not any(c.ok for c in observable):
+        return GoalEvaluation(
+            GoalStatus.INCONCLUSIVE,
+            tuple(checks),
+            "no goal condition could be verified against a page observation",
+        )
+    return GoalEvaluation(GoalStatus.VERIFIED, tuple(checks))
 
 
 @dataclass(frozen=True)
@@ -355,6 +580,29 @@ def sanitize_action(action: dict[str, Any]) -> tuple[dict[str, Any], int]:
     return {**action, "args": clean}, masked
 
 
+HASH_VERSION_LEGACY = 1
+HASH_VERSION = 2
+
+# Fields hashed in v2: everything that influences compilation and review.
+# Deliberately EXCLUDED (derived state — hashing them would be self-reference):
+# status, step_count, goal evaluation output, trace_integrity_verified,
+# redacted_fields, requested_at, hash_version itself.
+_HASH_VERSION_FIELDS = (
+    "exploration_id",
+    "test_intent",
+    "action_sequence",
+    "observations",
+    "agent_decisions",
+    "security_events",
+    "stop_reason",
+    "agent_version",
+    "prompt_version",
+    "tool_version",
+    "application_version",
+    "browser_version",
+)
+
+
 def compute_trace_hash(
     *,
     exploration_id: str,
@@ -362,23 +610,51 @@ def compute_trace_hash(
     observations: list[dict[str, Any]],
     security_events: list[dict[str, Any]],
     stop_reason: str,
+    test_intent: dict[str, Any] | None = None,
+    agent_decisions: list[dict[str, Any]] | None = None,
+    versions: dict[str, Any] | None = None,
+    hash_version: int = HASH_VERSION,
 ) -> str:
     """Canonical hash over what was actually captured (already redacted).
 
     Hashing the post-redaction trace is the point: a hash of the plaintext form
     would describe a document that is deliberately not the one on disk.
+
+    v2 (R5-4.6) extends the canonical scope to the fields that decide whether a
+    trace can be compiled and reviewed: the TestIntent itself, every agent
+    decision, and the agent/prompt/tool/application/browser versions. A trace
+    whose intent or decisions are edited no longer validates against its hash.
     """
-    canonical = json.dumps(
-        {
-            "exploration_id": exploration_id,
-            "action_sequence": action_sequence,
-            "observations": observations,
-            "security_events": security_events,
-            "stop_reason": stop_reason,
-        },
-        ensure_ascii=False,
-        sort_keys=True,
-    )
+    if hash_version == HASH_VERSION_LEGACY:
+        canonical = json.dumps(
+            {
+                "exploration_id": exploration_id,
+                "action_sequence": action_sequence,
+                "observations": observations,
+                "security_events": security_events,
+                "stop_reason": stop_reason,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
+    v = dict(versions or {})
+    payload: dict[str, Any] = {
+        "exploration_id": exploration_id,
+        "test_intent": dict(test_intent or {}),
+        "action_sequence": action_sequence,
+        "observations": observations,
+        "agent_decisions": list(agent_decisions or []),
+        "security_events": security_events,
+        "stop_reason": stop_reason,
+        "agent_version": v.get("agent_version", ""),
+        "prompt_version": v.get("prompt_version", ""),
+        "tool_version": v.get("tool_version", ""),
+        "application_version": v.get("application_version", ""),
+        "browser_version": v.get("browser_version", ""),
+        "hash_scope": list(_HASH_VERSION_FIELDS),
+    }
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
 
 
@@ -388,16 +664,31 @@ def verify_trace_record(record: dict[str, Any]) -> bool:
     This is the check that makes the hash meaningful: it is verified against the
     bytes on disk (after a JSON round-trip), not against the in-memory object
     that produced them.
+
+    Versioning: records written before R5-4.6 carry no ``hash_version`` and are
+    verified with the legacy (v1) scope so historical traces keep validating —
+    tightening the scope silently would mark every old trace as tampered.
     """
     declared = str(record.get("source_trace_hash") or "")
     if not declared.startswith("sha256:"):
         return False
+    version = int(record.get("hash_version") or HASH_VERSION_LEGACY)
     recomputed = compute_trace_hash(
         exploration_id=str(record.get("exploration_id") or ""),
         action_sequence=list(record.get("action_sequence") or []),
         observations=list(record.get("observations") or []),
         security_events=list(record.get("security_events") or []),
         stop_reason=str(record.get("stop_reason") or ""),
+        test_intent=dict(record.get("test_intent") or {}),
+        agent_decisions=list(record.get("agent_decisions") or []),
+        versions={
+            "agent_version": str(record.get("agent_version") or ""),
+            "prompt_version": str(record.get("prompt_version") or ""),
+            "tool_version": str(record.get("tool_version") or ""),
+            "application_version": str(record.get("application_version") or ""),
+            "browser_version": str(record.get("browser_version") or ""),
+        },
+        hash_version=version,
     )
     return recomputed == declared
 
@@ -419,6 +710,10 @@ class ExplorationTrace:
     agent_version: str
     prompt_version: str
     tool_version: str
+    # The full TestIntent travels WITH the trace (R5-4.6): the compiler and the
+    # reviewer read the same intent the Explorer was given, and the v2 hash
+    # covers it so a post-hoc edit cannot pass unnoticed.
+    test_intent: dict[str, Any] = field(default_factory=dict)
     action_sequence: list[dict[str, Any]] = field(default_factory=list)
     observations: list[dict[str, Any]] = field(default_factory=list)
     agent_decisions: list[dict[str, Any]] = field(default_factory=list)
@@ -430,6 +725,13 @@ class ExplorationTrace:
     evidence_refs: list[str] = field(default_factory=list)
     stop_reason: str = ""
     source_trace_hash: str = ""
+    hash_version: int = HASH_VERSION
+    # Goal evaluation is DERIVED from (test_intent, observations); it is stored
+    # for the UI and the compile gate but deliberately excluded from the hash
+    # (hashing a derivation of hashed inputs is self-reference).
+    goal_status: str = ""
+    goal_checks: list[dict[str, Any]] = field(default_factory=list)
+    goal_reason: str = ""
     started_at: str = field(default_factory=_now)
     finished_at: str = ""
 
@@ -448,6 +750,16 @@ class ExplorationTrace:
             observations=self.observations,
             security_events=self.security_events,
             stop_reason=self.stop_reason,
+            test_intent=self.test_intent,
+            agent_decisions=self.agent_decisions,
+            versions={
+                "agent_version": self.agent_version,
+                "prompt_version": self.prompt_version,
+                "tool_version": self.tool_version,
+                "application_version": self.application_version,
+                "browser_version": self.browser_version,
+            },
+            hash_version=self.hash_version,
         )
 
     def to_dict(self) -> dict[str, Any]:

@@ -21,6 +21,10 @@ from packages.agents.exploration import Budget, StopReason
 from packages.agents.explorer import Explorer
 from packages.agents.llm import ModelConfig, ScriptedProvider, TracedClient
 from packages.agents.llm_policy import LLMPolicy
+from packages.execution.models import TestIntent
+
+# A dataclass named Test* is not a pytest test class.
+TestIntent.__test__ = False
 
 TF_PORT = 8027
 TF_BASE = f"http://127.0.0.1:{TF_PORT}"
@@ -96,7 +100,7 @@ def test_llm_shaped_policy_drives_a_real_exploration(teamflow_server: None) -> N
     assert all(t.provider == "scripted" for t in client.traces)
     executed = [step for step in trace.action_sequence if not step.get("rejected")]
     assert len(executed) >= 4
-    assert trace.stop_reason in {StopReason.POLICY_STOP, StopReason.GOAL_REACHED}
+    assert trace.stop_reason == StopReason.PLAN_EXHAUSTED
     # trace records which policy produced it, and it is marked non-real inference
     assert "NOT-REAL-INFERENCE" in trace.agent_version
 
@@ -105,10 +109,24 @@ def test_trace_from_llm_loop_compiles_into_a_candidate(teamflow_server: None) ->
     """The compiler must not care whether a scripted or LLM policy produced the trace."""
     policy, _ = _policy()
     explorer = Explorer(policy=policy, budget=Budget(max_steps=12, max_tool_calls=24))
-    trace = explorer.explore("INT-LOGIN-COMPILE", TF_BASE)
+    intent = {
+        "intent_id": "INT-LOGIN-COMPILE",
+        "description": "log in as tester",
+        "source_ref": "INT-LOGIN-COMPILE",
+        "goal": "log in as tester and reach the project list",
+        "expected_outcomes": [],
+        "target": "/projects",
+        "required_assertions": [],
+        "constraints": [],
+    }
+    trace = explorer.explore("INT-LOGIN-COMPILE", TF_BASE, intent=intent)
+    assert trace.goal_status == "VERIFIED", trace.goal_reason
 
     candidate = TestCaseCompiler().compile(
-        trace, case_id="TC-LLM-001", title="login via reviewer-approved exploration"
+        trace,
+        case_id="TC-LLM-001",
+        title="login via reviewer-approved exploration",
+        intent=TestIntent(**intent),
     )
     assert candidate.case_id == "TC-LLM-001"
     assert candidate.source_exploration_id == trace.exploration_id

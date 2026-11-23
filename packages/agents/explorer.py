@@ -18,16 +18,21 @@ from playwright.sync_api import sync_playwright
 from packages.agents.exploration import (
     Budget,
     ExplorationTrace,
+    GoalStatus,
     Observation,
     Policy,
     ScriptedPolicy,
     StopReason,
     ToolCall,
     ToolGateway,
+    evaluate_goal,
+    intent_of,
     sanitize_action,
 )
 from packages.core.errors import ForbiddenError
 from packages.core.logging import get_logger
+from packages.execution.browser import browser_channel
+from packages.execution.netpolicy import OriginPolicy
 
 logger = get_logger(__name__)
 
@@ -48,31 +53,39 @@ class PlaywrightAdapter:
     def __init__(self, trace: ExplorationTrace, budget: Budget | None = None) -> None:
         self.trace = trace
         self.budget = budget or Budget()
+        # The route guard uses the SAME OriginPolicy implementation as the
+        # formal BrowserManager (R5-4.7): one network boundary, two consumers.
+        # A Budget without explicit origins stays hostname-scoped — inventing a
+        # default-port origin here would block every real target.
+        self.origin_policy = OriginPolicy(
+            allowed_domains=tuple(self.budget.allowed_domains),
+            allowed_origins=tuple(self.budget.allowed_origins),
+            allowed_schemes=tuple(self.budget.allowed_schemes),
+        )
         self._pw: Any | None = None
         self._browser: Any | None = None
         self._page: Any | None = None
         self.blocked_requests: list[str] = []
 
     def _approved(self, url: str) -> bool:
-        parsed = urlparse(url)
-        if parsed.scheme in {"data", "blob", "about"}:
-            return True  # in-page resources, no network egress
-        if parsed.scheme not in self.budget.allowed_schemes:
-            return False
-        return (parsed.hostname or "").lower() in self.budget.allowed_domains
+        return self.origin_policy.allows(url)
 
     def _guard_route(self, route: Any) -> None:
         url = str(route.request.url)
         if self._approved(url):
             route.continue_()
             return
-        self.blocked_requests.append(url)
-        route.abort()
+        if len(self.blocked_requests) < 50:  # bounded against request spam
+            self.blocked_requests.append(url)
+        try:
+            route.abort()
+        except Exception:  # noqa: BLE001 - a dead page must not break the guard
+            pass
 
     def __enter__(self) -> PlaywrightAdapter:
         self._pw = sync_playwright()
         pw = self._pw.__enter__()
-        self._browser = pw.chromium.launch(channel="chrome", headless=True)
+        self._browser = pw.chromium.launch(channel=browser_channel(), headless=True)
         context = self._browser.new_context(viewport={"width": 1280, "height": 800})
         # Every request the page makes is checked, not just the navigation:
         # an <img src="https://evil/..."> would otherwise be a silent egress.
@@ -227,16 +240,26 @@ class Explorer:
         )
 
     def explore(
-        self, test_intent_ref: str, base_url: str = "http://127.0.0.1:8001"
+        self,
+        test_intent_ref: str,
+        base_url: str = "http://127.0.0.1:8001",
+        *,
+        intent: object | None = None,
     ) -> ExplorationTrace:
         """Run the exploration. Budget/stop reasons are real, not cosmetic.
 
         Every iteration observes *before* asking the policy what to do, so the
         page state produced by the previous action is captured — including the
-        final one, which is what the compiler needs to judge whether the goal
-        was actually reached.
+        final one, which is what the goal evaluator needs to judge whether the
+        business goal was actually reached.
+
+        R5-4.6: the full TestIntent is embedded in the trace (and covered by its
+        hash), and the loop's *end* is never conflated with the *goal*: a policy
+        that runs out of plan stops with ``PLAN_EXHAUSTED``; only
+        :func:`evaluate_goal` decides whether the goal was verified.
         """
         self.trace.test_intent_ref = test_intent_ref
+        self.trace.test_intent = intent_of(intent)
         gateway = ToolGateway(self.budget, tool_version=self.trace.tool_version)
         stop = StopReason.POLICY_STOP
         with PlaywrightAdapter(self.trace, self.budget) as adapter:
@@ -251,9 +274,34 @@ class Explorer:
                     # Structured, bounded, redacted-by-construction: page text
                     # is truncated data, never a permission source.
                     self.trace.record_observation(observation)
-                call = self.policy.next_action(observation)
+                try:
+                    call = self.policy.next_action(observation)
+                except Exception as exc:  # noqa: BLE001 - a policy error is trace data
+                    # The decision itself failed (bad structured output, guard
+                    # mismatch, provider exhaustion). It is recorded, then the
+                    # loop stops: a broken decision loop must not look like a
+                    # completed plan.
+                    detail = f"{type(exc).__name__}: {exc}"[:300]
+                    self.trace.agent_decisions.append(
+                        {
+                            "step_index": gateway.steps,
+                            "observation": observation.state_summary,
+                            "action": "(policy)",
+                            "rationale": "",
+                            "result": "ERROR",
+                            "error": detail,
+                            "decided_at": _now(),
+                            "policy_version": self.trace.agent_version,
+                            "prompt_version": self.trace.prompt_version,
+                        }
+                    )
+                    stop = StopReason.POLICY_STOP
+                    break
                 if call is None:
-                    stop = StopReason.GOAL_REACHED
+                    # A script (or an agent's "finish") simply ran out of plan.
+                    # That is NOT goal evidence; only the goal evaluator can
+                    # say the business outcome was reached.
+                    stop = StopReason.PLAN_EXHAUSTED
                     break
                 try:
                     gateway.authorize(call)
@@ -337,5 +385,16 @@ class Explorer:
                 {"kind": "request_blocked", "url": url[:300], "at": _now()}
             )
         self.trace.stop_reason = stop
+        # Goal evaluation happens AFTER execution, from observed evidence only.
+        # PLAN_EXHAUSTED / budget stops never imply VERIFIED; a wrong password
+        # that leaves the page on /login evaluates to NOT_VERIFIED here.
+        evaluation = evaluate_goal(self.trace.test_intent, self.trace.observations)
+        self.trace.goal_status = evaluation.status
+        self.trace.goal_checks = [c.to_dict() for c in evaluation.checks]
+        self.trace.goal_reason = evaluation.reason
+        if evaluation.status == GoalStatus.VERIFIED and stop == StopReason.PLAN_EXHAUSTED:
+            # The loop ended by plan *and* the goal checks passed: annotate the
+            # stop reason so the semantics stay explicit and auditable.
+            self.trace.stop_reason = StopReason.GOAL_VERIFIED
         self.trace.finalize()
         return self.trace

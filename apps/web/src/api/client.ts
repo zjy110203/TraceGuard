@@ -181,6 +181,12 @@ export const api = {
     request<ExplorationTrace>(`/explorations/${encodeURIComponent(id)}`),
   runExploration: (body: {
     intent_ref: string
+    goal?: string
+    expected_outcomes?: string[]
+    target?: string
+    required_assertions?: string[]
+    constraints?: string[]
+    scenario?: string
     base_url: string
     policy: string
     max_steps: number
@@ -198,7 +204,15 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
-  approveCandidate: (id: string, body: { reviewer: string; approval_record: string }) =>
+  approveCandidate: (
+    id: string,
+    body: {
+      reviewer: string
+      approval_record: string
+      review_confirmed: string[]
+      uncertainty_acknowledged: boolean
+    },
+  ) =>
     request<CandidateRow>(`/candidates/${encodeURIComponent(id)}/approve`, {
       method: 'POST',
       body: JSON.stringify(body),

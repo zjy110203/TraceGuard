@@ -24,6 +24,7 @@ from packages.agents.exploration import (
     ALLOWED_TOOLS,
     TOOL_SPECS,
     Budget,
+    ExplorationTrace,
     Observation,
     ScriptedPolicy,
     StopReason,
@@ -153,8 +154,16 @@ def test_origin_helper_normalises_default_ports() -> None:
 
 def test_adapter_refuses_unapproved_origins_at_the_network_layer() -> None:
     """Subresource egress is blocked by the context, not by the page."""
-    adapter = PlaywrightAdapter.__new__(PlaywrightAdapter)  # no browser needed
-    adapter.budget = Budget(allowed_domains=("127.0.0.1",))
+    trace = ExplorationTrace(
+        exploration_id="exp_adapter",
+        test_intent_ref="i",
+        application_version="v",
+        browser_version="b",
+        agent_version="a",
+        prompt_version="p",
+        tool_version="t",
+    )
+    adapter = PlaywrightAdapter(trace, Budget(allowed_domains=("127.0.0.1",)))
     assert adapter._approved("http://127.0.0.1:8001/x.css") is True
     assert adapter._approved("data:image/png;base64,AAA") is True
     assert adapter._approved("about:blank") is True
@@ -271,7 +280,8 @@ def test_real_exploration_can_assert_and_recover_from_an_error(teamflow: str) ->
     )
     trace = explorer.explore("i-security", teamflow)
 
-    assert trace.stop_reason == StopReason.GOAL_REACHED
+    # A script running out of steps is PLAN_EXHAUSTED — never goal evidence.
+    assert trace.stop_reason == StopReason.PLAN_EXHAUSTED
     actions = trace.action_sequence
     assert actions[0].get("error"), "the failing click must be recorded, not raised"
     assert any(a.get("tool") == "assert_visible" and not a.get("error") for a in actions)

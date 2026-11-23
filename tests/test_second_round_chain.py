@@ -32,15 +32,29 @@ from packages.agents.explorer import Explorer
 from packages.agents.llm import ModelConfig, ScriptedProvider, TracedClient
 from packages.agents.llm_policy import LLMPolicy
 from packages.evidence.graph import make_in_memory_graph
-from packages.execution.models import TestCaseVersion
+from packages.execution.models import TestCaseVersion, TestIntent
 from packages.execution.pipeline import FullChain
 
 TestCaseVersion.__test__ = False  # type: ignore[attr-defined] - pytest tries to collect it
+TestIntent.__test__ = False
 
 TF_PORT = 8029
 TF_BASE = f"http://127.0.0.1:{TF_PORT}"
 EVAL = {"X-Eval-Token": "local-dev-eval-token-change-me"}
 CASES = Path(__file__).resolve().parents[1] / "benchmark" / "cases"
+
+# The business goal the exploration is driven by (R5-4.6): the compiler now
+# refuses to compile a trace without a declared, verifiable target.
+INTENT = {
+    "intent_id": "INT-CHAIN-001",
+    "description": "log in as tester and reach the project list",
+    "source_ref": "INT-CHAIN-001",
+    "goal": "log in as tester and reach the project list",
+    "expected_outcomes": [],
+    "target": "/projects",
+    "required_assertions": [],
+    "constraints": [],
+}
 
 
 @pytest.fixture(scope="module")
@@ -87,7 +101,9 @@ def _explore() -> Any:
         allowed_tools=frozenset({"navigate", "fill", "click", "assert_text", "finish"}),
     )
     explorer = Explorer(policy=policy, budget=Budget(max_steps=12, max_tool_calls=24))
-    return explorer.explore("INT-CHAIN-001", TF_BASE)
+    # R5-4.6: the exploration is goal-driven — the declared target is what the
+    # compiler later verifies against observed evidence.
+    return explorer.explore("INT-CHAIN-001", TF_BASE, intent=INTENT)
 
 
 def _approve_oracles(candidate: CandidateTestCase) -> CandidateTestCase:

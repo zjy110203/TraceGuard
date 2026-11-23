@@ -138,6 +138,18 @@ def test_real_exploration_produces_full_trace(teamflow_server: None) -> None:
     assert any(a["tool"] == "click" for a in trace.action_sequence)
 
 
+LOGIN_INTENT = {
+    "intent_id": "i-login",
+    "description": "登录 TeamFlow 并进入项目列表",
+    "source_ref": "i-login",
+    "goal": "登录 TeamFlow 并进入项目列表",
+    "expected_outcomes": [],
+    "target": "/projects",
+    "required_assertions": [],
+    "constraints": [],
+}
+
+
 def _trace_from_explorer(teamflow_server: None) -> ExplorationTrace:
     script = (
         ToolCall("navigate", {"url": f"{TF_BASE}/"}),
@@ -145,11 +157,15 @@ def _trace_from_explorer(teamflow_server: None) -> ExplorationTrace:
         ToolCall("fill", {"selector": "[data-testid=password]", "value": "test-pass-123"}),
         ToolCall("click", {"selector": "[data-testid=login-submit]"}),
     )
-    return Explorer(policy=ScriptedPolicy(script)).explore("i-login", TF_BASE)
+    # R5-4.6: the compileable trace carries the SAME TestIntent the Explorer
+    # was given; without it the compiler now refuses to invent expectations.
+    return Explorer(policy=ScriptedPolicy(script)).explore("i-login", TF_BASE, intent=LOGIN_INTENT)
 
 
 def test_compiler_produces_traceable_candidate(teamflow_server: None) -> None:
     trace = _trace_from_explorer(teamflow_server)
+    assert trace.goal_status == "VERIFIED", trace.goal_reason
+    assert trace.stop_reason == StopReason.GOAL_VERIFIED
     compiler = TestCaseCompiler()
     candidate = compiler.compile(trace, case_id="TC-COMPILED-001", title="compiled login")
     assert candidate.compiler_version == COMPILER_VERSION
@@ -157,9 +173,31 @@ def test_compiler_produces_traceable_candidate(teamflow_server: None) -> None:
     assert candidate.source_exploration_id == trace.exploration_id
     assert candidate.source_trace_hash == trace.source_trace_hash
     assert candidate.steps and candidate.assertions and candidate.oracle_bindings
+    assert candidate.goal_status == "VERIFIED"
+    assert candidate.review_checklist, "structured review checklist must exist"
+    assert all("id" in c and "text" in c for c in candidate.review_checklist)
     # Only UI behaviour claimed; no fabricated persistence oracle
     assert any("NOT verified" in n for n in candidate.uncertainty_notes)
     assert all(not b.primary.approved for b in candidate.oracle_bindings)
+
+
+def test_compiler_refuses_when_goal_page_was_not_reached(teamflow_server: None) -> None:
+    """A wrong password leaves the trace on /login: no success candidate."""
+    script = (
+        ToolCall("navigate", {"url": f"{TF_BASE}/"}),
+        ToolCall("fill", {"selector": "[data-testid=username]", "value": "tester"}),
+        ToolCall("fill", {"selector": "[data-testid=password]", "value": "wrong-password"}),
+        ToolCall("click", {"selector": "[data-testid=login-submit]"}),
+    )
+    trace = Explorer(policy=ScriptedPolicy(script)).explore(
+        "i-login-wrong", TF_BASE, intent=LOGIN_INTENT
+    )
+    # The goal evaluation itself says NOT_VERIFIED — the click worked, the
+    # business goal did not happen.
+    assert trace.goal_status == "NOT_VERIFIED"
+    with pytest.raises(ValidationError) as excinfo:
+        TestCaseCompiler().compile(trace, case_id="TC-WRONG", title="wrong password")
+    assert excinfo.value.details["goal_status"] in {"NOT_VERIFIED", "INCONCLUSIVE"}
 
 
 def test_candidate_cannot_be_promoted_without_human_approval(teamflow_server: None) -> None:

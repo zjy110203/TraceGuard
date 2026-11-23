@@ -35,7 +35,12 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from packages.agents.compiler import CandidateTestCase, TestCaseCompiler
-from packages.agents.exploration import ExplorationTrace
+from packages.agents.exploration import (
+    ExplorationTrace,
+    GoalStatus,
+    evaluate_goal,
+    verify_trace_record,
+)
 from packages.core.errors import ConflictError, NotFoundError, ValidationError
 from packages.execution.models import (
     AssertionSpec,
@@ -118,6 +123,23 @@ def _spec_from_dict(raw: dict[str, Any]) -> OracleSpec:
     )
 
 
+def _checklist_from_record(raw: Any) -> tuple[dict[str, Any], ...]:
+    """Normalize checklist entries; legacy stores kept plain strings."""
+    items: list[dict[str, Any]] = []
+    for i, entry in enumerate(raw or (), start=1):
+        if isinstance(entry, dict):
+            items.append(
+                {
+                    "id": str(entry.get("id") or f"chk-{i}"),
+                    "text": str(entry.get("text") or ""),
+                    "required": bool(entry.get("required", True)),
+                }
+            )
+        elif str(entry).strip():
+            items.append({"id": f"chk-{i}", "text": str(entry), "required": True})
+    return tuple(items)
+
+
 def _candidate_from_dict(record: dict[str, Any]) -> CandidateTestCase:
     """Rebuild the dataclass so the compiler's own guards can re-run on approve."""
     intent_raw = record["intent"]
@@ -193,7 +215,10 @@ def _candidate_from_dict(record: dict[str, Any]) -> CandidateTestCase:
             )
             for d in record.get("data_refs") or ()
         ),
-        review_checklist=tuple(record.get("review_checklist") or ()),
+        review_checklist=_checklist_from_record(record.get("review_checklist")),
+        goal_status=str(record.get("goal_status", "")),
+        goal_checks=tuple(dict(c) for c in record.get("goal_checks") or ()),
+        goal_reason=str(record.get("goal_reason", "")),
     )
 
 
@@ -224,6 +249,7 @@ def _summary(record: dict[str, Any]) -> dict[str, Any]:
                 "source_type": (b.get("primary") or {}).get("source_type"),
                 "source_ref": (b.get("primary") or {}).get("source_ref"),
                 "source": (b.get("primary") or {}).get("source"),
+                "expected_value": (b.get("primary") or {}).get("expected_value"),
             }
             for b in record.get("oracle_bindings", [])
         ],
@@ -231,6 +257,7 @@ def _summary(record: dict[str, Any]) -> dict[str, Any]:
         "data_refs": list(record.get("data_refs") or []),
         "review_checklist": list(record.get("review_checklist") or []),
         "uncertainty_notes": list(record.get("uncertainty_notes") or []),
+        "goal_status": record.get("goal_status", ""),
         "model_version": record.get("model_version"),
         "is_llm": False,
         "created_at": record.get("created_at"),
@@ -252,6 +279,11 @@ class ReviewRequest(BaseModel):
     reviewer: str
     approval_record: str = ""
     reason: str = ""
+    # R5-4.6: server-side review gate. Approving requires the ids of every
+    # REQUIRED checklist item the reviewer explicitly confirmed, and an explicit
+    # acknowledgement when the compiler recorded uncertainty notes.
+    review_confirmed: list[str] = []
+    uncertainty_acknowledged: bool = False
 
 
 # ------------------------------------------------------------------ routes
@@ -324,6 +356,10 @@ def compile_exploration(
         "case_file": "",
         "reviewed_at": "",
         "rejection_reason": "",
+        # Snapshot of the admission evidence at compile time; the approve route
+        # re-verifies all of it against the live exploration before promoting.
+        "trace_integrity_verified": True,
+        "reviewer_is_local_audit_field": True,
     }
     store.save(payload)
     return _summary(payload)
@@ -347,6 +383,65 @@ def approve_candidate(request: Request, candidate_id: str, body: ReviewRequest) 
         )
 
     candidate = _candidate_from_dict(record)
+
+    # --- server-side review gate (R5-4.6 §3.5) -----------------------------
+    # The checklist confirmation is NOT a front-end courtesy: approving without
+    # explicitly confirming every required item is a 422, no matter what the UI
+    # did or did not render. Uncertainty notes need their own acknowledgement,
+    # so one click can never wave unresolved questions through.
+    checklist = _checklist_from_record(record.get("review_checklist"))
+    required_ids = [c["id"] for c in checklist if c.get("required", True)]
+    confirmed = {str(x) for x in (body.review_confirmed or [])}
+    missing = [i for i in required_ids if i not in confirmed]
+    if missing:
+        raise ValidationError(
+            "review checklist is incomplete; every required item must be confirmed",
+            details={
+                "candidate_id": candidate_id,
+                "missing_confirmations": missing,
+                "required_count": len(required_ids),
+            },
+        )
+    unknown = sorted(confirmed - {c["id"] for c in checklist})
+    if unknown:
+        raise ValidationError(
+            "review confirmation references unknown checklist items",
+            details={"candidate_id": candidate_id, "unknown": unknown},
+        )
+    uncertainties = [str(n) for n in (record.get("uncertainty_notes") or []) if str(n).strip()]
+    if uncertainties and not body.uncertainty_acknowledged:
+        raise ValidationError(
+            "candidate has unresolved uncertainty notes; they must be explicitly acknowledged",
+            details={
+                "candidate_id": candidate_id,
+                "uncertainty_count": len(uncertainties),
+            },
+        )
+
+    # --- provenance re-verification ----------------------------------------
+    # Approval re-runs the compile admission chain: the source exploration must
+    # still exist, still verify against its hash, and still show a VERIFIED
+    # goal — and the candidate must be bound to exactly that trace hash.
+    exploration_id = str(record.get("source_exploration_id") or "")
+    if not exploration_id:
+        raise ConflictError("candidate has no source exploration; provenance is unknown")
+    exploration = _exploration_record(request, exploration_id)
+    if candidate.source_trace_hash != str(exploration.get("source_trace_hash") or ""):
+        raise ConflictError(
+            "candidate trace hash does not match its source exploration",
+            details={
+                "candidate_id": candidate_id,
+                "candidate_hash": candidate.source_trace_hash,
+                "exploration_hash": exploration.get("source_trace_hash", ""),
+            },
+        )
+
+    # Compiler static validation re-runs on the rebuilt candidate (structural
+    # integrity, business-oracle rule, data-ref bindings). TestCaseVersion
+    # validation alone would be weaker: it never re-checks the Oracle sources.
+    TestCaseCompiler().validate(candidate)
+
+    # --- human approval flips the Oracles -----------------------------------
     # Human review is the act that approves the Oracle. The compiler explicitly
     # leaves it unapproved, and TestCaseVersion.validate would reject the file
     # if we promoted without this step.
@@ -384,6 +479,12 @@ def approve_candidate(request: Request, candidate_id: str, body: ReviewRequest) 
             "approval_record": body.approval_record,
             "reviewed_at": datetime.now(UTC).isoformat(),
             "case_file": target.name,
+            # Audit of WHAT was confirmed, not only WHO confirmed it.
+            "review_confirmed": sorted(confirmed),
+            "uncertainty_acknowledged": bool(body.uncertainty_acknowledged),
+            # reviewer is a local audit field: no identity module exists yet,
+            # so the record never claims authenticated identity.
+            "reviewer_is_local_audit_field": True,
         }
     )
     store.save(record)
@@ -394,6 +495,10 @@ def approve_candidate(request: Request, candidate_id: str, body: ReviewRequest) 
 def reject_candidate(request: Request, candidate_id: str, body: ReviewRequest) -> dict[str, Any]:
     if not body.reviewer.strip():
         raise ValidationError("reviewer is required to reject a candidate")
+    if not body.reason.strip():
+        # A rejection without a reason is not reviewable later — the trace is
+        # permanently closed by a reject, so the decision must be explainable.
+        raise ValidationError("a rejection reason is required to reject a candidate")
     store: CandidateStore = request.app.state.candidate_store
     record = store.get(candidate_id)
     if record is None:
@@ -407,8 +512,9 @@ def reject_candidate(request: Request, candidate_id: str, body: ReviewRequest) -
         {
             "status": REJECTED,
             "reviewer": body.reviewer,
-            "rejection_reason": body.reason,
+            "rejection_reason": body.reason.strip(),
             "reviewed_at": datetime.now(UTC).isoformat(),
+            "reviewer_is_local_audit_field": True,
         }
     )
     store.save(record)
@@ -431,7 +537,16 @@ def _case_dir(request: Request) -> Path:
 
 
 def _exploration_record(request: Request, exploration_id: str) -> dict[str, Any]:
-    """Load a persisted exploration, refusing one that cannot be compiled."""
+    """Load a persisted exploration, refusing one that cannot be compiled.
+
+    R5-4.6 compile admission chain, in order:
+
+      Exploration -> integrity verification -> TestIntent restoration
+      -> goal-status validation -> Compiler -> Candidate.
+
+    Any failure here refuses the compile; none of them can be skipped by the
+    caller because they all happen inside this loader.
+    """
     store = request.app.state.exploration_store
     record = store.get(exploration_id)
     if record is None:
@@ -446,6 +561,47 @@ def _exploration_record(request: Request, exploration_id: str) -> dict[str, Any]
         raise ValidationError(
             "exploration has no accepted action; nothing to compile",
             details={"exploration_id": exploration_id},
+        )
+
+    # 1. Trace integrity against the persisted bytes: a trace whose hash no
+    #    longer matches its own content (or one carrying a stale hash) must
+    #    never become a candidate.
+    if not verify_trace_record(record):
+        raise ConflictError(
+            "exploration trace integrity check failed; refusing to compile",
+            details={
+                "exploration_id": exploration_id,
+                "source_trace_hash": record.get("source_trace_hash", ""),
+                "hint": "the trace was modified after it was written, or its hash is stale",
+            },
+        )
+
+    # 2. Goal status: recomputed here (not trusted from a stored field) from
+    #    the trace's own observations and TestIntent. VERIFIED is the only
+    #    state that admits compilation.
+    intent = _intent_from_record(record)
+    evaluation = evaluate_goal(intent, record.get("observations") or [])
+    if evaluation.status != GoalStatus.VERIFIED:
+        raise ConflictError(
+            "business goal is not verified by the exploration trace; refusing to compile",
+            details={
+                "exploration_id": exploration_id,
+                "goal_status": evaluation.status,
+                "reason": evaluation.reason,
+                "checks": [c.to_dict() for c in evaluation.checks],
+            },
+        )
+    # Cross-check against the goal status recorded at exploration time: a
+    # mismatch means the trace or its goal evidence changed after the fact.
+    recorded_status = str(record.get("goal_status") or "")
+    if recorded_status and recorded_status != evaluation.status:
+        raise ConflictError(
+            "recorded goal status disagrees with recomputed goal evidence",
+            details={
+                "exploration_id": exploration_id,
+                "recorded": recorded_status,
+                "recomputed": evaluation.status,
+            },
         )
     return record
 
@@ -480,6 +636,7 @@ def _trace_from_record(record: dict[str, Any]) -> ExplorationTrace:
         agent_version=str(record.get("agent_version") or ""),
         prompt_version=str(record.get("prompt_version") or "none"),
         tool_version=str(record.get("tool_version") or ""),
+        test_intent=dict(record.get("test_intent") or {}),
         action_sequence=[dict(a) for a in (record.get("action_sequence") or [])],
         observations=[dict(o) for o in (record.get("observations") or [])],
         agent_decisions=[dict(d) for d in (record.get("agent_decisions") or [])],
@@ -488,6 +645,10 @@ def _trace_from_record(record: dict[str, Any]) -> ExplorationTrace:
         evidence_refs=list(record.get("evidence_refs") or []),
         stop_reason=str(record.get("stop_reason") or ""),
         source_trace_hash=str(record.get("source_trace_hash") or ""),
+        hash_version=int(record.get("hash_version") or 1),
+        goal_status=str(record.get("goal_status") or ""),
+        goal_checks=[dict(c) for c in (record.get("goal_checks") or [])],
+        goal_reason=str(record.get("goal_reason") or ""),
         started_at=str(record.get("started_at") or ""),
         finished_at=str(record.get("finished_at") or ""),
     )

@@ -2,9 +2,13 @@
 // Candidate review queue, backed by the real candidate store.
 //
 // This page is the human gate in the pipeline: a trace compiled by the compiler
-// arrives here as PENDING_REVIEW, and only an explicit approval (reviewer +
-// approval record) turns it into a formal, runnable TestCaseVersion. Nothing on
-// this page can promote a candidate without those two fields.
+// arrives here as PENDING_REVIEW, and only an explicit approval turns it into a
+// formal, runnable TestCaseVersion.
+//
+// R5-4.6: the server REQUIRES every required review-checklist item to be
+// confirmed and the uncertainty notes acknowledged — the UI mirrors that gate,
+// but the enforcement is server-side (a crafted request without confirmations
+// is a 422 no matter what this page rendered).
 import { computed, ref } from 'vue'
 import { api } from '../api/client'
 import { messageOf, useAsync } from '../composables/useAsync'
@@ -29,6 +33,10 @@ const busy = ref('')
 const actionError = ref('')
 const actionNote = ref('')
 
+// per-candidate review confirmation state
+const confirmed = ref<Set<string>>(new Set())
+const uncertaintyAcknowledged = ref(false)
+
 const rows = computed(() => state.data.value ?? [])
 const counts = computed(() => ({
   pending: rows.value.filter((c) => c.status === 'PENDING_REVIEW').length,
@@ -48,9 +56,31 @@ const visible = computed(() => {
   )
 })
 
+const requiredItems = computed(() =>
+  (detail.value?.review_checklist ?? []).filter((c) => c.required),
+)
+const allRequiredConfirmed = computed(
+  () => requiredItems.value.length > 0 && requiredItems.value.every((c) => confirmed.value.has(c.id)),
+)
+const hasUncertainties = computed(
+  () => (detail.value?.uncertainty_notes ?? []).some((n) => n.trim()),
+)
 const canReview = computed(
   () => reviewer.value.trim().length > 0 && approvalRecord.value.trim().length > 0,
 )
+const canApprove = computed(
+  () =>
+    canReview.value &&
+    allRequiredConfirmed.value &&
+    (!hasUncertainties.value || uncertaintyAcknowledged.value),
+)
+
+function toggleItem(id: string, checked: boolean): void {
+  const next = new Set(confirmed.value)
+  if (checked) next.add(id)
+  else next.delete(id)
+  confirmed.value = next
+}
 
 function statusLabel(c: CandidateRow): string {
   if (c.status === 'APPROVED') return 'APPROVED'
@@ -70,8 +100,12 @@ async function open(c: CandidateRow): Promise<void> {
   detailError.value = ''
   openId.value = c.candidate_id
   detail.value = null
+  confirmed.value = new Set()
+  uncertaintyAcknowledged.value = false
   try {
     detail.value = await api.candidate(c.candidate_id)
+    // start from nothing: every required item must be checked deliberately
+    for (const item of requiredItems.value) confirmed.value.delete(item.id)
   } catch (err) {
     detailError.value = messageOf(err)
   }
@@ -81,13 +115,15 @@ function close(): void {
   openId.value = ''
   detail.value = null
   detailError.value = ''
+  confirmed.value = new Set()
+  uncertaintyAcknowledged.value = false
 }
 
 async function approve(c: CandidateRow): Promise<void> {
   actionError.value = ''
   actionNote.value = ''
-  if (!canReview.value) {
-    actionError.value = '评审人与审批记录均为必填：候选晋升必须可追溯到具体责任人。'
+  if (!canApprove.value) {
+    actionError.value = '批准前必须：填写评审人与审批记录、逐项确认全部必需审核项、并确认所有不确定项。'
     return
   }
   busy.value = c.candidate_id
@@ -95,6 +131,8 @@ async function approve(c: CandidateRow): Promise<void> {
     const updated = await api.approveCandidate(c.candidate_id, {
       reviewer: reviewer.value.trim(),
       approval_record: approvalRecord.value.trim(),
+      review_confirmed: [...confirmed.value],
+      uncertainty_acknowledged: uncertaintyAcknowledged.value || !hasUncertainties.value,
     })
     actionNote.value = `${updated.case_id} 已晋升为正式用例（文件 ${updated.case_file}）。可在「测试用例」页打开并执行全链。`
     close()
@@ -113,6 +151,10 @@ async function reject(c: CandidateRow): Promise<void> {
     actionError.value = '退回候选需要填写评审人。'
     return
   }
+  if (!rejectReason.value.trim()) {
+    actionError.value = '退回必须填写理由：该轨迹将被永久关闭，决定必须可追溯。'
+    return
+  }
   busy.value = c.candidate_id
   try {
     await api.rejectCandidate(c.candidate_id, {
@@ -128,13 +170,32 @@ async function reject(c: CandidateRow): Promise<void> {
     busy.value = ''
   }
 }
+
+function goalTone(status?: string): string {
+  switch (status) {
+    case 'VERIFIED':
+      return 'ok'
+    case 'NOT_VERIFIED':
+      return 'bad'
+    case 'INCONCLUSIVE':
+      return 'warn'
+    default:
+      return 'neutral'
+  }
+}
+
+function oracleValue(v: unknown): string {
+  if (v === null || v === undefined) return '—'
+  if (typeof v === 'boolean') return v ? 'true' : 'false'
+  return String(v)
+}
 </script>
 
 <template>
   <section class="page">
     <PageHeader
       title="Candidate 审核"
-      subtitle="由探索轨迹编译出的机器候选用例。编译不会写入正式用例库；只有带评审人与审批记录的人工批准才会晋升为可执行资产。"
+      subtitle="由探索轨迹编译出的机器候选用例。编译不会写入正式用例库；只有带评审人与审批记录、逐项完成审核清单并确认不确定项的人工批准才会晋升为可执行资产。"
     >
       <label class="inline-label">
         <span class="sr-only">按 ID 或标题搜索</span>
@@ -152,26 +213,26 @@ async function reject(c: CandidateRow): Promise<void> {
     <div class="card">
       <div class="card-head">
         <h2>评审依据</h2>
-        <span class="small muted">候选的 Oracle 在批准前保持未批准状态</span>
+        <span class="small muted">候选的 Oracle 在批准前保持未批准状态；reviewer 为本地审计字段，非身份认证</span>
       </div>
       <div class="card-body">
         <div class="gate">
           <label class="inline-label">
             <span>评审人</span>
-            <input v-model="reviewer" placeholder="例如 alice" />
+            <input v-model="reviewer" data-testid="reviewer" placeholder="例如 alice" />
           </label>
           <label class="inline-label">
             <span>审批记录</span>
-            <input v-model="approvalRecord" placeholder="例如 REV-2026-0142" />
+            <input v-model="approvalRecord" data-testid="approval-record" placeholder="例如 REV-2026-0142" />
           </label>
           <label class="inline-label">
             <span>退回理由</span>
-            <input v-model="rejectReason" placeholder="仅在退回时需要" />
+            <input v-model="rejectReason" data-testid="reject-reason" placeholder="退回时必填" />
           </label>
         </div>
         <p class="small muted gate-hint">
           批准 = 以评审人身份批准该候选的 UI Oracle，并将其写为正式用例文件。编译器
-          <code class="mono">model_version</code> 为确定性规则（非 LLM）。
+          <code class="mono">model_version</code> 为确定性规则（非 LLM）。服务端会强制校验审核清单确认与不确定项确认。
         </p>
         <p v-if="actionError" class="alert error" role="alert">{{ actionError }}</p>
         <p v-if="actionNote" class="alert ok" role="status">{{ actionNote }}</p>
@@ -210,7 +271,7 @@ async function reject(c: CandidateRow): Promise<void> {
           :hint="
             keyword || statusFilter !== 'ALL'
               ? '调整筛选条件或清空搜索。'
-              : '在「探索器」完成一次探索后点击「编译为候选」，候选会进入这里等待评审。'
+              : '在「探索器」完成一次目标已验证（VERIFIED）的探索后点击「编译为候选」，候选会进入这里等待评审。'
           "
         >
           <button class="btn" type="button" @click="navigate('/explorer')">前往探索器</button>
@@ -225,6 +286,7 @@ async function reject(c: CandidateRow): Promise<void> {
               <th>标题</th>
               <th>步骤</th>
               <th>断言</th>
+              <th>目标验证</th>
               <th>状态</th>
               <th>来源轨迹</th>
               <th></th>
@@ -243,19 +305,26 @@ async function reject(c: CandidateRow): Promise<void> {
               <td>{{ c.step_count }}</td>
               <td>{{ c.assertion_count }}</td>
               <td>
+                <span class="pill" :class="goalTone(c.goal_status)">
+                  {{ c.goal_status || '—' }}
+                </span>
+              </td>
+              <td>
                 <span class="pill" :class="statusTone(c)">{{ statusLabel(c) }}</span>
                 <div v-if="c.reviewer" class="small muted">{{ c.reviewer }}</div>
               </td>
               <td class="mono small">{{ c.source_exploration_id }}</td>
               <td class="actions">
-                <button class="btn ghost sm" type="button" @click="open(c)">查看</button>
+                <button class="btn ghost sm" type="button" data-testid="open-candidate" @click="open(c)">查看</button>
                 <button
                   v-if="c.status === 'PENDING_REVIEW'"
                   class="btn primary sm"
                   type="button"
-                  :disabled="!canReview || busy === c.candidate_id"
+                  :disabled="!canApprove || busy === c.candidate_id"
                   :title="
-                    canReview ? '以评审人身份批准并写入正式用例库' : '请先填写评审人与审批记录'
+                    canApprove
+                      ? '以评审人身份批准并写入正式用例库'
+                      : '需填写评审人与审批记录，并完成全部审核项确认'
                   "
                   @click="approve(c)"
                 >
@@ -265,7 +334,7 @@ async function reject(c: CandidateRow): Promise<void> {
                   v-if="c.status === 'PENDING_REVIEW'"
                   class="btn danger sm"
                   type="button"
-                  :disabled="!reviewer.trim() || busy === c.candidate_id"
+                  :disabled="!reviewer.trim() || !rejectReason.trim() || busy === c.candidate_id"
                   @click="reject(c)"
                 >
                   退回
@@ -301,32 +370,93 @@ async function reject(c: CandidateRow): Promise<void> {
             <div class="kv"><span>模型</span><b class="mono">{{ detail.model_version }}</b></div>
             <div class="kv"><span>来源轨迹</span><b class="mono">{{ detail.source_exploration_id }}</b></div>
             <div class="kv"><span>轨迹哈希</span><b class="mono hash">{{ detail.source_trace_hash }}</b></div>
+            <div class="kv">
+              <span>目标验证</span>
+              <b><span class="pill" :class="goalTone(detail.goal_status)">{{ detail.goal_status || '—' }}</span></b>
+            </div>
           </div>
 
-          <h3>步骤</h3>
+          <h3>原始 TestIntent</h3>
+          <ul class="kv" data-testid="candidate-intent">
+            <li><span>goal</span><span>{{ detail.intent.goal || detail.intent.description || '—' }}</span></li>
+            <li>
+              <span>expected_outcomes</span>
+              <span>{{ detail.intent.expected_outcomes?.length ? detail.intent.expected_outcomes.join('；') : '—' }}</span>
+            </li>
+            <li><span>target</span><span class="mono">{{ detail.intent.target || detail.target || '—' }}</span></li>
+            <li>
+              <span>required_assertions</span>
+              <span class="mono">{{ detail.intent.required_assertions?.length ? detail.intent.required_assertions.join('；') : '—' }}</span>
+            </li>
+            <li>
+              <span>constraints</span>
+              <span>{{ detail.intent.constraints?.length ? detail.intent.constraints.join('；') : '—' }}</span>
+            </li>
+          </ul>
+
+          <h3>目标验证依据</h3>
+          <ul v-if="detail.goal_checks?.length" class="goal-list" data-testid="candidate-goal-checks">
+            <li v-for="(c, i) in detail.goal_checks" :key="i">
+              <AppIcon :name="c.deferred ? 'clock' : c.ok ? 'check' : 'x'" :size="13" />
+              <span class="mono small">{{ c.name }}</span>
+              <span class="small">预期 <b class="mono">{{ c.expected || '（未声明）' }}</b></span>
+              <span class="small muted">观察 {{ c.observed ? c.observed.slice(0, 80) : '—' }}</span>
+              <span v-if="c.deferred" class="pill plain neutral">正式运行时由独立 Oracle 验证</span>
+            </li>
+          </ul>
+          <p v-else class="small muted">编译时未记录目标验证检查项。</p>
+
+          <h3>正式执行步骤</h3>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>#</th><th>动作</th><th>目标</th><th>值</th></tr></thead>
+              <thead><tr><th>#</th><th>动作</th><th>目标</th><th>值</th><th>value_ref</th></tr></thead>
               <tbody>
-                <tr v-for="s in detail.steps" :key="s.step_id">
+                <tr v-for="s in detail.steps" :key="s.step_id" data-testid="candidate-step">
                   <td class="mono">{{ s.step_id }}</td>
                   <td>{{ s.action }}</td>
                   <td class="mono">{{ s.target || '—' }}</td>
                   <td class="mono">{{ s.value || '—' }}</td>
+                  <td class="mono">{{ s.value_ref || '—' }}</td>
                 </tr>
               </tbody>
             </table>
           </div>
 
-          <h3>Oracle 绑定</h3>
-          <ul class="oracles">
+          <h3>TestDataRef 对应关系</h3>
+          <div v-if="detail.data_refs?.length" class="table-wrap">
+            <table>
+              <thead><tr><th>ref_id</th><th>locator</th><th>value</th></tr></thead>
+              <tbody>
+                <tr v-for="d in detail.data_refs" :key="d.ref_id">
+                  <td class="mono">{{ d.ref_id }}</td>
+                  <td class="mono">{{ d.locator }}</td>
+                  <td class="mono">{{ d.value || '（部署级 TestDataProvider 运行时解析）' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p v-else class="small muted">该候选不引用敏感测试数据。</p>
+
+          <h3>探索观察结果（最后 4 条）</h3>
+          <ul v-if="detail.observations?.length" class="obs-list">
+            <li v-for="(o, i) in detail.observations" :key="i">
+              <span class="mono small">{{ (o as Record<string, unknown>).url_path || '—' }}</span>
+              <span class="small muted">{{ String((o as Record<string, unknown>).state_summary || '') }}</span>
+            </li>
+          </ul>
+          <p v-else class="small muted">无观察记录。</p>
+
+          <h3>断言与 Oracle</h3>
+          <ul class="oracles" data-testid="candidate-oracles">
             <li v-for="b in detail.oracle_bindings" :key="b.assertion_id">
               <AppIcon :name="b.primary.approved ? 'check' : 'alert'" :size="14" />
               <span class="mono">{{ b.assertion_id }}</span>
               <span class="mono small">{{ b.primary.source_ref }}</span>
+              <span class="small">期望值 <b class="mono">{{ oracleValue(b.primary.expected_value) }}</b></span>
               <span class="pill" :class="b.primary.approved ? 'ok' : 'warn'">
                 {{ b.primary.approved ? `approved by ${b.primary.approved_by}` : '未批准' }}
               </span>
+              <span class="small muted basis">{{ b.primary.source }}</span>
             </li>
           </ul>
 
@@ -335,6 +465,61 @@ async function reject(c: CandidateRow): Promise<void> {
             <li v-for="(n, i) in detail.uncertainty_notes" :key="i">{{ n }}</li>
           </ul>
           <p v-else class="small muted">编译器未标注不确定项。</p>
+
+          <h3>审核清单（逐项确认）</h3>
+          <div class="checklist" data-testid="review-checklist">
+            <label
+              v-for="item in detail.review_checklist"
+              :key="item.id"
+              class="check-item"
+            >
+              <input
+                type="checkbox"
+                :checked="confirmed.has(item.id)"
+                :data-testid="`checklist-${item.id}`"
+                @change="toggleItem(item.id, ($event.target as HTMLInputElement).checked)"
+              />
+              <span>{{ item.text }}</span>
+              <span v-if="item.required" class="pill plain warn">必选</span>
+            </label>
+          </div>
+
+          <label v-if="hasUncertainties" class="check-item uncertainty" data-testid="uncertainty-ack">
+            <input type="checkbox" v-model="uncertaintyAcknowledged" />
+            <span>
+              我已阅读以上 {{ detail.uncertainty_notes.length }} 条不确定项，并确认其不影响本次批准决定。
+            </span>
+            <span class="pill plain warn">必选</span>
+          </label>
+
+          <div class="approve-bar">
+            <button
+              v-if="detail.status === 'PENDING_REVIEW'"
+              class="btn primary"
+              type="button"
+              data-testid="approve-candidate"
+              :disabled="!canApprove || busy === detail.candidate_id"
+              @click="approve(detail)"
+            >
+              批准并晋升为正式用例
+            </button>
+            <button
+              v-if="detail.status === 'PENDING_REVIEW'"
+              class="btn danger"
+              type="button"
+              data-testid="reject-candidate"
+              :disabled="!reviewer.trim() || !rejectReason.trim() || busy === detail.candidate_id"
+              @click="reject(detail)"
+            >
+              退回
+            </button>
+            <span v-if="detail.status !== 'PENDING_REVIEW'" class="small muted">
+              该候选已 {{ statusLabel(detail) }}，不可再次审核。
+            </span>
+            <span v-else-if="!canApprove" class="small muted">
+              尚未满足批准条件（{{ confirmed.size }}/{{ requiredItems.length }} 项已确认{{ hasUncertainties && !uncertaintyAcknowledged ? '，且未确认不确定项' : '' }}）。
+            </span>
+          </div>
         </template>
       </div>
     </div>
@@ -388,7 +573,9 @@ async function reject(c: CandidateRow): Promise<void> {
   word-break: break-all;
 }
 .oracles,
-.notes-list {
+.notes-list,
+.goal-list,
+.obs-list {
   list-style: none;
   margin: 0 0 4px;
   padding: 0;
@@ -403,6 +590,22 @@ async function reject(c: CandidateRow): Promise<void> {
   flex-wrap: wrap;
   font-size: 13px;
 }
+.oracles .basis {
+  width: 100%;
+  padding-left: 22px;
+}
+.goal-list li,
+.obs-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  padding: 6px 10px;
+  border: 1px solid var(--tg-border);
+  border-radius: var(--tg-radius-sm);
+  background: var(--tg-panel-2);
+}
 .notes-list li {
   font-size: 13px;
   color: var(--tg-muted);
@@ -413,6 +616,37 @@ async function reject(c: CandidateRow): Promise<void> {
   content: '·';
   position: absolute;
   left: 2px;
+}
+.checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.check-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.check-item input {
+  margin-top: 2px;
+}
+.check-item.uncertainty {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--tg-border);
+  border-radius: var(--tg-radius-sm);
+  background: var(--tg-panel-2);
+}
+.approve-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--tg-border);
 }
 @media (max-width: 900px) {
   .kpis {

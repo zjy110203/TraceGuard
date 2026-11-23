@@ -18,10 +18,25 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements-dev.txt
+      - name: Build the workbench SPA
+        # R5-4.8: the workbench UI tests used to SKIP because the dist was not
+        # built. Building here makes them part of the real gate instead of a
+        # permanent skip.
+        working-directory: apps/web
+        run: |
+          npm ci
+          npm run build
+      - name: Install Playwright browser (bundled Chromium for CI)
+        run: python -m playwright install --with-deps chromium
       - name: Lint (ruff)
         run: ruff check .
       - name: Format check (ruff)
@@ -32,6 +47,10 @@ jobs:
         run: mypy packages apps benchmark --ignore-missing-imports
       - name: Unit + integration tests
         # pipefail preserves pytest's real exit code through tee.
+        # TRACEGUARD_BROWSER_CHANNEL="" runs the browser tests against the
+        # bundled Chromium (the runner has no system Chrome).
+        env:
+          TRACEGUARD_BROWSER_CHANNEL: ""
         run: |
           set -o pipefail
           pytest -q 2>&1 | tee pytest-output.txt
