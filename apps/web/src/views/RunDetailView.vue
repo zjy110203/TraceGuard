@@ -123,7 +123,7 @@ const tabs = computed(() => [
           证据 {{ report?.evidence.length ?? 0 }} 条 · 事件 {{ report?.events.length ?? 0 }} 条 ·
           观测 {{ Object.keys(report?.observations ?? {}).length }} 项
         </p>
-        <table>
+        <div class="table-wrap"><table>
           <thead><tr><th>step_id</th><th>action</th><th>结果</th><th>细节</th></tr></thead>
           <tbody>
             <tr v-for="s in report?.steps ?? []" :key="s.step_id">
@@ -133,7 +133,7 @@ const tabs = computed(() => [
               <td class="small muted">{{ s.detail }}</td>
             </tr>
           </tbody>
-        </table>
+        </table></div>
       </div>
     </StateBlock>
 

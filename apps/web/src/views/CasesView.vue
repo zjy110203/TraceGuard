@@ -49,7 +49,7 @@ const emptyHint = computed(() =>
       :empty-hint="emptyHint"
       :retry="state.reload"
     >
-      <table>
+      <div class="table-wrap"><table>
         <thead>
           <tr><th>case_id</th><th>标题</th><th>版本</th><th>步骤</th><th>断言</th><th>来源</th></tr>
         </thead>
@@ -69,7 +69,7 @@ const emptyHint = computed(() =>
             <td class="muted">{{ row.compiled_from }}</td>
           </tr>
         </tbody>
-      </table>
+      </table></div>
       <Pagination v-model:page="page" :page-size="pageSize" :total="total" />
     </StateBlock>
   </section>

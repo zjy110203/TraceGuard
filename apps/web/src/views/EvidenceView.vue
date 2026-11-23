@@ -5,7 +5,7 @@ import { useAsync } from '../composables/useAsync'
 import StateBlock from '../components/StateBlock.vue'
 import Pagination from '../components/Pagination.vue'
 import PageHeader from '../components/PageHeader.vue'
-import { routeQuery } from '../router'
+import { navigate, routeQuery } from '../router'
 
 const runFilter = ref(routeQuery.value.get('run') ?? '')
 const layer = ref('')
@@ -57,6 +57,10 @@ async function applyFilter(): Promise<void> {
       <button class="btn" type="button" @click="applyFilter">应用</button>
     </PageHeader>
     <p class="hint">派生证据不会与来源算作独立佐证；完整性以 sha256 记录。点击行可展开详情。</p>
+    <p v-if="runFilter && total" class="xlinks">
+      <a href="#" @click.prevent="navigate(`/runs/${runFilter}`)">← 运行详情</a>
+      <a href="#" @click.prevent="navigate(`/runs/${runFilter}/diagnosis`)">该 Run 诊断</a>
+    </p>
 
     <StateBlock
       :loading="records.loading.value"
@@ -65,7 +69,7 @@ async function applyFilter(): Promise<void> {
       empty-hint="尚无证据记录。先提交一次 Run，执行会产生截图与 trace 证据。"
       :retry="records.reload"
     >
-      <table>
+      <div class="table-wrap"><table>
         <thead><tr><th>evidence_id</th><th>类型</th><th>层级</th><th>来源</th><th>run</th><th>完整性</th></tr></thead>
         <tbody>
           <template v-for="r in rows" :key="r.evidence_id">
@@ -96,7 +100,7 @@ async function applyFilter(): Promise<void> {
             </tr>
           </template>
         </tbody>
-      </table>
+      </table></div>
       <Pagination v-model:page="page" :page-size="pageSize" :total="total" />
     </StateBlock>
 
@@ -108,7 +112,7 @@ async function applyFilter(): Promise<void> {
       empty-hint="未检测到序号缺口，证据序列完整。"
       :retry="gaps.reload"
     >
-      <table>
+      <div class="table-wrap"><table>
         <thead><tr><th>producer_instance_id</th><th>缺失序号</th><th>状态</th><th>说明</th></tr></thead>
         <tbody>
           <tr v-for="g in gaps.data.value ?? []" :key="g.producer_instance_id">
@@ -118,12 +122,19 @@ async function applyFilter(): Promise<void> {
             <td class="small muted">{{ g.note }}</td>
           </tr>
         </tbody>
-      </table>
+      </table></div>
     </StateBlock>
   </section>
 </template>
 
 <style scoped>
+.xlinks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font-size: 13px;
+  margin: 0 0 12px;
+}
 .clickable {
   cursor: pointer;
 }

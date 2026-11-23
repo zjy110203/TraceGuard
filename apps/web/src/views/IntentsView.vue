@@ -56,7 +56,7 @@ async function submit(): Promise<void> {
       empty-hint="尚无 TestIntent。用上方表单新增一条（如 INT-002），或先创建 TestCase 自动生成。"
       :retry="state.reload"
     >
-      <table>
+      <div class="table-wrap"><table>
         <thead>
           <tr><th>intent_id</th><th>描述</th><th>来源</th><th>关联用例</th><th></th></tr>
         </thead>
@@ -74,7 +74,7 @@ async function submit(): Promise<void> {
             <td class="mono muted small">{{ row.source_ref || '—' }}</td>
           </tr>
         </tbody>
-      </table>
+      </table></div>
     </StateBlock>
   </section>
 </template>
@@ -82,9 +82,18 @@ async function submit(): Promise<void> {
 <style scoped>
 .form {
   display: grid;
-  grid-template-columns: 180px 1fr 180px auto;
+  /* Two columns on narrow screens; a fixed 4-column track cannot fit 390px. */
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 8px;
+}
+.form input {
+  min-width: 0;
+}
+@media (min-width: 900px) {
+  .form {
+    grid-template-columns: 180px minmax(0, 1fr) 180px auto;
+  }
 }
 .tag {
   font-size: 12px;

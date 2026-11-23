@@ -112,7 +112,7 @@ function refresh(): void {
         empty-hint="尚无编排事件。到 Task 队列提交一次 Run 后这里会出现事件。"
         :retry="orchestration.reload"
       >
-        <table>
+        <div class="table-wrap"><table>
           <thead><tr><th>event_type</th><th>run_id</th><th>seq</th><th>发生时间</th></tr></thead>
           <tbody>
             <tr v-for="e in (orchestration.data.value ?? []).slice((orchPage - 1) * pageSize, orchPage * pageSize)" :key="e.event_id">
@@ -122,7 +122,7 @@ function refresh(): void {
               <td class="muted small">{{ e.occurred_at || '—' }}</td>
             </tr>
           </tbody>
-        </table>
+        </table></div>
         <Pagination v-model:page="orchPage" :page-size="pageSize" :total="orchestration.data.value?.length ?? 0" />
       </StateBlock>
     </template>
@@ -135,7 +135,7 @@ function refresh(): void {
         empty-hint="Event Store 尚无持久化事件。执行 Run 并产生证据后会有记录。"
         :retry="evidence.reload"
       >
-        <table>
+        <div class="table-wrap"><table>
           <thead><tr><th>event_type</th><th>run_id</th><th>seq</th><th>producer</th><th>幂等键</th></tr></thead>
           <tbody>
             <tr
@@ -149,7 +149,7 @@ function refresh(): void {
               <td class="mono small muted">{{ e.idempotency_key }}</td>
             </tr>
           </tbody>
-        </table>
+        </table></div>
         <Pagination v-model:page="evPage" :page-size="pageSize" :total="evidence.data.value?.length ?? 0" />
       </StateBlock>
     </template>

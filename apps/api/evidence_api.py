@@ -104,8 +104,16 @@ def graph_edges(request: Request, relation: str | None = None) -> list[dict[str,
 
 
 @router.get("/graph/subgraph/{root_id}")
-def graph_subgraph(root_id: str, request: Request, depth: int = 2) -> dict[str, Any]:
-    return request.app.state.correlation_graph.subgraph(root_id, depth=depth)  # type: ignore[no-any-return]
+def graph_subgraph(
+    root_id: str,
+    request: Request,
+    depth: int = 2,
+    limit: int | None = Query(None, ge=1, le=2000),
+    offset: int = Query(0, ge=0),
+) -> dict[str, Any]:
+    return request.app.state.correlation_graph.subgraph(  # type: ignore[no-any-return]
+        root_id, depth=depth, limit=limit, offset=offset
+    )
 
 
 @router.get("/graph/conflicts/{hypothesis_id}")

@@ -89,7 +89,7 @@ async function launch(taskId: string): Promise<void> {
       empty-hint="尚无 Task。用上方表单创建第一个 Task，再点击行内「提交 Run」执行。"
       :retry="tasks.reload"
     >
-      <table>
+      <div class="table-wrap"><table>
         <thead><tr><th>task_id</th><th>case_id</th><th>标题</th><th>状态</th><th>创建时间</th><th></th></tr></thead>
         <tbody>
           <tr v-for="row in rows" :key="row.task_id">
@@ -105,7 +105,7 @@ async function launch(taskId: string): Promise<void> {
             <td><button class="btn" type="button" :disabled="busy" @click="launch(row.task_id)">提交 Run</button></td>
           </tr>
         </tbody>
-      </table>
+      </table></div>
       <Pagination v-model:page="page" :page-size="pageSize" :total="tasks.data.value?.length ?? 0" />
     </StateBlock>
   </section>

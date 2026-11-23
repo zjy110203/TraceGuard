@@ -214,10 +214,21 @@ class CorrelationGraph:
                 for r in rows
             ]
 
-    def subgraph(self, root_id: str, depth: int = 2) -> dict[str, Any]:
-        """BFS subgraph for visualization; bounded depth prevents runaway queries."""
+    def subgraph(
+        self, root_id: str, depth: int = 2, *, limit: int | None = None, offset: int = 0
+    ) -> dict[str, Any]:
+        """BFS subgraph for visualization; bounded depth prevents runaway queries.
+
+        ``limit``/``offset`` paginate the result. They default to "everything"
+        so existing callers keep their behaviour; a dense graph is expected to
+        pass a limit and read ``truncated``/``*_total`` to page the rest.
+        """
         if depth < 0 or depth > 6:
             raise ValidationError("depth must be 0..6")
+        if offset < 0:
+            raise ValidationError("offset must be >= 0")
+        if limit is not None and limit < 1:
+            raise ValidationError("limit must be >= 1")
         visited: set[str] = {root_id}
         frontier = [root_id]
         for _ in range(depth):
@@ -230,10 +241,20 @@ class CorrelationGraph:
                         nxt.append(other)
             frontier = nxt
         node_index = {n["node_id"]: n for n in self.nodes()}
+        # Sorted, not set order: pagination slices this list, and an unordered
+        # set would let a node show up on two pages (or none) between requests.
+        all_nodes = [node_index[n] for n in sorted(visited) if n in node_index]
+        all_edges = [e for e in self.edges() if e["src"] in visited and e["dst"] in visited]
+        end = None if limit is None else offset + limit
         return {
             "root": root_id,
-            "nodes": [node_index[n] for n in visited if n in node_index],
-            "edges": [e for e in self.edges() if e["src"] in visited and e["dst"] in visited],
+            "nodes": all_nodes[offset:end],
+            "edges": all_edges[offset:end],
+            "node_total": len(all_nodes),
+            "edge_total": len(all_edges),
+            "offset": offset,
+            "limit": limit,
+            "truncated": end is not None and (end < len(all_nodes) or end < len(all_edges)),
         }
 
     # ---- correlation rules -------------------------------------------------

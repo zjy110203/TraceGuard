@@ -32,7 +32,7 @@ const audit = useAsync(() => api.probeAudit())
       empty-hint="注册表为空。探针注册后才会出现在这里。"
       :retry="registry.reload"
     >
-      <table>
+      <div class="table-wrap"><table>
         <thead>
           <tr>
             <th>probe_id</th><th>范围</th><th>风险</th><th>只读</th><th>副作用</th><th>预估成本</th><th>超时</th><th>权限</th>
@@ -50,7 +50,7 @@ const audit = useAsync(() => api.probeAudit())
             <td class="mono small muted">{{ p.permission_required }}</td>
           </tr>
         </tbody>
-      </table>
+      </table></div>
     </StateBlock>
 
     <h2>调用审计（{{ audit.data.value?.length ?? 0 }}）</h2>
@@ -61,7 +61,7 @@ const audit = useAsync(() => api.probeAudit())
       empty-hint="本次会话尚无探针调用记录。调用探针后审计条目会出现在这里。"
       :retry="audit.reload"
     >
-      <table>
+      <div class="table-wrap"><table>
         <thead><tr><th>probe_id</th><th>调用方</th><th>结果</th><th>校验项</th><th>原因</th><th>时间</th></tr></thead>
         <tbody>
           <tr v-for="(a, i) in audit.data.value ?? []" :key="i">
@@ -73,7 +73,7 @@ const audit = useAsync(() => api.probeAudit())
             <td class="small muted">{{ a.at }}</td>
           </tr>
         </tbody>
-      </table>
+      </table></div>
     </StateBlock>
   </section>
 </template>

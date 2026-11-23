@@ -23,7 +23,7 @@ const state = useAsync(() => api.caseDetail(props.caseId))
       :retry="state.reload"
     >
       <p class="hint">版本为 append-only：晋升只会新增版本，历史版本文件不会被覆盖。</p>
-      <table>
+      <div class="table-wrap"><table>
         <thead><tr><th>版本</th><th>文件</th><th>编译来源</th><th>当前</th></tr></thead>
         <tbody>
           <tr v-for="v in state.data.value?.versions ?? []" :key="v.version">
@@ -36,7 +36,7 @@ const state = useAsync(() => api.caseDetail(props.caseId))
             </td>
           </tr>
         </tbody>
-      </table>
+      </table></div>
     </StateBlock>
   </section>
 </template>

@@ -286,16 +286,18 @@ def test_redaction_and_lifecycle(evidence: EvidenceManager) -> None:
     assert evidence.get("evd_secret") is not None  # still present, no deletion
 
 
-def test_evidence_api_endpoints() -> None:
-    """Viewer/query endpoints are wired and reachable through the platform app."""
-    import uuid
+def test_evidence_api_endpoints(tmp_path: Path) -> None:
+    """Viewer/query endpoints are wired and reachable through the platform app.
 
+    The DB lives under pytest's tmp_path so a mid-test failure can never leak a
+    stray `_test_evidence_*.db` into the production `data/` directory.
+    """
     from fastapi.testclient import TestClient
 
     from apps.api.main import build_app
     from packages.core.config import Settings
 
-    db_file = Path("data") / f"_test_evidence_{uuid.uuid4().hex[:8]}.db"
+    db_file = tmp_path / "_test_evidence.db"
     settings = Settings(app_env="test", database_url=f"sqlite:///{db_file.as_posix()}")
     app = build_app(settings)
     with TestClient(app) as client:

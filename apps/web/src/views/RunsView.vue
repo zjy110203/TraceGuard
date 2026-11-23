@@ -93,7 +93,7 @@ onUnmounted(() => unsubscribe?.())
       empty-hint="尚无 Run。到 Task 队列创建任务并提交一次执行。"
       :retry="load"
     >
-      <table>
+      <div class="table-wrap"><table>
         <thead>
           <tr>
             <th>run_id</th><th>task</th><th>尝试</th><th>状态</th><th>Verdict</th><th>诊断</th><th>创建时间</th>
@@ -112,7 +112,7 @@ onUnmounted(() => unsubscribe?.())
             <td class="muted small">{{ row.created_at?.replace('T', ' ').slice(0, 19) }}</td>
           </tr>
         </tbody>
-      </table>
+      </table></div>
       <Pagination v-model:page="page" :page-size="pageSize" :total="runs.length" />
     </StateBlock>
   </section>

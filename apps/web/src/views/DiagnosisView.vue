@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { api } from '../api/client'
+import { navigate, routeQuery } from '../router'
 import type { Diagnosis } from '../api/types'
 import { messageOf } from '../composables/useAsync'
 import StateBlock from '../components/StateBlock.vue'
@@ -8,7 +9,10 @@ import StatusPill from '../components/StatusPill.vue'
 import PageHeader from '../components/PageHeader.vue'
 
 const props = defineProps<{ runId?: string }>()
-const runId = ref(props.runId ?? '')
+// Two entry points exist: `/runs/{id}/diagnosis` (path segment) and
+// `/diagnosis?run={id}` (link from a case). Both must prefill the same field,
+// otherwise the second one lands on an empty page.
+const runId = ref(props.runId || routeQuery.value.get('run') || '')
 const data = ref<Diagnosis | null>(null)
 const loading = ref(false)
 const error = ref('')
@@ -31,9 +35,19 @@ async function load(): Promise<void> {
   }
 }
 
-if (props.runId) {
+if (runId.value) {
   void load()
 }
+
+watch(
+  () => routeQuery.value.get('run'),
+  (value) => {
+    if (value && value !== runId.value) {
+      runId.value = value
+      void load()
+    }
+  },
+)
 </script>
 
 <template>
@@ -50,6 +64,13 @@ if (props.runId) {
         {{ loading ? '诊断中…' : '运行诊断' }}
       </button>
     </div>
+
+    <!-- Round trip: run -> diagnosis -> evidence -> run. Without these the
+         diagnosis page is a dead end reached only by retyping a run_id. -->
+    <p v-if="data" class="xlinks">
+      <a href="#" @click.prevent="navigate(`/runs/${data.run_id}`)">← 返回运行</a>
+      <a href="#" @click.prevent="navigate(`/evidence?run=${data.run_id}`)">查看该 Run 证据</a>
+    </p>
 
     <StateBlock
       :loading="loading"
@@ -126,6 +147,13 @@ if (props.runId) {
 }
 .search input {
   width: 320px;
+}
+.xlinks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font-size: 13px;
+  margin: 0 0 12px;
 }
 .meta {
   display: grid;

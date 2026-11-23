@@ -23,7 +23,7 @@ const run = useAsync(() => api.run(props.runId))
       empty-hint="该 Run 尚无步骤记录。等待执行产生步骤，或点击右上角返回 Run 查看整体状态。"
       :retry="run.reload"
     >
-      <table>
+      <div class="table-wrap"><table>
         <thead><tr><th>#</th><th>step_id</th><th>action</th><th>结果</th><th>细节</th></tr></thead>
         <tbody>
           <tr v-for="s in run.data.value?.steps ?? []" :key="s.index">
@@ -34,7 +34,7 @@ const run = useAsync(() => api.run(props.runId))
             <td class="small">{{ s.detail }}</td>
           </tr>
         </tbody>
-      </table>
+      </table></div>
     </StateBlock>
   </section>
 </template>

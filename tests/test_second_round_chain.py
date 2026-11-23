@@ -153,9 +153,19 @@ def test_chain_from_exploration_to_disposition(teamflow: None) -> None:
     # 3. diagnosis references the same run and never invents CONFIRMED without a rule
     diagnosis = result.diagnosis
     assert diagnosis["run_id"] == exec_info["run_id"]
+    # Two reachable shapes of CONFIRMED, and they must stay distinguishable:
+    #   * a failing run   -> CONFIRMED root cause, backed by a confirmation rule
+    #   * a healthy run    -> CONFIRMED "no failure observed", which by definition
+    #     has NO root cause (the compiler now produces an evaluable oracle, so
+    #     this branch is reachable here; it used to be masked by NOT_EVALUATED)
     if diagnosis["diagnosis_status"] == "CONFIRMED":
         assert any(h.get("confirmation_rule") for h in diagnosis["hypotheses"])
-        assert diagnosis["root_causes"]
+        if exec_info["test_verdict"] == "PASSED":
+            assert not diagnosis["root_causes"]
+            assert diagnosis["symptom"] == "none"
+            assert any("healthy" in n.lower() for n in diagnosis["notes"])
+        else:
+            assert diagnosis["root_causes"]
 
     # 4. disposition is always routed, never left blank
     assert result.disposition

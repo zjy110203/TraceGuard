@@ -3,22 +3,29 @@
 
 import type {
   AuditRow,
+  CandidateDetail,
+  CandidateRow,
   CaseDetail,
   CaseRow,
+  ChainSummary,
   DatasetRow,
   Diagnosis,
   EventRow,
   EvidenceRow,
   ExperimentRow,
+  ExplorationSummary,
+  ExplorationTrace,
   GraphEdge,
   GraphNode,
   IntentRow,
   Overview,
+  PolicyCatalogue,
   ProbeSpecRow,
   RepairProposal,
   RunDetail,
   RunReport,
   RunRow,
+  Subgraph,
   TaskRow,
 } from './types'
 
@@ -120,9 +127,11 @@ export const api = {
 
   graphNodes: () => request<GraphNode[]>('/evidence/graph/nodes'),
   graphEdges: () => request<GraphEdge[]>('/evidence/graph/edges'),
-  subgraph: (rootId: string, depth = 2) =>
-    request<unknown>(
-      `/evidence/graph/subgraph/${encodeURIComponent(rootId)}${qs({ depth })}`,
+  // Adjacency query. `limit` keeps a dense neighbourhood from returning the
+  // whole graph at once; `truncated`/`node_total` let the panel say so.
+  subgraph: (rootId: string, depth = 2, limit = 200) =>
+    request<Subgraph>(
+      `/evidence/graph/subgraph/${encodeURIComponent(rootId)}${qs({ depth, limit })}`,
     ),
 
   probes: () => request<ProbeSpecRow[]>('/probes'),
@@ -164,6 +173,47 @@ export const api = {
       }[]
     }>('/dispatch/status'),
   evidenceAudit: () => request<import('./types').EvidenceAuditRow[]>('/evidence/events/audit'),
+
+  // ---- Explorer ----
+  explorationPolicies: () => request<PolicyCatalogue>('/explorations/policies'),
+  explorations: () => request<ExplorationSummary[]>('/explorations'),
+  exploration: (id: string) =>
+    request<ExplorationTrace>(`/explorations/${encodeURIComponent(id)}`),
+  runExploration: (body: {
+    intent_ref: string
+    base_url: string
+    policy: string
+    max_steps: number
+  }) =>
+    request<ExplorationTrace>('/explorations', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  // ---- Candidates (compiled from a trace, gated by human review) ----
+  candidates: () => request<CandidateRow[]>('/candidates'),
+  candidate: (id: string) => request<CandidateDetail>(`/candidates/${encodeURIComponent(id)}`),
+  compileExploration: (explorationId: string, body: { case_id?: string; title?: string }) =>
+    request<CandidateRow>(`/explorations/${encodeURIComponent(explorationId)}/compile`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  approveCandidate: (id: string, body: { reviewer: string; approval_record: string }) =>
+    request<CandidateRow>(`/candidates/${encodeURIComponent(id)}/approve`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  rejectCandidate: (id: string, body: { reviewer: string; reason: string }) =>
+    request<CandidateRow>(`/candidates/${encodeURIComponent(id)}/reject`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  // ---- Full chain (approved case -> run -> evidence -> diagnosis) ----
+  chains: () => request<ChainSummary[]>('/chains'),
+  chain: (id: string) => request<Record<string, unknown>>(`/chains/${encodeURIComponent(id)}`),
+  runChain: (body: { case_id: string; scenario_id?: string }) =>
+    request<ChainSummary>('/chains', { method: 'POST', body: JSON.stringify(body) }),
 }
 
 // SSE: real orchestration events, replayed from Last-Event-ID by the server.

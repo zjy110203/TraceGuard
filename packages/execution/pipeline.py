@@ -27,6 +27,7 @@ from packages.agents.probes import (
     ProbeSpec,
 )
 from packages.evidence.graph import CorrelationGraph, GraphEdge, GraphNode
+from packages.execution.locators import LocatorRegistry
 from packages.execution.models import TestCaseVersion
 from packages.execution.runner import LocalRunner
 
@@ -57,6 +58,17 @@ class FullChainReport:
     disposition: str = ""
     repair: dict[str, Any] = field(default_factory=dict)
     completed: bool = False
+    # Captured artifacts, carried through so a caller can persist them into the
+    # evidence plane. Without these the graph page has nodes but no evidence
+    # rows, and the only way to inspect a chain was to re-run it.
+    evidence: list[dict[str, Any]] = field(default_factory=list)
+    events: list[dict[str, Any]] = field(default_factory=list)
+    # Execution detail, so a caller can register this run alongside ordinary
+    # workbench runs (steps list, assertion results, UI observations). The
+    # diagnosis endpoint reads these to re-derive a diagnosis for the run id.
+    steps: list[dict[str, Any]] = field(default_factory=list)
+    assertion_results: list[dict[str, Any]] = field(default_factory=list)
+    observations: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -74,11 +86,16 @@ class FullChain:
         graph: CorrelationGraph,
         eval_token: str = "local-dev-eval-token-change-me",
         fault_events_provider=None,
+        locators: LocatorRegistry | None = None,
     ) -> None:
         self.base_url = base_url
         self.graph = graph
         self.eval_token = eval_token
         self.fault_events_provider = fault_events_provider
+        # Cases are written against logical targets (``loc:login.username``). The
+        # registry must reach the runner or every fill/click sends a literal
+        # "loc:..." string to Playwright and fails with an invalid selector.
+        self.locators = locators
         self.diagnosis_service = DiagnosisService()
 
     def run(
@@ -108,7 +125,7 @@ class FullChain:
 
         # 2. Execution via deterministic runner (may fail to start -> recorded)
         try:
-            runner = LocalRunner(self.base_url)
+            runner = LocalRunner(self.base_url, eval_token=self.eval_token, locators=self.locators)
             run_report = runner.run(case, run_id=run_id_override)
             report.execution = {
                 "run_id": run_report.run_id,
@@ -118,6 +135,11 @@ class FullChain:
                 "event_count": len(run_report.events),
                 "failed_steps": [s.step_id for s in run_report.steps if not s.ok],
             }
+            report.evidence = list(run_report.evidence)
+            report.events = list(run_report.events)
+            report.steps = [s.to_dict() for s in run_report.steps]
+            report.assertion_results = list(run_report.assertion_results)
+            report.observations = dict(run_report.observations)
             stage("execution", "OK", f"verdict={run_report.test_verdict}")
         except Exception as exc:  # browser/env unavailable => honest failure
             report.execution = {"error": f"{type(exc).__name__}: {exc}"[:500]}

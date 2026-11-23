@@ -80,6 +80,23 @@ class Settings(BaseSettings):
     # a throwaway directory so "fresh install" assertions stay hermetic.
     benchmark_data_dir: str = "benchmark/data"
 
+    # Explorer traces (append-only JSON, one file per exploration). Same
+    # isolation contract as benchmark_data_dir: tests point it at a temp dir.
+    exploration_data_dir: str = "data/explorations"
+
+    # Full-chain reports (TestCase -> Run -> Oracle -> Evidence -> Diagnosis).
+    # One JSON file per chain so a chain can be inspected without re-running it.
+    chain_data_dir: str = "data/chains"
+
+    # Content-addressed root for captured binary evidence (screenshots). Keeps
+    # multi-hundred-KB hex blobs out of the JSON evidence column while still
+    # preserving the exact bytes.
+    blob_dir: str = "data/blobs"
+
+    # Compiled candidates awaiting human review. Empty means "nothing pending",
+    # and only an explicit approval writes into case_dir.
+    candidate_data_dir: str = "data/candidates"
+
     @property
     def teamflow_base_url(self) -> str:
         return f"http://{self.teamflow_host}:{self.teamflow_port}"

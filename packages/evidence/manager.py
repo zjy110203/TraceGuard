@@ -220,6 +220,68 @@ class EvidenceManager:
             payload=payload,
         )
 
+    def import_record(
+        self, record: dict[str, Any], *, blob_store: BlobStore | None = None
+    ) -> dict[str, Any]:
+        """Persist an execution EvidenceRecord without re-deriving anything.
+
+        The runner hashed the bytes it actually captured and labelled the record
+        raw/derived and its trust level. Recomputing a hash here (as ``add_raw``
+        does) would attach a digest to a JSON view rather than to the artifact,
+        so the original integrity value is carried over verbatim.
+
+        Binary captures arrive hex-encoded inside ``payload['image']``. When a
+        ``blob_store`` is supplied the bytes are moved there content-addressed
+        and only the reference stays in the JSON payload, so a few screenshots
+        cannot bloat the evidence row.
+
+        Idempotent: an already-persisted ``evidence_id`` is returned unchanged,
+        which makes re-running one case safe.
+        """
+        evidence_id = str(record.get("evidence_id", ""))
+        if not evidence_id:
+            raise ConflictError("import_record requires an evidence_id")
+        existing = self.get(evidence_id)
+        if existing is not None:
+            return existing
+        derived_from = tuple(record.get("derived_from") or ())
+        is_raw = bool(record.get("raw", True))
+        if not is_raw and not derived_from:
+            # Mirrors add_derived's invariant: derived must name its sources.
+            raise ConflictError("derived evidence requires non-empty derived_from")
+        payload = dict(record.get("payload") or {})
+        attachment_ref = str(record.get("attachment_ref", ""))
+        image_hex = payload.pop("image", None)
+        if isinstance(image_hex, str) and image_hex:
+            try:
+                raw_bytes = bytes.fromhex(image_hex)
+            except ValueError:
+                payload["image_hex_invalid"] = True
+            else:
+                digest = self.sha256(raw_bytes)
+                if blob_store is not None:
+                    ref = blob_store.put(raw_bytes, content_type="image/png")
+                    attachment_ref = ref.key
+                    payload["blob"] = {"key": ref.key, "size": ref.size, "sha256": digest}
+                payload["byte_length"] = len(raw_bytes)
+                payload["binary_sha256"] = digest
+        return self._add(
+            evidence_id=evidence_id,
+            layer="raw" if is_raw else "derived",
+            evidence_type=str(record.get("evidence_type", "unknown")),
+            source=str(record.get("source", "")),
+            run_id=str(record.get("run_id", "")),
+            step_id=str(record.get("step_id") or ""),
+            summary=str(record.get("summary", "")),
+            integrity_check=str(record.get("integrity_check", "")),
+            source_trust=str(record.get("source_trust", "observed")),
+            derived_from=derived_from,
+            derivation_rule=str(record.get("derivation_rule", "")),
+            retention=str(record.get("retention", RETENTION_RUN)),
+            attachment_ref=attachment_ref,
+            payload=payload,
+        )
+
     def _add(self, **kwargs: Any) -> dict[str, Any]:
         derived = kwargs.pop("derived_from")
         kwargs["derived_from"] = json.dumps(list(derived))

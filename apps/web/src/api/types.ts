@@ -18,11 +18,19 @@ export interface Overview {
   runs: number
   runs_by_status: Record<string, number>
   runs_by_verdict: Record<string, number>
+  /** Fixed 14-day buckets, zero-filled; feeds the trend sparkline. */
+  runs_daily: { date: string; count: number }[]
+  /** Runs that actually reached a verdict (denominator for the rates). */
+  evaluated: number
+  /** null when nothing has been evaluated yet — never a fake 0%. */
+  success_rate: number | null
+  failure_rate: number | null
   recent_runs: RunBrief[]
   cases: number
   events: number
   evidence: number
   repairs_pending: number
+  explorations: { total: number; scripted: number; llm: number }
 }
 
 export interface IntentRow {
@@ -325,4 +333,150 @@ export interface ExperimentRow {
   metrics: Record<string, number | null>
   status: string
   note: string
+}
+
+// ---- Explorer -------------------------------------------------------------
+// `is_llm` is the honesty switch: the UI must render a deterministic policy as
+// deterministic, never as a model run.
+
+export interface PolicyRow {
+  id: string
+  label: string
+  kind: string
+  is_llm: boolean
+  verified: boolean
+  agent_version: string
+  note: string
+}
+
+export interface PolicyCatalogue {
+  policies: PolicyRow[]
+  active_policy: string
+  llm_blocked_reason: string
+}
+
+export interface ExplorationSummary {
+  exploration_id: string
+  test_intent_ref: string
+  target: string
+  policy: string
+  policy_label: string
+  is_llm: boolean
+  status: string
+  stop_reason: string
+  step_count: number
+  started_at: string
+  finished_at: string
+  source_trace_hash: string
+  error: string | null
+}
+
+export interface ExplorationAction {
+  tool?: string
+  args?: Record<string, unknown>
+  detail?: string
+  rejected?: boolean
+  reason?: string
+}
+
+export interface ExplorationTrace extends ExplorationSummary {
+  application_version: string
+  browser_version: string
+  agent_version: string
+  prompt_version: string
+  tool_version: string
+  action_sequence: ExplorationAction[]
+  page_state_ref: string
+  event_refs: string[]
+  evidence_refs: string[]
+  /** Count of credential-shaped args masked server-side before storage. */
+  redacted_fields?: number
+}
+
+export interface CandidateRow {
+  candidate_id: string
+  case_id: string
+  title: string
+  status: 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED' | string
+  source_exploration_id: string
+  source_trace_hash: string
+  step_count: number
+  assertion_count: number
+  uncertainty_notes: string[]
+  model_version: string
+  is_llm: boolean
+  created_at: string
+  reviewer: string
+  approval_record: string
+  case_file: string
+}
+
+export interface CandidateStep {
+  step_id: string
+  action: string
+  target: string
+  value: string
+  expected: string
+}
+
+export interface CandidateOracleSpec {
+  oracle_id: string
+  source_type: string
+  source_ref: string
+  expected: string
+  approved: boolean
+  approved_by: string
+  source: string
+}
+
+export interface CandidateDetail extends CandidateRow {
+  intent: { intent_id: string; description: string; source_ref: string }
+  steps: CandidateStep[]
+  oracle_bindings: {
+    assertion_id: string
+    primary: CandidateOracleSpec
+    supporting: CandidateOracleSpec[]
+  }[]
+  compiler_version: string
+  locator_strategy_version: string
+  prompt_version: string
+  compiled_from: string
+  rejection_reason: string
+}
+
+export interface ChainStageRow {
+  name: string
+  status: string
+  detail: string
+  at?: string
+}
+
+export interface ChainSummary {
+  chain_id: string
+  scenario_id: string
+  case_id: string
+  case_version: number
+  run_id: string | null
+  test_verdict: string | null
+  execution_status: string | null
+  evidence_count: number
+  event_count: number
+  diagnosis_status: string | null
+  disposition: string | null
+  completed: boolean
+  started_at: string
+  duration_s: number | null
+  persisted: { events?: { written: number; skipped: number }; evidence?: { written: number; skipped: number } } | null
+  stages: ChainStageRow[]
+}
+
+export interface Subgraph {
+  root: string
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+  node_total: number
+  edge_total: number
+  offset: number
+  limit: number | null
+  truncated: boolean
 }

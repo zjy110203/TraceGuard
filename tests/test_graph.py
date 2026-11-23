@@ -150,3 +150,35 @@ def test_bounded_subgraph(graph) -> None:
     assert {n["node_id"] for n in sub["nodes"]} == {"n0", "n1", "n2"}
     with pytest.raises(ValidationError):
         graph.subgraph("n0", depth=99)
+
+
+def test_subgraph_pagination_is_bounded_but_complete(graph) -> None:
+    """A dense neighbourhood must be pageable without losing the totals."""
+    chain = [f"p{i}" for i in range(12)]
+    for nid in chain:
+        graph.add_node(GraphNode(nid, "Event"))
+    for i in range(len(chain) - 1):
+        graph.add_edge(GraphEdge(f"pe{i}", chain[i], chain[i + 1], "temporal"))
+
+    first = graph.subgraph("p0", depth=3, limit=4, offset=0)
+    assert len(first["nodes"]) == 4
+    assert first["node_total"] == 4  # depth 3 reaches p0..p3 only
+    assert first["truncated"] is False
+    assert first["limit"] == 4 and first["offset"] == 0
+
+    # depth is a hop count: depth 6 from p0 reaches p0..p6 (7 nodes), not all 12.
+    wide = graph.subgraph("p0", depth=6, limit=4, offset=0)
+    assert wide["node_total"] == 7
+    assert len(wide["nodes"]) == 4
+    assert wide["truncated"] is True
+
+    second = graph.subgraph("p0", depth=6, limit=4, offset=4)
+    assert [n["node_id"] for n in second["nodes"]] == ["p4", "p5", "p6"]
+    assert second["truncated"] is False
+    # No page repeats a node from the previous page.
+    assert not ({n["node_id"] for n in first["nodes"]} & {n["node_id"] for n in second["nodes"]})
+
+    with pytest.raises(ValidationError):
+        graph.subgraph("p0", offset=-1)
+    with pytest.raises(ValidationError):
+        graph.subgraph("p0", limit=0)

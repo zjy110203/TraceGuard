@@ -197,10 +197,15 @@ class LocalRunner:
                         step.step_id, step.action, result.ok, result.detail, result.evidence_ids
                     )
                 )
-                # UI observations come from assert steps: their pass/fail is a
-                # direct observation of what the browser actually saw.
-                if step.action.startswith("assert_"):
-                    ui_observations[f"{step.step_id}.passed"] = result.ok
+                # Every step publishes its own outcome, not just assertions.
+                #
+                # The TestCase Compiler binds a compiled candidate's Oracle to
+                # ``ui.<step>.passed`` on the explored click. If only assert_*
+                # steps published observations, that Oracle could never resolve
+                # and every compiled case would freeze at NOT_EVALUATED. The
+                # claim stays narrow: "this explored action still succeeds",
+                # which is exactly what the compiler says it verified.
+                ui_observations[f"{step.step_id}.passed"] = result.ok
             browser.network_evidence(run_id)
 
         # Collect after the context closes: Playwright Trace evidence is

@@ -63,6 +63,7 @@ from benchmark.store import BenchmarkStore  # noqa: E402
 from packages.core import database  # noqa: E402
 from packages.core.config import ensure_env_file_vars, get_settings  # noqa: E402
 from packages.evidence.graph import make_in_memory_graph  # noqa: E402
+from packages.execution.locators import LocatorRegistry  # noqa: E402
 from packages.execution.models import load_case  # noqa: E402
 from packages.execution.pipeline import FullChain  # noqa: E402
 
@@ -138,7 +139,16 @@ def fault_events() -> list[dict[str, Any]]:
 
 def make_chain() -> FullChain:
     graph, _ = make_in_memory_graph()
-    return FullChain(base_url=TF_BASE, graph=graph, fault_events_provider=fault_events)
+    # Logical targets (``loc:...``) need the registry, exactly like a product
+    # chain run; without it Playwright receives a literal "loc:" selector.
+    locator_file = CASES / "locators.json"
+    locators = LocatorRegistry.from_file(locator_file) if locator_file.exists() else None
+    return FullChain(
+        base_url=TF_BASE,
+        graph=graph,
+        fault_events_provider=fault_events,
+        locators=locators,
+    )
 
 
 # ------------------------------------------------------------------- track B runs

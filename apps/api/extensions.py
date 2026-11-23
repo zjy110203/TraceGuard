@@ -166,11 +166,44 @@ def overview(request: Request) -> dict[str, Any]:
     events = store.query(limit=1000) if store else []
     evidence = manager.query(limit=1000) if manager else []
 
+    # 14-day run trend. Buckets are fixed (one per day, zero-filled) so the
+    # sparkline's x-axis is time, not "index of days that happened to have runs".
+    today = datetime.now(UTC).date()
+    days = [today - timedelta(days=i) for i in range(13, -1, -1)]
+    daily = {d.isoformat(): 0 for d in days}
+    for run in runs:
+        parsed = _parse_ts(run.get("created_at"))
+        if parsed is None:
+            continue
+        key = parsed.astimezone(UTC).date().isoformat()
+        if key in daily:
+            daily[key] += 1
+    runs_daily = [{"date": k, "count": v} for k, v in daily.items()]
+
+    # Rates are computed ONLY over runs that actually reached a verdict.
+    # Dividing by all runs would understate quality while runs are in flight,
+    # and inventing 0% for "no data" would be a lie — so we return None instead.
+    evaluated = sum(by_verdict.get(k, 0) for k in ("PASSED", "FAILED", "INCONCLUSIVE"))
+    passed = by_verdict.get("PASSED", 0)
+    failed = by_verdict.get("FAILED", 0)
+    success_rate = round(passed / evaluated * 100, 1) if evaluated else None
+    failure_rate = round(failed / evaluated * 100, 1) if evaluated else None
+
+    # Explorer activity, read from the same store the Explorer page uses.
+    exp_store = getattr(app.state, "exploration_store", None)
+    explorations = exp_store.list() if exp_store else []
+    scripted = sum(1 for e in explorations if not e.get("is_llm"))
+    llm = sum(1 for e in explorations if e.get("is_llm"))
+
     return {
         "tasks": len(tasks),
         "runs": len(runs),
         "runs_by_status": by_status,
         "runs_by_verdict": by_verdict,
+        "runs_daily": runs_daily,
+        "evaluated": evaluated,
+        "success_rate": success_rate,
+        "failure_rate": failure_rate,
         # Flattened once here so the workbench home page avoids N+1 run
         # history requests (one per task). Most recent first, capped.
         "recent_runs": sorted(runs, key=lambda r: r.get("created_at") or "", reverse=True)[:10],
@@ -180,6 +213,7 @@ def overview(request: Request) -> dict[str, Any]:
         "repairs_pending": sum(
             1 for p in app.state.repair_service.list() if p["state"] == "PENDING_APPROVAL"
         ),
+        "explorations": {"total": len(explorations), "scripted": scripted, "llm": llm},
     }
 
 

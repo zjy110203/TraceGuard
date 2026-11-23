@@ -58,7 +58,7 @@
 | 7 Diagnosis v1 | READY_FOR_REVIEW | 八维度 + 多假设 + 确定性 CONFIRMED + Disposition | test_diagnosis.py（9 项） |
 | 8 Evidence Graph | READY_FOR_REVIEW | 关系表图 + 可追溯边 + 同源独立性 + 冲突 | test_graph.py（9 项） |
 | 9 Active Diagnosis Planner | READY_FOR_REVIEW | 五项校验 + 审计 + 脱敏 + EIG 评分 + 预算 | test_planner.py（9 项） |
-| 10 Oracle-Protected Self-Healing | READY_FOR_REVIEW | 11 态 + 断言/Oracle 保护 + 沙箱 + CAS + 回滚 | test_repair.py（9 项） |
+| 10 Oracle-Protected Self-Healing | READY_FOR_REVIEW | 11 态 + 断言/Oracle 保护 + **真实回放沙箱**（`RepairSandbox.replay()` → `LocalRunner` 真 Chrome）+ CAS + 回滚 | test_repair.py（9 项）、test_repair_sandbox.py（5 项，端到端） |
 | 11 UI-FaultBench | READY_FOR_REVIEW | GT 隔离 + 三类评测 + 8 指标口径 + 5 消融 | test_benchmark.py（8 项） |
 | 12 外部泛化/安全/可靠性 | **BLOCKED** | 无外部应用授权；未做外部泛化，未编造报告 | decisions.md |
 | 13 全链路集成与十场景 | READY_FOR_REVIEW | pipeline + 10 场景真执行证据 | test_full_chain.py（11 项） |
@@ -73,7 +73,7 @@
 | M1 专业 UI 自动化平台 | READY_FOR_REVIEW | 阶段 2 + 3 达标，待评审 |
 | M2 证据基础设施 + Agentic Testing | IN_PROGRESS | 阶段 4/6 达标；阶段 5 LLM 循环缺凭据 |
 | M3 Evidence Graph + 智能诊断 | READY_FOR_REVIEW | 阶段 7/8/9 达标，待评审 |
-| M4 安全测试自愈 | READY_FOR_REVIEW | 阶段 10 达标（沙箱为结构校验，真回放留集成），待评审 |
+| M4 安全测试自愈 | READY_FOR_REVIEW | 阶段 10 达标（沙箱含真实回放，见 R5-6 口径核对），待评审 |
 | M5 Benchmark + 泛化 + 安全 + 交付 | IN_PROGRESS | 阶段 11/13 达标；阶段 12 BLOCKED |
 
 ## 4. C01～C12 契约状态
@@ -182,7 +182,9 @@ cd "D:/桌面/TraceGuard/traceguard"
 
 **已知限制**
 - 进程内 worker 是 Celery/Redis 的 dev/test 替代；进程退出后排队任务不持久，不满足生产可用性。
-- 阶段 10 沙箱校验是结构/断言/Oracle 守卫，完整真回放晋升留待与阶段 13 集成深化。
+- 阶段 10 沙箱 **含真实回放**：`packages/execution/sandbox.py` 的 `replay()` 通过 `LocalRunner` 启动真实 Chrome，
+  对 baseline / candidate / control 三次回放做比较，证据先回传后清理；`tests/test_repair_sandbox.py` 5 项端到端验证。
+  （R2 报告中「沙箱为结构校验」是当时的事实，R3/R4 已补齐真回放，本次按源码与测试口径更正。）
 - `data/runs/` 的历史报告为过去会话产物，本报告数字均来自本次运行日志，未复用旧数据充数。
 
 **后续建议（按依赖顺序）**

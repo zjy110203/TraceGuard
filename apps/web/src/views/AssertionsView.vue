@@ -26,7 +26,7 @@ const state = useAsync(() => api.report(props.runId))
       <p class="small muted">
         总体 Verdict：<StatusPill :value="state.data.value?.test_verdict || 'NOT_EVALUATED'" />
       </p>
-      <table>
+      <div class="table-wrap"><table>
         <thead>
           <tr>
             <th>assertion_id</th><th>必需</th><th>结果</th><th>Oracle 可用</th><th>冲突</th><th>说明</th>
@@ -45,7 +45,7 @@ const state = useAsync(() => api.report(props.runId))
             <td class="small">{{ a.reason }}</td>
           </tr>
         </tbody>
-      </table>
+      </table></div>
 
       <div v-if="state.data.value?.verdict_notes.length" class="notes">
         <h2>判定说明</h2>

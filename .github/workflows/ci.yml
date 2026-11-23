@@ -5,8 +5,13 @@ on:
     branches: [main, develop]
   pull_request:
 
+# Least privilege: CI only reads the repo. No secrets are required by any job.
+permissions:
+  contents: read
+
 jobs:
-  quality:
+  python:
+    name: Python quality + tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,7 +27,9 @@ jobs:
       - name: Format check (ruff)
         run: ruff format --check .
       - name: Type check (mypy)
-        run: mypy packages apps --ignore-missing-imports
+        # Scope matches README: packages, apps AND benchmark. Excluding
+        # benchmark would lower the bar, so it stays in.
+        run: mypy packages apps benchmark --ignore-missing-imports
       - name: Unit + integration tests
         # pipefail preserves pytest's real exit code through tee.
         run: |
@@ -34,3 +41,70 @@ jobs:
         with:
           name: pytest-output
           path: pytest-output.txt
+
+  web:
+    name: Web type-check + build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Install dependencies (lockfile only)
+        run: npm ci
+      - name: Dependency consistency
+        run: npm ls --depth=0
+      - name: Vue / TypeScript type check
+        run: npx --no-install vue-tsc --noEmit
+      - name: Vite production build
+        run: npm run build
+      - name: Upload build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: apps/web/dist
+
+  browser-e2e:
+    name: Browser E2E (isolated)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+      - name: Build the workbench SPA
+        working-directory: apps/web
+        run: |
+          npm ci
+          npm run build
+      - name: Install Chromium (CI-only, never touches a personal Chrome)
+        run: |
+          python -m playwright install --with-deps chromium
+      - name: Browser acceptance (5 viewports)
+        env:
+          # The runner has no system Chrome: use Playwright's bundled Chromium.
+          TRACEGUARD_BROWSER_CHANNEL: ""
+        run: python scripts/verify_all.py --mode browser
+      - name: Upload screenshots + summary on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-e2e-artifacts
+          path: |
+            docs/ui/r5/screenshots
+            .traceguard-tmp/r5/e2e-summary.json
+            .traceguard-tmp/r5/verify

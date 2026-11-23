@@ -102,10 +102,11 @@ def test_workbench_renders_real_cases_and_probes(served: str) -> None:
         )
 
         page.goto(served + "/", wait_until="networkidle")
-        assert page.locator("text=质量智能工作台").count() == 1
+        # R5 renamed the brand subtitle to "质量智能平台"; assert the shell rendered.
+        assert page.locator("text=质量智能平台").count() >= 1
 
         # Overview must show numbers fetched from /api/v1/overview.
-        page.locator("a.nav-item", has_text="TestCase").click()
+        page.locator("a.nav-item", has_text="测试用例").click()
         page.wait_for_selector("table tbody tr")
         body = page.inner_text("main")
         assert "TC-CREATE-001" in body, "case id from disk did not reach the UI"
@@ -120,7 +121,7 @@ def test_workbench_renders_real_cases_and_probes(served: str) -> None:
         assert "frozen_fallback_inconclusive_on_conflict" in detail
 
         # Probe catalogue comes from the gateway whitelist (7 ids).
-        page.locator("a.nav-item", has_text="Probe 审计").click()
+        page.locator("a.nav-item", has_text="探针审计").click()
         page.wait_for_selector("text=探针注册表")
         probes = page.inner_text("main")
         for probe_id in ("DOM_SNAPSHOT", "DATABASE_READ", "NETWORK_READ"):
