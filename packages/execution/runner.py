@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -24,12 +24,19 @@ import httpx
 
 from packages.core.logging import get_logger
 from packages.execution.browser import BrowserManager, StepExecution
+from packages.execution.dataref import (
+    NullTestDataProvider,
+    TestDataProvider,
+    is_placeholder,
+    resolve_step_value,
+)
 from packages.execution.events import EventCollector
 from packages.execution.locators import LocatorRegistry
-from packages.execution.models import CleanupPolicy, TestCaseVersion
+from packages.execution.models import CleanupPolicy, TestCaseVersion, TestStep
 from packages.execution.oracle import OracleEvaluator
 from packages.execution.verdict import (
     AssertionResult,
+    AssertionVerdict,
     ExecutionStatus,
     VerdictOutcome,
     aggregate_verdict,
@@ -82,6 +89,10 @@ class RunReport:
     evidence: list[dict[str, Any]] = field(default_factory=list)
     events: list[dict[str, Any]] = field(default_factory=list)
     aborted_reason: str = ""
+    # R5-4.1: a run whose sensitive inputs could not be bound is BLOCKED, not
+    # "failed for an unknown reason" and certainly not "passed".
+    blocked: bool = False
+    blocked_reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -102,6 +113,7 @@ class LocalRunner:
         session_cookie: tuple[str, str] = ("tf_session", "tester"),
         locators: LocatorRegistry | None = None,
         trace_dir: Path | None = None,
+        data_provider: TestDataProvider | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.report_dir = report_dir
@@ -109,8 +121,81 @@ class LocalRunner:
         self.session_cookie = session_cookie
         self.locators = locators
         self.trace_dir = trace_dir
+        # Resolves ``value_ref`` secrets. The null provider is the safe default:
+        # an unbound reference blocks the run instead of guessing a password.
+        self.data_provider: TestDataProvider = data_provider or NullTestDataProvider()
         if report_dir:
             report_dir.mkdir(parents=True, exist_ok=True)
+
+    def bind_steps(self, case: TestCaseVersion) -> tuple[list[TestStep], list[str]]:
+        """Resolve every referenced input *before* a browser starts.
+
+        Returns (steps-with-real-values, blocking problems). A placeholder or an
+        unresolved ref is a hard problem: replaying ``«redacted»`` as a password
+        is exactly the R5-3 defect this replaces.
+        """
+        bound: list[TestStep] = []
+        problems: list[str] = []
+        for step in case.steps:
+            if not step.value_ref and not is_placeholder(step.value):
+                bound.append(step)
+                continue
+            resolved = resolve_step_value(
+                step_id=step.step_id,
+                value=step.value,
+                value_ref=step.value_ref,
+                provider=self.data_provider,
+            )
+            if not resolved.ok:
+                problems.append(resolved.reason)
+                bound.append(step)
+                continue
+            bound.append(replace(step, value=resolved.value, value_ref=step.value_ref))
+        return bound, problems
+
+    def _blocked_report(
+        self,
+        case: TestCaseVersion,
+        run_id: str,
+        started: str,
+        collector: EventCollector,
+        reason: str,
+    ) -> RunReport:
+        """Honest terminal state: nothing executed, nothing evaluated, no PASS."""
+        report = RunReport(
+            run_id=run_id,
+            case_id=case.case_id,
+            case_version=case.version,
+            started_at=started,
+            blocked=True,
+            blocked_reason=reason[:500],
+        )
+        collector.emit("run.blocked", payload={"reason": report.blocked_reason})
+        results: list[AssertionResult] = []
+        for binding in case.oracle_bindings:
+            required = next(
+                (a.required for a in case.assertions if a.assertion_id == binding.assertion_id),
+                True,
+            )
+            results.append(
+                AssertionResult(
+                    assertion_id=binding.assertion_id,
+                    required=required,
+                    verdict=AssertionVerdict.NOT_EVALUATED,
+                    oracle_available=False,
+                    evaluated=False,
+                    reason=f"BLOCKED: {report.blocked_reason}",
+                )
+            )
+        outcome = aggregate_verdict(results, execution_completed=False)
+        report.execution_status = ExecutionStatus.FAILED
+        report.test_verdict = outcome.verdict.value
+        report.assertion_results = [asdict(r) for r in results]
+        report.verdict_notes = outcome.notes
+        report.finished_at = datetime.now(UTC).isoformat()
+        report.events = collector.to_dicts()
+        self._persist(report)
+        return report
 
     def _independent_state(self) -> dict[str, Any]:
         """Read the business-plane independent state API (Oracle source).
@@ -167,6 +252,11 @@ class LocalRunner:
         collector = EventCollector(run_id, "local_runner")
         collector.emit("run.started", payload={"case": case.case_id, "version": case.version})
 
+        steps, problems = self.bind_steps(case)
+        if problems:
+            # Nothing is executed with a placeholder or an unresolved secret.
+            return self._blocked_report(case, run_id, started, collector, "; ".join(problems))
+
         report = RunReport(
             run_id=run_id,
             case_id=case.case_id,
@@ -182,7 +272,7 @@ class LocalRunner:
             trace_dir=self.trace_dir,
             run_id=run_id,
         ) as browser:
-            for step in case.steps:
+            for step in steps:
                 if abort_hook is not None:
                     try:
                         abort_hook()
@@ -207,6 +297,19 @@ class LocalRunner:
                 # which is exactly what the compiler says it verified.
                 ui_observations[f"{step.step_id}.passed"] = result.ok
             browser.network_evidence(run_id)
+            # Page-level observations: a business assertion may legitimately be
+            # "we ended up on /projects", which no per-step flag can express.
+            page = browser.page
+            if page is not None:
+                from urllib.parse import urlparse
+
+                final_url = page.url
+                ui_observations["url_path"] = urlparse(final_url).path or "/"
+                ui_observations["final_url"] = final_url
+                try:
+                    ui_observations["page_title"] = page.title()
+                except Exception:  # noqa: BLE001 - title is cosmetic
+                    ui_observations["page_title"] = ""
 
         # Collect after the context closes: Playwright Trace evidence is
         # appended during BrowserManager.__exit__, so an in-block copy would

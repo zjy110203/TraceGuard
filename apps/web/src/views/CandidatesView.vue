@@ -138,7 +138,7 @@ async function reject(c: CandidateRow): Promise<void> {
     >
       <label class="inline-label">
         <span class="sr-only">按 ID 或标题搜索</span>
-        <input v-model="keyword" placeholder="搜索 candidate / case_id / 标题" />
+        <input v-model="keyword" placeholder="搜索候选 / 用例 / 标题" />
       </label>
       <button class="btn" type="button" @click="state.reload()">刷新</button>
     </PageHeader>

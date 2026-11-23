@@ -155,8 +155,16 @@ def test_empty_whitelist_is_rejected_at_construction() -> None:
 
 
 def test_page_text_is_truncated_before_it_enters_the_prompt() -> None:
-    client = _client(['{"action":"finish","rationale":"done"}'])
-    policy = LLMPolicy(client=client, goal="log in", allowed_tools=TOOLS, max_page_chars=10)
-    policy.next_action(_obs("x" * 5000))
-    # prompt length is bounded by truncation, not by the page size
-    assert client.traces[0].prompt_chars < 1200
+    short = _client(['{"action":"finish","rationale":"done"}'])
+    LLMPolicy(client=short, goal="log in", allowed_tools=TOOLS, max_page_chars=10).next_action(
+        _obs("x" * 10)
+    )
+    long = _client(['{"action":"finish","rationale":"done"}'])
+    LLMPolicy(client=long, goal="log in", allowed_tools=TOOLS, max_page_chars=10).next_action(
+        _obs("x" * 5000)
+    )
+    # A 5000-char page must not grow the prompt by 5000 chars: truncation is the
+    # bound, not the page. (The system prompt itself is intentionally large now
+    # that it carries the tool contract, so the delta is what matters.)
+    growth = long.traces[0].prompt_chars - short.traces[0].prompt_chars
+    assert 0 <= growth <= 20

@@ -87,11 +87,20 @@ INTERACTIVE_ROUTES = {
     "/#/explorer",
 }
 
-results: list[tuple[str, str, str]] = []  # (route, check, PASS/FAIL detail)
+results: list[tuple[str, str, str]] = []  # (route, check, PASS/FAIL/SKIP detail)
 
 
 def record(route: str, check: str, ok: bool, detail: str = "") -> None:
     results.append((route, check, "PASS" if ok else f"FAIL {detail}"))
+
+
+def skip(route: str, check: str, reason: str) -> None:
+    """Honest skip: the check could not run because the fixture was absent.
+
+    A skip is *not* a pass (R5-4.5 §7). Before this existed, an empty database
+    made the deep-link checks report PASS while nothing had been verified.
+    """
+    results.append((route, check, f"SKIP {reason}"))
 
 
 def blank_page(content: str) -> bool:
@@ -163,7 +172,7 @@ def _deep_links(page: object) -> None:
     """Run -> diagnosis -> evidence -> run must be walkable without retyping ids."""
     sample = _sample_run()
     if sample is None:
-        record("deep-link", "runs with steps available", True, "no data — checks skipped")
+        skip("deep-link", "runs with steps available", "no run with steps in this database")
         return
     run_id, has_evidence = sample
 
@@ -188,13 +197,8 @@ def _deep_links(page: object) -> None:
     if not has_evidence:
         # Honest skip: without evidence there is nothing to hop to, and the
         # link is deliberately hidden rather than leading to an empty page.
-        record(
-            "deep-link",
-            "diagnosis -> evidence filtered",
-            True,
-            "sampled run has no evidence — hop skipped",
-        )
-        record("deep-link", "evidence -> run detail", True, "same reason")
+        skip("deep-link", "diagnosis -> evidence filtered", "sampled run has no evidence")
+        skip("deep-link", "evidence -> run detail", "sampled run has no evidence")
     else:
         ev_link = page.locator('.xlinks a:has-text("证据")')  # type: ignore[attr-defined]
         if ev_link.count() >= 1:
@@ -319,7 +323,7 @@ def main() -> int:
             detail = page.locator(".kv-wrap, .node-detail")
             record("graph", "node click shows detail panel", detail.count() > 0)
         else:
-            record("graph", "node click skipped", True, "empty graph")
+            skip("graph", "node click shows detail panel", "empty graph (no nodes)")
 
         # ---- interaction: benchmark state honesty ----
         page.goto(BASE + "/#/benchmark")
@@ -374,17 +378,23 @@ def main() -> int:
 
 def _dump(failures: int) -> int:
     print("\n=== R5 browser acceptance ===")
+    skipped = 0
     for route, check, verdict in results:
         print(f"{route:26} {check:34} {verdict}")
         if verdict.startswith("FAIL"):
             failures += 1
-    print(f"\ntotal={len(results)} failures={failures}")
+        elif verdict.startswith("SKIP"):
+            skipped += 1
+    passed = len(results) - failures - skipped
+    print(f"\ntotal={len(results)} passed={passed} failures={failures} skipped={skipped}")
     SUMMARY_PATH.write_text(
         json.dumps(
             {
                 "base": BASE,
                 "total": len(results),
+                "passed": passed,
                 "failures": failures,
+                "skipped": skipped,
                 "results": [{"route": r, "check": c, "verdict": v} for r, c, v in results],
             },
             ensure_ascii=False,

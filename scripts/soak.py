@@ -55,27 +55,62 @@ def _wait_health(base: str, timeout: float = 60.0) -> bool:
     return False
 
 
-def _rss_mb(pid: int) -> float | None:
-    """Resident memory in MB via tasklist (Windows) — no psutil dependency."""
+def _process_table() -> dict[int, tuple[int, float]]:
+    """Whole Windows process table: ``pid -> (parent_pid, working_set_mb)``.
+
+    ``tasklist`` reports a single PID, but ``.venv/Scripts/python.exe`` is a
+    launcher that re-execs the real interpreter as a child: sampling the PID
+    ``Popen`` returned measures ~10 MB of shim instead of the ~100 MB server
+    that actually holds the data. One table read per sample, then sum the
+    subtree, keeps the measurement honest without adding a psutil dependency.
+    """
+    shell = shutil.which("powershell") or shutil.which("pwsh")
+    if not shell:
+        return {}
+    script = (
+        "Get-CimInstance Win32_Process | ForEach-Object { "
+        "'' + $_.ProcessId + ',' + $_.ParentProcessId + ',' + $_.WorkingSetSize }"
+    )
     try:
-        out = subprocess.run(  # noqa: S603, S607
-            ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+        raw = subprocess.run(  # noqa: S603 - fixed argv, no shell
+            [shell, "-NoProfile", "-NonInteractive", "-Command", script],
             capture_output=True,
-            text=True,
-            timeout=10,
+            timeout=60,
             check=False,
         ).stdout
     except (OSError, subprocess.SubprocessError):
+        return {}
+    table: dict[int, tuple[int, float]] = {}
+    for line in raw.decode("utf-8", errors="replace").splitlines():
+        cells = line.strip().split(",")
+        if len(cells) != 3:
+            continue
+        try:
+            pid, parent, wss = int(cells[0]), int(cells[1]), int(cells[2])
+        except ValueError:
+            continue
+        table[pid] = (parent, round(wss / (1024 * 1024), 1))
+    return table
+
+
+def _subtree_mb(table: dict[int, tuple[int, float]], root: int) -> float | None:
+    """Summed resident memory of ``root`` plus every descendant, in MB."""
+    if root not in table:
         return None
-    # "python.exe","1234","Console","1","123,456 K"
-    parts = [p.strip('"') for p in out.strip().split('","')]
-    if len(parts) < 5:
-        return None
-    mem = parts[-1].replace("K", "").replace(",", "").strip()
-    try:
-        return round(int(mem) / 1024, 1)
-    except ValueError:
-        return None
+    children: dict[int, list[int]] = {}
+    for pid, (parent, _mb) in table.items():
+        children.setdefault(parent, []).append(pid)
+    total = 0.0
+    seen: set[int] = set()
+    stack = [root]
+    while stack:
+        pid = stack.pop()
+        if pid in seen or pid not in table:
+            continue
+        seen.add(pid)
+        total += table[pid][1]
+        stack.extend(children.get(pid, ()))
+    return round(total, 1)
 
 
 def main() -> int:
@@ -85,6 +120,12 @@ def main() -> int:
     parser.add_argument("--poll", type=float, default=10.0, help="seconds between read polls")
     parser.add_argument("--case", default="TC-LOGIN-001")
     parser.add_argument("--work", default=".traceguard-tmp/r5/soak")
+    parser.add_argument(
+        "--teamflow-port",
+        type=int,
+        default=8001,
+        help="port for the soak's own TeamFlow (kept off the demo server's 8001)",
+    )
     args = parser.parse_args()
 
     work = Path(args.work)
@@ -113,7 +154,7 @@ def main() -> int:
         }
     )
 
-    tf_base = "http://127.0.0.1:8001"
+    tf_base = f"http://127.0.0.1:{args.teamflow_port}"
     tf_log = (work / "teamflow.log").open("w", encoding="utf-8")
     teamflow = subprocess.Popen(
         [
@@ -124,7 +165,7 @@ def main() -> int:
             "--host",
             "127.0.0.1",
             "--port",
-            "8001",
+            str(args.teamflow_port),
             "--log-level",
             "warning",
         ],
@@ -161,6 +202,7 @@ def main() -> int:
         "minutes": args.minutes,
         "case": args.case,
         "base": base,
+        "teamflow_base": tf_base,
         "samples": [],
         "errors": [],
         "chains": [],
@@ -218,11 +260,12 @@ def main() -> int:
                 next_chain = max(now, time.monotonic() - 1) + args.interval
 
             if now >= next_sample:
+                table = _process_table()
                 report["samples"].append(
                     {
                         "at": datetime.now(UTC).isoformat(),
-                        "api_rss_mb": _rss_mb(api.pid),
-                        "teamflow_rss_mb": _rss_mb(teamflow.pid),
+                        "api_rss_mb": _subtree_mb(table, api.pid),
+                        "teamflow_rss_mb": _subtree_mb(table, teamflow.pid),
                         "api_alive": api.poll() is None,
                         "teamflow_alive": teamflow.poll() is None,
                         "db_mb": round(db.stat().st_size / (1024 * 1024), 2) if db.exists() else 0,

@@ -95,7 +95,7 @@ watch(
           <ul v-if="data?.root_causes.length" class="plain">
             <li v-for="(c, i) in data.root_causes" :key="i">{{ c }}</li>
           </ul>
-          <p v-else class="muted small">无已确认根因（未达 CONFIRMED）。</p>
+          <p v-else class="muted small">无根因。健康运行（CONFIRMED / h-healthy）或证据不足时都不会产出根因。</p>
         </div>
         <div>
           <h2>促成因素</h2>

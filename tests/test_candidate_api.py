@@ -27,12 +27,53 @@ TRACE_ACTIONS = [
     },
     {
         "tool": "fill",
-        "args": {"selector": "loc:login.password", "value": "«redacted»"},
+        "args": {
+            "selector": "loc:login.password",
+            "value": "«redacted»",
+            "value_ref": "teamflow.password",
+            "redacted": True,
+        },
         "rejected": False,
     },
     {"tool": "click", "args": {"selector": "loc:login.submit"}, "rejected": False},
     {"tool": "click", "args": {"selector": "https://evil.test/x"}, "rejected": True},
 ]
+
+# R5-4.1: a compilable trace must carry the structured page states, otherwise
+# the compiler has nothing to justify a business assertion with.
+TRACE_OBSERVATIONS = [
+    {
+        "url": "http://127.0.0.1:8001/",
+        "url_path": "/",
+        "title": "TeamFlow 登录",
+        "visible_testids": ["username", "password", "login-submit"],
+        "text_excerpt": "TeamFlow 受控被测应用",
+        "state_summary": "login",
+        "step_index": 1,
+        "phase": "pre",
+    },
+    {
+        "url": "http://127.0.0.1:8001/projects",
+        "url_path": "/projects",
+        "title": "项目列表 · TeamFlow",
+        "visible_testids": ["new-project-link", "project-list", "project-item"],
+        "text_excerpt": "项目列表",
+        "state_summary": "projects",
+        "step_index": 4,
+        "phase": "pre",
+    },
+]
+
+TRACE_INTENT = {
+    "intent_id": "i-1",
+    "description": "登录 TeamFlow 并进入项目列表",
+    "source_ref": "i-1",
+    "goal": "登录 TeamFlow 并进入项目列表",
+    "expected_outcomes": [],
+    "target": "/projects",
+    "required_assertions": [],
+    "constraints": [],
+}
 
 
 def _trace_hash(actions: list[dict[str, Any]]) -> str:
@@ -59,6 +100,8 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                 "prompt_version": "none",
                 "tool_version": "1.0.0",
                 "action_sequence": TRACE_ACTIONS,
+                "observations": TRACE_OBSERVATIONS,
+                "test_intent": TRACE_INTENT,
                 "page_state_ref": "",
                 "event_refs": [],
                 "evidence_refs": [],
@@ -99,12 +142,18 @@ def test_compile_produces_pending_candidate(client: TestClient) -> None:
     assert cand["status"] == "PENDING_REVIEW"
     assert cand["case_id"].startswith("TC-CAND-")
     assert cand["is_llm"] is False
-    # Rejected actions never become steps.
-    assert cand["step_count"] == 4
-    assert (
-        "not an assertion" in " ".join(cand["uncertainty_notes"]).lower()
-        or cand["uncertainty_notes"]
-    )
+    # Rejected actions never become steps; the four explored actions do, and the
+    # compiler adds assertion steps derived from the observed page states.
+    detail = client.get(f"/api/v1/candidates/{cand['candidate_id']}").json()
+    explored = [s for s in detail["steps"] if s["action"] in {"navigate", "fill", "click"}]
+    assert len(explored) == 4
+    assert cand["step_count"] > 4
+    assert any(s["action"].startswith("assert") for s in detail["steps"])
+    # Every assertion names its evidence, and none of them is "a click passed".
+    assert cand["oracle_sources"]
+    assert all(o["source"] for o in cand["oracle_sources"])
+    assert not any(o["source_ref"].startswith("ui.s4.") for o in cand["oracle_sources"])
+    assert cand["uncertainty_notes"]
 
 
 def test_compiled_candidate_is_not_written_to_case_library(client: TestClient) -> None:

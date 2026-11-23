@@ -164,6 +164,8 @@ def register_workbench(
     eval_token: str,
     max_workers: int = 2,
     trace_dir: Path | None = None,
+    data_provider: Any | None = None,
+    graph: Any | None = None,
 ) -> Orchestrator:
     """Wire the orchestrator into an app and include the router."""
     from packages.execution.tasks import create_task_tables
@@ -179,6 +181,8 @@ def register_workbench(
         max_workers=max_workers,
         locators=locators,
         trace_dir=trace_dir,
+        data_provider=data_provider,
+        graph=graph,
     )
     app.state.orchestrator = orch
     app.state.case_dir = case_dir

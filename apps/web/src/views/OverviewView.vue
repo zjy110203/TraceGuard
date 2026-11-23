@@ -65,6 +65,7 @@ function fmtTime(iso: string | null): string {
 const expTotal = computed(() => overview.value?.explorations?.total ?? 0)
 const expScripted = computed(() => overview.value?.explorations?.scripted ?? 0)
 const expLlm = computed(() => overview.value?.explorations?.llm ?? 0)
+const invalidCases = computed(() => overview.value?.invalid_cases ?? [])
 </script>
 
 <template>
@@ -82,6 +83,22 @@ const expLlm = computed(() => overview.value?.explorations?.llm ?? 0)
     </PageHeader>
 
     <StateBlock :loading="state.loading.value" :error="state.error.value" :retry="state.reload">
+      <div v-if="invalidCases.length" class="invalid-banner">
+        <AppIcon name="alert" :size="16" />
+        <div>
+          <strong>{{ invalidCases.length }} 个用例文件无法加载，已跳过</strong>
+          <ul>
+            <li v-for="item in invalidCases" :key="item.file">
+              <span class="mono">{{ item.file }}</span>
+              <span class="why">{{ item.reason }}</span>
+            </li>
+          </ul>
+          <p class="muted small">
+            这些文件不计入用例总数，其余用例不受影响。修复文件后刷新即可恢复。
+          </p>
+        </div>
+      </div>
+
       <div class="grid-cards kpis">
         <StatCard
           label="运行总数"
@@ -173,7 +190,9 @@ const expLlm = computed(() => overview.value?.explorations?.llm ?? 0)
               <button class="btn sm" type="button" @click="navigate('/tasks')">前往任务队列</button>
             </EmptyState>
             <div v-else class="table-wrap bare">
-              <table>
+              <!-- Fixed layout + ellipsis: long task ids must not push the
+                   Verdict pill out of the card (it was clipped at 1440px). -->
+              <table class="recent">
                 <thead>
                   <tr>
                     <th>Run</th>
@@ -186,11 +205,15 @@ const expLlm = computed(() => overview.value?.explorations?.llm ?? 0)
                 <tbody>
                   <tr v-for="r in recentRuns" :key="r.run_id">
                     <td>
-                      <a :href="`#/runs/${r.run_id}`" @click.prevent="navigate(`/runs/${r.run_id}`)">
+                      <a
+                        :href="`#/runs/${r.run_id}`"
+                        :title="r.run_id"
+                        @click.prevent="navigate(`/runs/${r.run_id}`)"
+                      >
                         <span class="mono">{{ r.run_id.slice(0, 20) }}…</span>
                       </a>
                     </td>
-                    <td class="mono small">{{ r.task_id }}</td>
+                    <td class="mono small" :title="r.task_id">{{ r.task_id }}</td>
                     <td><StatusPill :value="r.status" /></td>
                     <td><StatusPill :value="r.test_verdict || 'NOT_EVALUATED'" /></td>
                     <td class="small muted num">{{ fmtTime(r.created_at) }}</td>
@@ -265,6 +288,52 @@ const expLlm = computed(() => overview.value?.explorations?.llm ?? 0)
 </template>
 
 <style scoped>
+.invalid-banner {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--tg-danger-border);
+  border-left: 3px solid var(--tg-danger);
+  border-radius: var(--tg-radius);
+  background: var(--tg-danger-bg);
+  color: var(--tg-text);
+  font-size: 12.5px;
+}
+.invalid-banner ul {
+  margin: 6px 0;
+  padding-left: 16px;
+  display: grid;
+  gap: 2px;
+}
+.invalid-banner .why {
+  margin-left: 8px;
+  color: var(--tg-muted);
+  font-size: 11.5px;
+}
+.recent {
+  table-layout: fixed;
+}
+.recent th:nth-child(1) {
+  width: 31%;
+}
+.recent th:nth-child(3) {
+  width: 104px;
+}
+.recent th:nth-child(4) {
+  width: 124px;
+}
+.recent th:nth-child(5) {
+  width: 104px;
+}
+.recent td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.recent td:nth-child(5) {
+  white-space: nowrap;
+}
 .kpis {
   margin-bottom: 18px;
   /* Six KPIs must land as a balanced block (3x2), never 5 + 1 orphan. */

@@ -27,6 +27,8 @@ export interface Overview {
   failure_rate: number | null
   recent_runs: RunBrief[]
   cases: number
+  /** Case files that failed validation; skipped, but named so they can be fixed. */
+  invalid_cases?: { file: string; reason: string }[]
   events: number
   evidence: number
   repairs_pending: number

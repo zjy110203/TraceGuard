@@ -26,6 +26,7 @@ from packages.core.config import Settings, get_settings
 from packages.core.errors import DomainError
 from packages.core.http import RequestIdMiddleware
 from packages.core.logging import get_logger, setup_logging
+from packages.execution.dataref import build_provider
 
 logger = get_logger("tg.api")
 
@@ -46,6 +47,14 @@ def build_app(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(RequestIdMiddleware)
     app.state.settings = settings
     app.state.engine = engine
+    # Secrets referenced by compiled cases are resolved here, from the
+    # deployment's test-data configuration — never from the case file itself.
+    app.state.test_data_provider = build_provider(
+        settings_values={
+            "teamflow.username": settings.teamflow_test_user,
+            "teamflow.password": settings.teamflow_test_password,
+        }
+    )
 
     @app.exception_handler(DomainError)
     async def _domain_error_handler(_req: Request, exc: DomainError) -> JSONResponse:
@@ -96,6 +105,10 @@ def build_app(settings: Settings | None = None) -> FastAPI:
             teamflow_base_url=settings.teamflow_base_url,
             eval_token=settings.eval_control_token,
             max_workers=settings.workbench_workers,
+            data_provider=app.state.test_data_provider,
+            # The chain writes graph nodes through the orchestrator; without the
+            # shared graph its nodes would never reach the Graph page.
+            graph=app.state.correlation_graph,
         )
         register_extensions(
             app,
@@ -107,6 +120,27 @@ def build_app(settings: Settings | None = None) -> FastAPI:
             app,
             chain_dir=Path(settings.chain_data_dir),
             blob_dir=Path(settings.blob_dir),
+        )
+
+    # An unknown /api/* path must answer JSON 404, not the SPA shell. Without
+    # this the static mount answered 200 text/html for any mistyped endpoint,
+    # so a client calling the wrong URL looked successful and parsed an empty
+    # body as "no data" (found by scripts/e2e_product_flow.py).
+    @app.api_route(
+        "/api/{rest:path}",
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+        include_in_schema=False,
+    )
+    def unknown_api(rest: str) -> JSONResponse:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "error": {
+                    "code": "NOT_FOUND",
+                    "message": f"unknown API endpoint: /api/{rest}",
+                    "details": {},
+                }
+            },
         )
 
     # Serve the built workbench SPA when it exists. Mounted last so every API

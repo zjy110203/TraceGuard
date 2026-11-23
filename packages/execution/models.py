@@ -17,29 +17,63 @@ convention that can be forgotten.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from packages.execution.dataref import is_placeholder
 from packages.execution.verdict import OracleVerdict
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
 class TestIntent:
-    """Why this test exists — the sentence a human approves before coding."""
+    """Why this test exists — the goal a human approves before coding.
+
+    ``description`` is the legacy free-text field (still the authority when
+    ``goal`` is empty). The R5-4 fields make the *business* target explicit so a
+    compiler can tell "the click happened" from "the user is logged in":
+
+      * ``goal``                — what the user wants to achieve, in business terms
+      * ``expected_outcomes``   — observable post-conditions that define success
+      * ``target``              — the relevant page/route the goal lives on
+      * ``required_assertions`` — assertions review demands; ``state.<key>=<json>``
+        is the documented form for an independent business-state Oracle
+      * ``constraints``         — optional limits (data, environment, timing)
+
+    All new fields default to empty, so every previously persisted case and
+    trace keeps loading unchanged.
+    """
 
     intent_id: str
     description: str
     source_ref: str = ""
+    goal: str = ""
+    expected_outcomes: tuple[str, ...] = ()
+    target: str = ""
+    required_assertions: tuple[str, ...] = ()
+    constraints: tuple[str, ...] = ()
+
+    @property
+    def goal_text(self) -> str:
+        """Goal for humans/agents: the explicit goal, else the legacy text."""
+        return self.goal or self.description
 
 
 @dataclass(frozen=True)
 class TestDataRef:
-    """A reference to seeded data, never the Ground Truth itself."""
+    """A reference to seeded data, never the Ground Truth itself.
+
+    ``value`` may be empty: an empty value means the value lives in a
+    deployment-managed test-data provider (env/settings), never in the case
+    file. A non-empty value is only legitimate for non-secret fixtures.
+    """
 
     ref_id: str
     locator: str  # e.g. "teamflow.project.name"
-    value: str
+    value: str = ""
 
 
 @dataclass(frozen=True)
@@ -109,13 +143,20 @@ class AssertionSpec:
 
 @dataclass(frozen=True)
 class TestStep:
-    """One deterministic action in a TestCaseVersion."""
+    """One deterministic action in a TestCaseVersion.
+
+    ``value_ref`` binds a sensitive input to a ``TestDataRef`` instead of
+    carrying the plaintext. A step must never hold both: a plaintext value in a
+    formal case is exactly what R5-4.1 removes. ``value`` stays for
+    non-sensitive text (expected strings, wait durations, literals).
+    """
 
     step_id: str
-    action: str  # navigate | fill | click | assert | wait | api_call
+    action: str  # navigate | fill | click | assert_visible | assert_text | wait | api_call
     target: str  # selector or endpoint
     value: str = ""
     expected: str = ""
+    value_ref: str = ""
 
 
 @dataclass(frozen=True)
@@ -157,6 +198,27 @@ class TestCaseVersion:
         ]
         if unapproved:
             raise ValueError(f"unapproved formal oracle(s): {unapproved}")
+
+        # R5-4.1 data-binding invariants: a secret is referenced, never inlined,
+        # and a redaction placeholder is never a legitimate input value.
+        declared_refs = {ref.ref_id for ref in self.data_refs}
+        for step in self.steps:
+            if step.value_ref:
+                if step.value:
+                    raise ValueError(
+                        f"{self.case_id} v{self.version}: step {step.step_id} carries both "
+                        f"value_ref {step.value_ref!r} and a plaintext value"
+                    )
+                if step.value_ref not in declared_refs:
+                    raise ValueError(
+                        f"{self.case_id} v{self.version}: step {step.step_id} references "
+                        f"undeclared data ref {step.value_ref!r}"
+                    )
+            if is_placeholder(step.value):
+                raise ValueError(
+                    f"{self.case_id} v{self.version}: step {step.step_id} uses the redaction "
+                    "placeholder as an input value"
+                )
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -265,22 +327,50 @@ def load_case(path: Path) -> TestCaseVersion:
     return version
 
 
+def load_cases_dir_report(
+    directory: Path,
+) -> tuple[tuple[TestCaseVersion, ...], list[dict[str, str]]]:
+    """Load every case in a directory, reporting the ones that fail to load.
+
+    One broken file must not take the whole platform down: before this split a
+    single invalid case made ``/overview``, ``/cases`` and ``/intents`` return
+    500, which is how a stale compiled case (redaction placeholder as a fill
+    value) hid every other case. Invalid files are skipped *and* returned so
+    the UI can name them instead of silently pretending they do not exist.
+    """
+    cases: list[TestCaseVersion] = []
+    invalid: list[dict[str, str]] = []
+    for path in sorted(directory.glob("*.json")):
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (ValueError, OSError) as exc:
+            invalid.append({"file": path.name, "reason": f"unreadable: {exc}"})
+            continue
+        if not isinstance(raw, dict) or "case_id" not in raw or "oracle_bindings" not in raw:
+            continue
+        try:
+            cases.append(load_case(path))
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            invalid.append({"file": path.name, "reason": str(exc)})
+    if invalid:
+        LOGGER.warning(
+            "%d case file(s) under %s could not be loaded: %s",
+            len(invalid),
+            directory,
+            ", ".join(item["file"] for item in invalid),
+        )
+    return tuple(cases), invalid
+
+
 def load_cases_dir(directory: Path) -> tuple[TestCaseVersion, ...]:
     """Load all ``*.json`` cases in a directory, sorted by file name.
 
     Config files such as ``locators.json`` live beside the cases but are not
     cases; they are skipped by checking for the ``case_id`` discriminator.
+    Files that fail validation are skipped here — use
+    :func:`load_cases_dir_report` when the caller wants to surface them.
     """
-    cases: list[TestCaseVersion] = []
-    for path in sorted(directory.glob("*.json")):
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except (ValueError, OSError):
-            continue
-        if not isinstance(raw, dict) or "case_id" not in raw or "oracle_bindings" not in raw:
-            continue
-        cases.append(load_case(path))
-    return tuple(cases)
+    return load_cases_dir_report(directory)[0]
 
 
 def next_version(previous: TestCaseVersion, **changes: Any) -> TestCaseVersion:

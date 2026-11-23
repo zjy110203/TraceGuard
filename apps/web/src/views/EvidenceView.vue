@@ -128,6 +128,11 @@ async function applyFilter(): Promise<void> {
 </template>
 
 <style scoped>
+#evidence-run {
+  /* Run ids are 35+ chars; the default input width cut them to "run_2026…". */
+  width: 260px;
+  max-width: 100%;
+}
 .xlinks {
   display: flex;
   flex-wrap: wrap;

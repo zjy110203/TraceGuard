@@ -90,6 +90,30 @@
         },
         "source_ref": {
           "type": "string"
+        },
+        "goal": {
+          "type": "string"
+        },
+        "expected_outcomes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "target": {
+          "type": "string"
+        },
+        "required_assertions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "constraints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "required": [
@@ -114,6 +138,9 @@
           "type": "string"
         },
         "expected": {
+          "type": "string"
+        },
+        "value_ref": {
           "type": "string"
         }
       },
@@ -263,8 +290,7 @@
       },
       "required": [
         "ref_id",
-        "locator",
-        "value"
+        "locator"
       ],
       "additionalProperties": false
     },

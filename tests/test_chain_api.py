@@ -154,7 +154,9 @@ def test_chain_execution_failure_is_recorded_not_raised(
             report.completed = True
             return report
 
-    monkeypatch.setattr("apps.api.chain_api.FullChain", FailingChain)
+    # The orchestrator builds the chain lazily from the pipeline module, which
+    # is also the seam a test should patch: chain_api no longer owns execution.
+    monkeypatch.setattr("packages.execution.pipeline.FullChain", FailingChain)
     resp = client.post("/api/v1/chains", json={"case_id": "TC-TEST-001"})
     assert resp.status_code == 201
     body = resp.json()

@@ -121,6 +121,33 @@ def graph_conflicts(hypothesis_id: str, request: Request) -> dict[str, Any]:
     return request.app.state.correlation_graph.conflicts(hypothesis_id)  # type: ignore[no-any-return]
 
 
+@router.get("/storage-integrity")
+def storage_integrity(request: Request) -> dict[str, Any]:
+    """Report stores that exist but hold unreadable records (R5-4.4 §6.3).
+
+    Informational, read-only: a corrupt append-only file used to be skipped
+    silently, which made "the page is empty" indistinguishable from "the data is
+    broken". Each store is re-scanned so the answer is current.
+    """
+    out: dict[str, Any] = {"stores": {}, "corrupt_total": 0, "status": "OK"}
+    for name in ("exploration_store", "chain_store", "candidate_store"):
+        store = getattr(request.app.state, name, None)
+        if store is None:
+            continue
+        try:
+            store.list()
+        except Exception as exc:  # noqa: BLE001 - a broken store is the finding
+            out["stores"][name] = {"error": f"{type(exc).__name__}: {exc}"[:200]}
+            out["corrupt_total"] += 1
+            continue
+        corrupt = list(getattr(store, "corrupt_files", []) or [])
+        out["stores"][name] = {"corrupt_files": corrupt, "corrupt_count": len(corrupt)}
+        out["corrupt_total"] += len(corrupt)
+    if out["corrupt_total"]:
+        out["status"] = "DEGRADED"
+    return out
+
+
 def register_evidence_api(app: Any) -> None:
     """Wire EventStore + EvidenceManager into an app with its own tables."""
     from sqlalchemy.orm import sessionmaker

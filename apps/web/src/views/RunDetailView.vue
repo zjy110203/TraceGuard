@@ -58,6 +58,13 @@ async function doCancel(): Promise<void> {
   }
 }
 
+// Raw ISO with microseconds wrapped inside the meta cell ("结束 2026-11-" /
+// "23T07:28:58.078423+00:00") and pushed into the neighbouring label.
+function fmtTs(value: string | null | undefined): string {
+  if (!value) return '—'
+  return value.replace('T', ' ').slice(0, 19)
+}
+
 const tabs = computed(() => [
   { label: '步骤执行', path: `/runs/${props.runId}/steps` },
   { label: '断言结果', path: `/runs/${props.runId}/assertions` },
@@ -89,10 +96,20 @@ const tabs = computed(() => [
         <div><span class="k">状态</span><StatusPill :value="state.data.value?.status ?? ''" /></div>
         <div><span class="k">执行</span><StatusPill :value="state.data.value?.execution_status ?? ''" /></div>
         <div><span class="k">Verdict</span><StatusPill :value="state.data.value?.test_verdict || 'NOT_EVALUATED'" /></div>
-        <div><span class="k">诊断</span><StatusPill :value="state.data.value?.diagnosis_status || 'NOT_STARTED'" /></div>
-        <div><span class="k">开始</span><span class="small">{{ state.data.value?.started_at || '—' }}</span></div>
-        <div><span class="k">结束</span><span class="small">{{ state.data.value?.finished_at || '—' }}</span></div>
-        <div><span class="k">心跳</span><span class="small">{{ state.data.value?.heartbeat_at || '—' }}</span></div>
+        <div>
+          <span class="k">诊断</span>
+          <!-- Diagnosis is computed from evidence on demand and never persisted,
+               so "NOT_STARTED" here would read as "never diagnosed" even after
+               the user just read a CONFIRMED verdict. -->
+          <StatusPill
+            v-if="state.data.value?.diagnosis_status && state.data.value.diagnosis_status !== 'NOT_STARTED'"
+            :value="state.data.value.diagnosis_status"
+          />
+          <span v-else class="small muted" title="打开诊断标签页时按证据实时计算，结果不落库">按需生成</span>
+        </div>
+        <div><span class="k">开始</span><span class="small">{{ fmtTs(state.data.value?.started_at) }}</span></div>
+        <div><span class="k">结束</span><span class="small">{{ fmtTs(state.data.value?.finished_at) }}</span></div>
+        <div><span class="k">心跳</span><span class="small">{{ fmtTs(state.data.value?.heartbeat_at) }}</span></div>
         <div><span class="k">中止原因</span><span class="small">{{ state.data.value?.abort_reason || '—' }}</span></div>
       </div>
 

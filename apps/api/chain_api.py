@@ -40,9 +40,10 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from packages.core.errors import ConflictError, NotFoundError, ValidationError
+from packages.core.persistence import OutcomeCounter, PersistenceOutcome, classify_error
 from packages.evidence.storage import BlobStore
 from packages.execution.models import TestCaseVersion, load_cases_dir
-from packages.execution.pipeline import FullChain
+from packages.execution.pipeline import ChainStage
 
 router = APIRouter(prefix="/api/v1", tags=["chain"])
 
@@ -57,6 +58,7 @@ class ChainStore:
 
     def __init__(self, root: Path) -> None:
         self.root = Path(root)
+        self.corrupt_files: list[str] = []
 
     def _dir(self) -> Path:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -85,6 +87,8 @@ class ChainStore:
             try:
                 out.append(json.loads(path.read_text(encoding="utf-8")))
             except (json.JSONDecodeError, OSError):
+                if str(path) not in self.corrupt_files:
+                    self.corrupt_files.append(str(path))
                 continue  # one corrupt report must not blank the list
         out.sort(key=lambda r: str(r.get("started_at") or ""), reverse=True)
         return out
@@ -93,22 +97,33 @@ class ChainStore:
 def _summary(report: dict[str, Any]) -> dict[str, Any]:
     execution = report.get("execution") or {}
     diagnosis = report.get("diagnosis") or {}
+    persisted = report.get("persisted") or {}
     return {
         "chain_id": report.get("chain_id"),
         "scenario_id": report.get("scenario_id"),
         "case_id": report.get("case_id"),
         "case_version": report.get("case_version"),
-        "run_id": execution.get("run_id"),
+        "run_id": execution.get("run_id") or report.get("run_id"),
+        "run_status": report.get("run_status"),
+        "workspace_id": report.get("workspace_id"),
         "test_verdict": execution.get("test_verdict"),
         "execution_status": execution.get("execution_status"),
+        "blocked": bool(execution.get("blocked")),
+        "blocked_reason": execution.get("blocked_reason", ""),
         "evidence_count": execution.get("evidence_count", 0),
         "event_count": execution.get("event_count", 0),
         "diagnosis_status": diagnosis.get("diagnosis_status"),
         "disposition": report.get("disposition"),
         "completed": bool(report.get("completed")),
+        "cancelled": bool(report.get("cancelled")),
+        "cleanup": report.get("cleanup") or {},
+        # Non-duplicate graph write failures (R5-4.5): an empty list is the only
+        # proof the Graph page can actually show this run.
+        "graph_errors": report.get("graph_errors") or [],
         "started_at": report.get("started_at"),
         "duration_s": report.get("duration_s"),
-        "persisted": report.get("persisted"),
+        "persisted": persisted,
+        "persistence_status": persisted.get("status", ""),
         "stages": [
             {"name": s.get("name"), "status": s.get("status"), "detail": s.get("detail")}
             for s in report.get("stages", [])
@@ -146,22 +161,29 @@ def _load_case(case_dir: Path, case_id: str) -> TestCaseVersion:
     return case
 
 
-def _persist_events(request: Request, events: list[dict[str, Any]]) -> dict[str, int]:
+def _persist_events(
+    request: Request, events: list[dict[str, Any]], workspace_id: str
+) -> dict[str, Any]:
+    """Persist events, classifying every outcome (R5-4.4 §6.3).
+
+    Previously *any* exception counted as a duplicate, so a genuine storage
+    failure was indistinguishable from normal de-duplication.
+    """
     store = request.app.state.event_store
-    written = 0
-    skipped = 0
+    counter = OutcomeCounter()
     for event in events:
+        event_id = str(event.get("event_id") or "")
         producer_instance = str(event.get("producer_instance_id") or "")
         producer_id = str(event.get("producer_id") or "local_runner")
         if not producer_instance:
-            skipped += 1
+            counter.add(PersistenceOutcome.FAILED, event_id, "missing producer_instance_id")
             continue
         store.register_producer(producer_instance, producer_id)
         try:
             store.append(
-                event_id=str(event["event_id"]),
+                event_id=event_id,
                 event_type=str(event["event_type"]),
-                workspace_id=str(request.app.state.default_workspace_id),
+                workspace_id=workspace_id,
                 producer_id=producer_id,
                 producer_instance_id=producer_instance,
                 sequence=int(event["sequence"]),
@@ -174,10 +196,10 @@ def _persist_events(request: Request, events: list[dict[str, Any]]) -> dict[str,
                 occurred_at=str(event.get("occurred_at") or ""),
                 idempotency_key=str(event.get("idempotency_key") or ""),
             )
-            written += 1
-        except Exception:  # noqa: BLE001 - duplicate sequence is not a chain failure
-            skipped += 1
-    return {"written": written, "skipped": skipped}
+            counter.add(PersistenceOutcome.WRITTEN, event_id)
+        except Exception as exc:  # noqa: BLE001 - classified, never hidden
+            counter.add(classify_error(exc), event_id, f"{type(exc).__name__}: {exc}")
+    return counter.summary()
 
 
 def _blob_store(request: Request) -> BlobStore | None:
@@ -201,64 +223,29 @@ def _blob_store(request: Request) -> BlobStore | None:
 
 def _persist_evidence(
     request: Request, evidence: list[dict[str, Any]], blob_store: BlobStore | None
-) -> dict[str, int]:
+) -> dict[str, Any]:
     manager = request.app.state.evidence_manager
-    written = 0
-    skipped = 0
+    counter = OutcomeCounter()
     for record in evidence:
+        evidence_id = str(record.get("evidence_id") or "")
         try:
             manager.import_record(record, blob_store=blob_store)
-            written += 1
-        except Exception:  # noqa: BLE001 - re-import of the same id is a no-op
-            skipped += 1
-    return {"written": written, "skipped": skipped}
+            counter.add(PersistenceOutcome.WRITTEN, evidence_id)
+        except Exception as exc:  # noqa: BLE001 - classified, never hidden
+            counter.add(classify_error(exc), evidence_id, f"{type(exc).__name__}: {exc}")
+    return counter.summary()
 
 
-def _register_run(
-    request: Request, case: TestCaseVersion, report: Any, run_report: dict[str, Any]
-) -> str:
-    """Make the chain's run visible as an ordinary run (list/detail/diagnosis).
+def _strip_screenshot_bytes(evidence: list[dict[str, Any]]) -> None:
+    """Drop the base64 payloads after the blob store has the real bytes.
 
-    A chain executed from the product must not be a side channel: without this
-    the run id exists only inside a JSON file, so Run Details and the diagnosis
-    endpoint cannot see it. The status machine is walked legally — created,
-    prepared, running, finalizing, terminal — because runs are immutable once
-    terminal and an illegal jump would be rejected.
+    The image is already content-addressed on disk; keeping a hex copy inside
+    the append-only run report duplicated megabytes per step.
     """
-    orch = getattr(request.app.state, "orchestrator", None)
-    run_id = str(report.execution.get("run_id") or "")
-    if orch is None or not run_id:
-        return ""
-    from packages.execution.tasks import RunStatus
-
-    task_id = f"task_{report.chain_id}"
-    try:
-        orch.tasks.create(task_id, case.case_id, f"chain: {case.title}")
-    except Exception:  # noqa: BLE001 - task already exists from a prior chain
-        pass
-    try:
-        orch.runs.create_run(
-            run_id=run_id,
-            task_id=task_id,
-            case_id=case.case_id,
-            case_version=case.version,
-        )
-        orch.runs.transition(run_id, RunStatus.PREPARING)
-        orch.runs.transition(run_id, RunStatus.RUNNING)
-        if report.steps:
-            orch.runs.append_steps(run_id, report.steps)
-        orch.runs.transition(run_id, RunStatus.FINALIZING)
-        orch.runs.finalize(
-            run_id,
-            status=RunStatus.COMPLETED if report.completed else RunStatus.FAILED,
-            execution_status=str(report.execution.get("execution_status") or "FAILED"),
-            test_verdict=str(report.execution.get("test_verdict") or "INCONCLUSIVE"),
-            report=run_report,
-            error=str(report.execution.get("error") or "")[:500],
-        )
-    except Exception:  # noqa: BLE001 - never lose the chain because a row was rejected
-        return ""
-    return run_id
+    for item in evidence:
+        payload = item.get("payload")
+        if isinstance(payload, dict):
+            payload.pop("image", None)
 
 
 # ------------------------------------------------------------------ routes
@@ -284,72 +271,80 @@ def run_chain(request: Request, body: RunChainRequest) -> dict[str, Any]:
     """Execute one human-approved case through the whole chain.
 
     Declared sync on purpose: the Playwright sync API cannot run inside the
-    event loop, and FastAPI executes sync handlers in a threadpool.
+    event loop, and FastAPI executes sync handlers in a threadpool. The Run row
+    exists before execution starts (R5-4.2), so another request can watch it on
+    SSE or cancel it while this call is still in flight.
     """
     case_dir: Path = request.app.state.case_dir
     case = _load_case(case_dir, body.case_id)
     case.validate()
 
+    orch = getattr(request.app.state, "orchestrator", None)
+    if orch is None:
+        raise ConflictError(
+            "full-chain execution requires the workbench orchestrator",
+            details={"workbench_enabled": False},
+        )
+
     scenario = body.scenario_id or case.case_id
+    workspace_id = body.workspace_id or request.app.state.default_workspace_id
     started_clock = datetime.now(UTC)
-    chain = FullChain(
-        base_url=request.app.state.teamflow_base_url,
-        graph=request.app.state.correlation_graph,
-        eval_token=request.app.state.eval_token,
-        # Same registry the orchestrator uses: a chain must resolve exactly the
-        # logical locators a workbench run would.
-        locators=getattr(request.app.state.orchestrator, "locators", None),
-    )
-    report = chain.run(
-        scenario,
+
+    def persist(report: Any) -> dict[str, Any]:
+        """Persist the chain's artifacts while the Run is FINALIZING."""
+        blob = _blob_store(request)
+        events = _persist_events(request, report.events, workspace_id)
+        evidence = _persist_evidence(request, report.evidence, blob)
+        # Strip the bytes only after the blob store actually has them.
+        _strip_screenshot_bytes(report.evidence)
+        stages = [
+            {
+                "name": "event_persistence",
+                "status": events["status"],
+                "detail": f"written={events['written']} duplicates={events['duplicates']} "
+                f"failures={len(events['failures'])}",
+            },
+            {
+                "name": "evidence_persistence",
+                "status": evidence["status"],
+                "detail": f"written={evidence['written']} duplicates={evidence['duplicates']} "
+                f"failures={len(evidence['failures'])}",
+            },
+        ]
+        for entry in stages:
+            report.stages.append(ChainStage(entry["name"], entry["status"], entry["detail"]))
+        status = (
+            "PARTIAL"
+            if "PARTIAL" in (events["status"], evidence["status"])
+            else ("FAILED" if "FAILED" in (events["status"], evidence["status"]) else "OK")
+        )
+        return {
+            "events": events,
+            "evidence": evidence,
+            "status": status,
+            "stages": stages,
+        }
+
+    run_view, report = orch.run_chain(
         case,
-        workspace_id=body.workspace_id,
-        probe_requests=None,
-        fault_events=None,
+        workspace_id=workspace_id,
+        scenario_id=scenario,
+        after_run=persist,
     )
 
     payload = report.to_dict()
-    # The screenshot hex has already been moved to the blob store; keeping it in
-    # the report would duplicate megabytes of base64 in an append-only file.
-    for item in payload.get("evidence", []):
-        item_payload = item.get("payload")
-        if isinstance(item_payload, dict):
-            item_payload.pop("image", None)
-
-    # Persist before saving the report: a stored chain must never claim evidence
-    # it did not actually write.
-    persisted = {
-        "events": _persist_events(request, report.events),
-        "evidence": _persist_evidence(request, report.evidence, _blob_store(request)),
-    }
-    started_at = started_clock.isoformat()
-    run_report: dict[str, Any] = {
-        "run_id": report.execution.get("run_id", ""),
-        "case_id": case.case_id,
-        "case_version": case.version,
-        "execution_status": report.execution.get("execution_status", ""),
-        "test_verdict": report.execution.get("test_verdict", ""),
-        "steps": report.steps,
-        "observations": report.observations,
-        "assertion_results": report.assertion_results,
-        "evidence": payload.get("evidence", []),
-        "events": report.events,
-        "chain_id": report.chain_id,
-        "started_at": started_at,
-        "finished_at": datetime.now(UTC).isoformat(),
-        "error": str(report.execution.get("error") or ""),
-    }
-    registered_run = _register_run(request, case, report, run_report)
-
+    started_at = run_view.created_at or started_clock.isoformat()
     record: dict[str, Any] = {
         **payload,
         "case_id": case.case_id,
         "case_version": case.version,
         "approved_by": case.approved_by,
-        "run_id": registered_run,
+        "run_id": run_view.run_id,
+        "run_status": run_view.status,
+        "workspace_id": workspace_id,
         "started_at": started_at,
         "duration_s": round((datetime.now(UTC) - started_clock).total_seconds(), 2),
-        "persisted": persisted,
+        "persisted": report.persisted,
     }
     store: ChainStore = request.app.state.chain_store
     store.save(record)

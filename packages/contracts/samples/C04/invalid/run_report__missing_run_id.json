@@ -25,5 +25,7 @@
   "verdict_notes": [],
   "evidence": [],
   "events": [],
-  "aborted_reason": ""
+  "aborted_reason": "",
+  "blocked": false,
+  "blocked_reason": ""
 }

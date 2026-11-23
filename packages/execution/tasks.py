@@ -329,6 +329,26 @@ class RunService:
             session.commit()
             return _run_view(row)
 
+    def update_progress(self, run_id: str, progress: dict[str, Any]) -> None:
+        """Append stage progress to the run's report while it is still running.
+
+        The run row is the authority for "what is happening now", so live
+        progress must be readable from it — not only from an SSE stream a late
+        subscriber may have missed. Terminal runs are never touched.
+        """
+        with self._sessions() as session:
+            row = session.get(RunRecord, run_id)
+            if not row or row.status in RunStatus.TERMINAL:
+                return
+            current = dict(row.report or {})
+            stages = list(current.get("stages") or [])
+            stages.append({**progress, "at": _now()})
+            current["stages"] = stages
+            current["current_stage"] = progress.get("stage", "")
+            current["current_stage_status"] = progress.get("status", "")
+            row.report = current
+            session.commit()
+
     def append_steps(self, run_id: str, steps: list[dict[str, Any]]) -> None:
         with self._sessions() as session:
             for i, step in enumerate(steps):

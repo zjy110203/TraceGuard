@@ -93,7 +93,7 @@ onUnmounted(() => unsubscribe?.())
       empty-hint="尚无 Run。到 Task 队列创建任务并提交一次执行。"
       :retry="load"
     >
-      <div class="table-wrap"><table>
+      <div class="table-wrap"><table class="runs-table">
         <thead>
           <tr>
             <th>run_id</th><th>task</th><th>尝试</th><th>状态</th><th>Verdict</th><th>诊断</th><th>创建时间</th>
@@ -104,7 +104,7 @@ onUnmounted(() => unsubscribe?.())
             <td class="mono">
               <a href="#" @click.prevent="navigate(`/runs/${row.run_id}`)">{{ row.run_id }}</a>
             </td>
-            <td class="mono small">{{ row.task_id }}</td>
+            <td class="mono small" :title="row.task_id">{{ row.task_id }}</td>
             <td>#{{ row.attempt }}</td>
             <td><StatusPill :value="row.status" /></td>
             <td><StatusPill :value="row.test_verdict || 'NOT_EVALUATED'" /></td>
@@ -119,6 +119,36 @@ onUnmounted(() => unsubscribe?.())
 </template>
 
 <style scoped>
+/* Fixed layout so long run/task ids truncate instead of pushing the last
+   column 20px past the card edge at 1440px. */
+.runs-table {
+  table-layout: fixed;
+}
+.runs-table th:nth-child(1) {
+  width: 27%;
+}
+.runs-table th:nth-child(3) {
+  width: 64px;
+}
+.runs-table th:nth-child(4) {
+  width: 108px;
+}
+.runs-table th:nth-child(5) {
+  width: 128px;
+}
+.runs-table th:nth-child(6) {
+  width: 112px;
+}
+.runs-table th:nth-child(7) {
+  width: 152px;
+}
+.runs-table td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.runs-table td:last-child {
+  white-space: nowrap;
+}
 .inline-label select {
   min-width: 160px;
 }

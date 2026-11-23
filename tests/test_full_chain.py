@@ -156,7 +156,7 @@ def test_s1_normal_create(teamflow_server: None) -> None:
     assert r.execution["evidence_count"] >= 10 and r.execution["event_count"] >= 5
     assert r.diagnosis["diagnosis_status"] == "CONFIRMED"
     assert r.disposition == "MANUAL_REVIEW"
-    assert any(s.name == "evidence_graph" for s in r.stages)
+    assert "graph" in {s.name for s in r.stages}
 
 
 def test_s2_ui_success_persistence_fail(teamflow_server: None) -> None:
@@ -221,8 +221,10 @@ def test_s7_browser_unavailable_recorded_honestly() -> None:
     assert r.completed
     # Target unreachable: steps fail and verdict is NOT_EVALUATED — never a
     # false PASSED. The chain completes and records the environment failure.
-    steps_ok = r.stages[1]
-    assert steps_ok.name == "execution"
+    # Stage order now starts with cleanup_pre (R5-4.2 CleanupPolicy), so the
+    # check is on the named stage rather than on a positional index.
+    execution_stage = next((s for s in r.stages if s.name == "execution"), None)
+    assert execution_stage is not None
     assert r.execution["test_verdict"] in ("NOT_EVALUATED", "INCONCLUSIVE", "FAILED")
     assert r.execution["test_verdict"] != "PASSED"
 

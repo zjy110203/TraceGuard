@@ -4,7 +4,12 @@
   "intent": {
     "intent_id": "i-TC-CREATE-002",
     "description": "description is accepted and success banner is shown",
-    "source_ref": ""
+    "source_ref": "",
+    "goal": "",
+    "expected_outcomes": [],
+    "target": "",
+    "required_assertions": [],
+    "constraints": []
   },
   "steps": [
     {
@@ -12,70 +17,80 @@
       "action": "navigate",
       "target": "/",
       "value": "",
-      "expected": ""
+      "expected": "",
+      "value_ref": ""
     },
     {
       "step_id": "s2",
       "action": "fill",
       "target": "[data-testid=username]",
       "value": "tester",
-      "expected": ""
+      "expected": "",
+      "value_ref": ""
     },
     {
       "step_id": "s3",
       "action": "fill",
       "target": "[data-testid=password]",
       "value": "test-pass-123",
-      "expected": ""
+      "expected": "",
+      "value_ref": ""
     },
     {
       "step_id": "s4",
       "action": "click",
       "target": "[data-testid=login-submit]",
       "value": "",
-      "expected": ""
+      "expected": "",
+      "value_ref": ""
     },
     {
       "step_id": "s5",
       "action": "assert_visible",
       "target": "[data-testid=new-project-link]",
       "value": "",
-      "expected": ""
+      "expected": "",
+      "value_ref": ""
     },
     {
       "step_id": "s6",
       "action": "click",
       "target": "[data-testid=new-project-link]",
       "value": "",
-      "expected": ""
+      "expected": "",
+      "value_ref": ""
     },
     {
       "step_id": "s7",
       "action": "fill",
       "target": "[data-testid=project-name]",
       "value": "Proj With Desc",
-      "expected": ""
+      "expected": "",
+      "value_ref": ""
     },
     {
       "step_id": "s8",
       "action": "fill",
       "target": "[data-testid=project-description]",
       "value": "hello",
-      "expected": ""
+      "expected": "",
+      "value_ref": ""
     },
     {
       "step_id": "s9",
       "action": "click",
       "target": "[data-testid=create-submit]",
       "value": "",
-      "expected": ""
+      "expected": "",
+      "value_ref": ""
     },
     {
       "step_id": "s10",
       "action": "assert_visible",
       "target": "[data-testid=success-message]",
       "value": "",
-      "expected": ""
+      "expected": "",
+      "value_ref": ""
     }
   ],
   "assertions": [

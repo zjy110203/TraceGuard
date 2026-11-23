@@ -296,8 +296,9 @@ const healthLabel = computed(() => {
   padding: 14px 10px 12px;
   background: var(--tg-panel);
   border-right: 1px solid var(--tg-border);
-  overflow-y: auto;
-  overflow-x: hidden;
+  /* Only the nav scrolls: scrolling the whole rail pushed the theme toggle and
+     the baseline note below the fold, so they were clipped mid-row at 900px. */
+  overflow: hidden;
   z-index: 30;
 }
 
@@ -353,10 +354,13 @@ const healthLabel = computed(() => {
   flex-direction: column;
   gap: 2px;
   flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .nav-group {
-  margin-bottom: 8px;
+  margin-bottom: 3px;
 }
 
 .group-label {
@@ -365,7 +369,7 @@ const healthLabel = computed(() => {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--tg-faint);
-  margin: 6px 8px 4px;
+  margin: 4px 8px 3px;
   white-space: nowrap;
 }
 

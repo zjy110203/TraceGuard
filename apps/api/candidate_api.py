@@ -42,6 +42,7 @@ from packages.execution.models import (
     CleanupPolicy,
     OracleBinding,
     OracleSpec,
+    TestDataRef,
     TestIntent,
     TestStep,
 )
@@ -64,6 +65,7 @@ class CandidateStore:
 
     def __init__(self, root: Path) -> None:
         self.root = Path(root)
+        self.corrupt_files: list[str] = []
 
     def _dir(self) -> Path:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -92,6 +94,8 @@ class CandidateStore:
             try:
                 out.append(json.loads(path.read_text(encoding="utf-8")))
             except (json.JSONDecodeError, OSError):
+                if str(path) not in self.corrupt_files:
+                    self.corrupt_files.append(str(path))
                 continue
         out.sort(key=lambda r: str(r.get("created_at") or ""), reverse=True)
         return out
@@ -116,14 +120,20 @@ def _spec_from_dict(raw: dict[str, Any]) -> OracleSpec:
 
 def _candidate_from_dict(record: dict[str, Any]) -> CandidateTestCase:
     """Rebuild the dataclass so the compiler's own guards can re-run on approve."""
+    intent_raw = record["intent"]
     return CandidateTestCase(
         candidate_id=str(record["candidate_id"]),
         case_id=str(record["case_id"]),
         title=str(record["title"]),
         intent=TestIntent(
-            intent_id=str(record["intent"]["intent_id"]),
-            description=str(record["intent"]["description"]),
-            source_ref=str(record["intent"].get("source_ref", "")),
+            intent_id=str(intent_raw["intent_id"]),
+            description=str(intent_raw["description"]),
+            source_ref=str(intent_raw.get("source_ref", "")),
+            goal=str(intent_raw.get("goal", "")),
+            expected_outcomes=tuple(intent_raw.get("expected_outcomes") or ()),
+            target=str(intent_raw.get("target", "")),
+            required_assertions=tuple(intent_raw.get("required_assertions") or ()),
+            constraints=tuple(intent_raw.get("constraints") or ()),
         ),
         steps=tuple(
             TestStep(
@@ -132,6 +142,7 @@ def _candidate_from_dict(record: dict[str, Any]) -> CandidateTestCase:
                 target=str(s.get("target", "")),
                 value=str(s.get("value", "")),
                 expected=str(s.get("expected", "")),
+                value_ref=str(s.get("value_ref", "")),
             )
             for s in record.get("steps", [])
         ),
@@ -172,19 +183,53 @@ def _candidate_from_dict(record: dict[str, Any]) -> CandidateTestCase:
         approval_record=str(record.get("approval_record", "")),
         uncertainty_notes=tuple(record.get("uncertainty_notes") or ()),
         created_at=str(record.get("created_at", "")),
+        target=str(record.get("target", "")),
+        observations=tuple(record.get("observations") or ()),
+        data_refs=tuple(
+            TestDataRef(
+                ref_id=str(d["ref_id"]),
+                locator=str(d.get("locator", "")),
+                value=str(d.get("value", "")),
+            )
+            for d in record.get("data_refs") or ()
+        ),
+        review_checklist=tuple(record.get("review_checklist") or ()),
     )
 
 
 def _summary(record: dict[str, Any]) -> dict[str, Any]:
+    intent = record.get("intent") or {}
     return {
         "candidate_id": record.get("candidate_id"),
         "case_id": record.get("case_id"),
         "title": record.get("title"),
         "status": record.get("status", PENDING),
+        "goal": intent.get("goal") or intent.get("description", ""),
+        "target": record.get("target", ""),
         "source_exploration_id": record.get("source_exploration_id"),
         "source_trace_hash": record.get("source_trace_hash"),
         "step_count": len(record.get("steps", [])),
         "assertion_count": len(record.get("assertions", [])),
+        "assertions": [
+            {
+                "assertion_id": a.get("assertion_id"),
+                "description": a.get("description"),
+                "required": a.get("required", True),
+            }
+            for a in record.get("assertions", [])
+        ],
+        "oracle_sources": [
+            {
+                "assertion_id": b.get("assertion_id"),
+                "source_type": (b.get("primary") or {}).get("source_type"),
+                "source_ref": (b.get("primary") or {}).get("source_ref"),
+                "source": (b.get("primary") or {}).get("source"),
+            }
+            for b in record.get("oracle_bindings", [])
+        ],
+        "observation_count": len(record.get("observations") or []),
+        "data_refs": list(record.get("data_refs") or []),
+        "review_checklist": list(record.get("review_checklist") or []),
         "uncertainty_notes": list(record.get("uncertainty_notes") or []),
         "model_version": record.get("model_version"),
         "is_llm": False,
@@ -231,7 +276,9 @@ def get_candidate(request: Request, candidate_id: str) -> dict[str, Any]:
 def compile_exploration(
     request: Request, exploration_id: str, body: CompileRequest
 ) -> dict[str, Any]:
-    trace = _trace_from_exploration(request, exploration_id)
+    record = _exploration_record(request, exploration_id)
+    trace = _trace_from_record(record)
+    intent = _intent_from_record(record)
     compiler = TestCaseCompiler()
     case_id = body.case_id or f"TC-CAND-{trace.source_trace_hash[-10:].upper()}"
     if not CASE_ID.fullmatch(case_id):
@@ -247,7 +294,10 @@ def compile_exploration(
         )
 
     candidate = compiler.compile(
-        trace, case_id=case_id, title=body.title or f"compiled from {exploration_id}"
+        trace,
+        case_id=case_id,
+        title=body.title or f"compiled from {exploration_id}",
+        intent=intent,
     )
     store: CandidateStore = request.app.state.candidate_store
     existing = store.get(candidate.candidate_id)
@@ -267,7 +317,7 @@ def compile_exploration(
             )
         return _summary(existing)  # idempotent re-compile of a pending candidate
 
-    record: dict[str, Any] = {
+    payload: dict[str, Any] = {
         **candidate.to_dict(),
         "status": PENDING,
         "compiled_from": f"exploration:{exploration_id}",
@@ -275,8 +325,8 @@ def compile_exploration(
         "reviewed_at": "",
         "rejection_reason": "",
     }
-    store.save(record)
-    return _summary(record)
+    store.save(payload)
+    return _summary(payload)
 
 
 @router.post("/candidates/{candidate_id}/approve")
@@ -380,8 +430,8 @@ def _case_dir(request: Request) -> Path:
     return Path(request.app.state.settings.case_dir)
 
 
-def _trace_from_exploration(request: Request, exploration_id: str) -> ExplorationTrace:
-    """Rebuild a trace from a persisted exploration, refusing unusable ones."""
+def _exploration_record(request: Request, exploration_id: str) -> dict[str, Any]:
+    """Load a persisted exploration, refusing one that cannot be compiled."""
     store = request.app.state.exploration_store
     record = store.get(exploration_id)
     if record is None:
@@ -397,6 +447,31 @@ def _trace_from_exploration(request: Request, exploration_id: str) -> Exploratio
             "exploration has no accepted action; nothing to compile",
             details={"exploration_id": exploration_id},
         )
+    return record
+
+
+def _intent_from_record(record: dict[str, Any]) -> TestIntent:
+    """The human-written goal stored with the exploration (R5-4.1).
+
+    Legacy traces have no ``test_intent`` block; the intent then degrades to the
+    intent_ref label, which is honest — the compiler will have no declared
+    target and will say so in its checklist.
+    """
+    raw = record.get("test_intent") or {}
+    ref = str(record.get("test_intent_ref") or "")
+    return TestIntent(
+        intent_id=str(raw.get("intent_id") or (ref or f"i-{record.get('exploration_id', '')}")),
+        description=str(raw.get("description") or ref),
+        source_ref=str(raw.get("source_ref") or ref),
+        goal=str(raw.get("goal") or ""),
+        expected_outcomes=tuple(raw.get("expected_outcomes") or ()),
+        target=str(raw.get("target") or ""),
+        required_assertions=tuple(raw.get("required_assertions") or ()),
+        constraints=tuple(raw.get("constraints") or ()),
+    )
+
+
+def _trace_from_record(record: dict[str, Any]) -> ExplorationTrace:
     return ExplorationTrace(
         exploration_id=str(record["exploration_id"]),
         test_intent_ref=str(record.get("test_intent_ref") or ""),
@@ -405,7 +480,9 @@ def _trace_from_exploration(request: Request, exploration_id: str) -> Exploratio
         agent_version=str(record.get("agent_version") or ""),
         prompt_version=str(record.get("prompt_version") or "none"),
         tool_version=str(record.get("tool_version") or ""),
-        action_sequence=[dict(a) for a in actions],
+        action_sequence=[dict(a) for a in (record.get("action_sequence") or [])],
+        observations=[dict(o) for o in (record.get("observations") or [])],
+        agent_decisions=[dict(d) for d in (record.get("agent_decisions") or [])],
         page_state_ref=str(record.get("page_state_ref") or ""),
         event_refs=list(record.get("event_refs") or []),
         evidence_refs=list(record.get("evidence_refs") or []),
@@ -414,6 +491,11 @@ def _trace_from_exploration(request: Request, exploration_id: str) -> Exploratio
         started_at=str(record.get("started_at") or ""),
         finished_at=str(record.get("finished_at") or ""),
     )
+
+
+def _trace_from_exploration(request: Request, exploration_id: str) -> ExplorationTrace:
+    """Rebuild a trace from a persisted exploration (kept for callers/tests)."""
+    return _trace_from_record(_exploration_record(request, exploration_id))
 
 
 def register_candidates(app: Any, *, candidate_dir: Path) -> None:

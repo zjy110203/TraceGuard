@@ -28,7 +28,12 @@ from benchmark.engine import DatasetManager, ExperimentManager, GroundTruthManag
 from packages.agents.diagnosis import DiagnosisService
 from packages.agents.probe_catalog import build_default_engine, specs_as_dicts
 from packages.core.errors import ConflictError, NotFoundError, ValidationError
-from packages.execution.models import TestCaseVersion, load_case, load_cases_dir
+from packages.execution.models import (
+    TestCaseVersion,
+    load_case,
+    load_cases_dir,
+    load_cases_dir_report,
+)
 from packages.execution.repair import RepairService
 
 router = APIRouter(prefix="/api/v1", tags=["workbench-ext"])
@@ -160,7 +165,7 @@ def overview(request: Request) -> dict[str, Any]:
         verdict = run.get("test_verdict") or "NOT_EVALUATED"
         by_verdict[verdict] = by_verdict.get(verdict, 0) + 1
 
-    cases = load_cases_dir(_case_dir(request))
+    cases, invalid_cases = load_cases_dir_report(_case_dir(request))
     store = getattr(app.state, "event_store", None)
     manager = getattr(app.state, "evidence_manager", None)
     events = store.query(limit=1000) if store else []
@@ -208,6 +213,10 @@ def overview(request: Request) -> dict[str, Any]:
         # history requests (one per task). Most recent first, capped.
         "recent_runs": sorted(runs, key=lambda r: r.get("created_at") or "", reverse=True)[:10],
         "cases": len(cases),
+        # Cases that failed validation. Reported, never hidden: a broken file
+        # used to 500 the whole overview, and silence would be worse than a
+        # visible warning with the file name and the reason.
+        "invalid_cases": invalid_cases,
         "events": len(events),
         "evidence": len(evidence),
         "repairs_pending": sum(

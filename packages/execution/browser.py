@@ -72,7 +72,9 @@ class BrowserManager:
                 self.context.tracing.stop(path=str(self._trace_path))
                 import hashlib
 
-                digest = hashlib.sha256(self._trace_path.read_bytes()).hexdigest()[:16]
+                # Full SHA-256, not a 16-char prefix: a truncated digest cannot
+                # be verified against the bytes it claims to describe.
+                digest = hashlib.sha256(self._trace_path.read_bytes()).hexdigest()
                 self._evidence.append(
                     EvidenceRecord.create(
                         evidence_type="playwright_trace",
@@ -120,7 +122,9 @@ class BrowserManager:
         shot = self.page.screenshot(full_page=False)
         import hashlib
 
-        digest = hashlib.sha256(shot).hexdigest()[:16]
+        # Content-addressed integrity: the digest must describe exactly these
+        # bytes, at full length (a 16-hex prefix is not verifiable evidence).
+        digest = hashlib.sha256(shot).hexdigest()
         ref = f"screenshots/{run_id}_{step_id}_{label}.png"
         ev = EvidenceRecord.create(
             evidence_type="screenshot",

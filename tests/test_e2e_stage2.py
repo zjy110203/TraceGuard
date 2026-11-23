@@ -146,8 +146,17 @@ def _case(name: str = "E2E Proj") -> TestCaseVersion:
 
 
 def _reset(client: httpx.Client) -> None:
-    client.post("/__eval__/faults/clear", headers=EVAL_H)
-    client.post("/__eval__/data/reset", headers=EVAL_H)
+    """Clear faults and wipe data, asserting both really happened.
+
+    A silently ignored 401/500 here used to leave the previous test's projects
+    in place, so a later ``project_count == 0`` assertion failed for a reason
+    the test could not report. The status codes are part of the fixture now.
+    """
+    cleared = client.post("/__eval__/faults/clear", headers=EVAL_H)
+    assert cleared.status_code == 200, f"faults/clear -> {cleared.status_code}"
+    reset = client.post("/__eval__/data/reset", headers=EVAL_H)
+    assert reset.status_code == 200, f"data/reset -> {reset.status_code}"
+    assert "projects_deleted" in reset.json(), reset.text[:200]
 
 
 def test_e2e_healthy_path_passes(teamflow_server: None) -> None:

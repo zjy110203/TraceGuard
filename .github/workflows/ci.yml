@@ -69,6 +69,46 @@ jobs:
           name: web-dist
           path: apps/web/dist
 
+  product-e2e:
+    name: Product E2E (real flow, isolated)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+      - name: Build the workbench SPA
+        # The product flow verifies the built frontend is actually served, so the
+        # build is part of the gate rather than an assumption.
+        working-directory: apps/web
+        run: |
+          npm ci
+          npm run build
+      - name: Install Chromium (CI-only, never touches a personal Chrome)
+        run: |
+          python -m playwright install --with-deps chromium
+      - name: Product flow (isolated SUT + isolated API + real browser)
+        env:
+          # No system Chrome on the runner: use Playwright's bundled Chromium.
+          TRACEGUARD_BROWSER_CHANNEL: ""
+        run: python scripts/verify_all.py --mode product
+      - name: Upload product E2E artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: product-e2e
+          path: .traceguard-tmp/r5/verify
+          if-no-files-found: warn
+
   browser-e2e:
     name: Browser E2E (isolated)
     runs-on: ubuntu-latest
@@ -99,12 +139,10 @@ jobs:
           # The runner has no system Chrome: use Playwright's bundled Chromium.
           TRACEGUARD_BROWSER_CHANNEL: ""
         run: python scripts/verify_all.py --mode browser
-      - name: Upload screenshots + summary on failure
-        if: failure()
+      - name: Upload screenshots + report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: browser-e2e-artifacts
-          path: |
-            docs/ui/r5/screenshots
-            .traceguard-tmp/r5/e2e-summary.json
-            .traceguard-tmp/r5/verify
+          path: .traceguard-tmp/r5/verify
+          if-no-files-found: warn

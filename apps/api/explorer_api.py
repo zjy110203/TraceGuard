@@ -29,50 +29,43 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
-from packages.agents.exploration import Budget, ScriptedPolicy
+from packages.agents.exploration import (
+    Budget,
+    ScriptedPolicy,
+    ToolCall,
+    origin_of,
+    sanitize_action,
+    verify_trace_record,
+)
 from packages.agents.explorer import Explorer
 from packages.core.errors import ConflictError, NotFoundError, ValidationError
+from packages.core.logging import get_logger
+from packages.execution.dataref import REDACTED_MARKER
+
+logger = get_logger(__name__)
+
 
 router = APIRouter(prefix="/api/v1", tags=["explorer"])
 
 _LOCAL_HOSTS = {"127.0.0.1", "localhost"}
 
-# Never persist or display credential-shaped argument values. The trace is
-# evidence, not a credential store; replay does not need the plaintext.
-_SENSITIVE_ARG = re.compile(r"pass(word)?|secret|token|api[-_]?key|credential", re.IGNORECASE)
-REDACTED = "«redacted»"
+# The one implementation lives with the trace primitives, so the live capture
+# path and this defence-in-depth pass can never drift apart.
+REDACTED = REDACTED_MARKER
 
 
 def redact_actions(actions: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
     """Mask sensitive values inside action args; return (actions, masked_count).
 
-    Two detection paths, because a credential can hide in either place:
-      * the arg *key* looks sensitive (``token``, ``password``, ``api_key``);
-      * the arg is a plain ``value`` whose *context* (selector/target) names a
-        password field — ``[data-testid=password]`` filled with ``hunter2``.
-    The trace keeps its shape (tool, selector) so it stays useful evidence.
+    Idempotent: re-sanitising an already-masked action keeps the marker and does
+    not change the meaning of the trace.
     """
     masked = 0
     out: list[dict[str, Any]] = []
     for action in actions:
-        args = action.get("args")
-        if not isinstance(args, dict):
-            out.append(action)
-            continue
-        context = " ".join(
-            str(v) for k, v in args.items() if k != "value" and isinstance(v, (str, int, float))
-        )
-        context_sensitive = bool(_SENSITIVE_ARG.search(context))
-        clean_args: dict[str, Any] = {}
-        for key, value in args.items():
-            key_sensitive = bool(_SENSITIVE_ARG.search(str(key)))
-            value_sensitive = key == "value" and context_sensitive
-            if (key_sensitive or value_sensitive) and value not in (None, ""):
-                clean_args[key] = REDACTED
-                masked += 1
-            else:
-                clean_args[key] = value
-        out.append({**action, "args": clean_args})
+        clean, count = sanitize_action(action)
+        out.append(clean)
+        masked += count
     return out, masked
 
 
@@ -106,6 +99,9 @@ class ExplorationStore:
 
     def __init__(self, root: Path) -> None:
         self.root = Path(root)
+        # Files that exist but cannot be parsed. Kept visible instead of being
+        # silently skipped: a corrupt trace must not look like "no traces".
+        self.corrupt_files: list[str] = []
 
     def _dir(self) -> Path:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -133,10 +129,39 @@ class ExplorationStore:
         for path in self.root.glob("exp_*.json"):
             try:
                 out.append(json.loads(path.read_text(encoding="utf-8")))
-            except (json.JSONDecodeError, OSError):
-                continue  # a corrupt file must not blank the whole list
+            except (json.JSONDecodeError, OSError) as exc:
+                logger.error("exploration_record_corrupt: %s (%s)", path, exc)
+                if str(path) not in self.corrupt_files:
+                    self.corrupt_files.append(str(path))
+                continue  # one corrupt file must not blank the whole list
         out.sort(key=lambda r: r.get("started_at") or "", reverse=True)
         return out
+
+
+def _login_script(settings: Any, base_url: str) -> tuple[ToolCall, ...]:
+    """The approved TeamFlow login path, with credentials from config.
+
+    The password is read from settings at call time and redacted the moment the
+    action enters the trace, so neither source code nor the trace holds it.
+    """
+    return (
+        ToolCall("navigate", {"url": base_url}, "open login page"),
+        ToolCall(
+            "fill",
+            {"selector": "[data-testid=username]", "value": str(settings.teamflow_test_user)},
+            "fill username",
+        ),
+        ToolCall(
+            "fill",
+            {
+                "selector": "[data-testid=password]",
+                "value": str(settings.teamflow_test_password),
+            },
+            "fill password",
+        ),
+        ToolCall("click", {"selector": "[data-testid=login-submit]"}, "submit login"),
+        ToolCall("snapshot", {}, "observe the page reached after submit"),
+    )
 
 
 def _summary(record: dict[str, Any]) -> dict[str, Any]:
@@ -144,6 +169,7 @@ def _summary(record: dict[str, Any]) -> dict[str, Any]:
     return {
         "exploration_id": record.get("exploration_id"),
         "test_intent_ref": record.get("test_intent_ref") or "",
+        "goal": (record.get("test_intent") or {}).get("goal", ""),
         "target": record.get("target") or "",
         "policy": record.get("policy") or "scripted",
         "policy_label": record.get("policy_label") or "",
@@ -151,9 +177,12 @@ def _summary(record: dict[str, Any]) -> dict[str, Any]:
         "status": record.get("status") or "UNKNOWN",
         "stop_reason": record.get("stop_reason") or "",
         "step_count": record.get("step_count", 0),
+        "observation_count": len(record.get("observations") or []),
         "started_at": record.get("started_at") or "",
         "finished_at": record.get("finished_at") or "",
         "source_trace_hash": record.get("source_trace_hash") or "",
+        "trace_integrity_verified": record.get("trace_integrity_verified"),
+        "security_event_count": len(record.get("security_events") or []),
         "error": record.get("error"),
     }
 
@@ -163,6 +192,14 @@ def _summary(record: dict[str, Any]) -> dict[str, Any]:
 
 class RunExplorationRequest(BaseModel):
     intent_ref: str = ""
+    # R5-4.1: the goal, not just a label. Without these, a compiled candidate
+    # can only say "an action succeeded"; with them it can say what was meant
+    # to be true afterwards.
+    goal: str = ""
+    expected_outcomes: list[str] = []
+    target: str = ""
+    required_assertions: list[str] = []
+    constraints: list[str] = []
     base_url: str = "http://127.0.0.1:8001"
     policy: str = "scripted"
     max_steps: int = 8
@@ -198,6 +235,9 @@ def get_exploration(request: Request, exploration_id: str) -> dict[str, Any]:
     # too, so no reader can surface a credential from an old file.
     record["action_sequence"], masked = redact_actions(record.get("action_sequence", []))
     record["redacted_fields"] = masked
+    # Integrity is re-checked on every read: a trace whose hash no longer
+    # matches its own content is reported, not silently served as evidence.
+    record["trace_integrity_verified"] = verify_trace_record(record)
     return record
 
 
@@ -232,12 +272,15 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
     started = datetime.now(UTC).isoformat()
 
     explorer = Explorer(
-        policy=ScriptedPolicy(),
+        policy=ScriptedPolicy(_login_script(request.app.state.settings, body.base_url)),
         budget=Budget(
             max_steps=body.max_steps,
             max_tool_calls=body.max_steps * 2 + 4,
             max_duration_s=body.max_duration_s,
             allowed_domains=tuple(_LOCAL_HOSTS),
+            # The exact origin, not just the hostname: scheme and port are part
+            # of the permission (R5-4.3 §5.3).
+            allowed_origins=(origin_of(body.base_url),),
         ),
     )
 
@@ -260,6 +303,16 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
         "policy_label": title,
         "is_llm": False,
         "target": body.base_url,
+        "test_intent": {
+            "intent_id": body.intent_ref or f"i-{payload.get('exploration_id', '')}",
+            "description": body.goal or body.intent_ref,
+            "source_ref": body.intent_ref,
+            "goal": body.goal,
+            "expected_outcomes": list(body.expected_outcomes),
+            "target": body.target or body.base_url,
+            "required_assertions": list(body.required_assertions),
+            "constraints": list(body.constraints),
+        },
         "status": status,
         "error": error,
         "step_count": len([a for a in payload.get("action_sequence", []) if not a.get("rejected")]),
@@ -271,6 +324,13 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
     record["redacted_fields"] = masked
     store: ExplorationStore = request.app.state.exploration_store
     store.save(record)
+    # Verify against what the store actually holds (post JSON round-trip): the
+    # hash must describe the persisted bytes, not the object in memory.
+    reloaded = store.get(str(record["exploration_id"])) or record
+    verified = verify_trace_record(reloaded)
+    if not verified:
+        logger.error("trace_integrity_mismatch: %s", record.get("exploration_id"))
+    record["trace_integrity_verified"] = verified
     return record
 
 

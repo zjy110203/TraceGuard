@@ -1,5 +1,10 @@
 {
   "intent_id": "INT-001",
   "description": "创建项目后应能在列表中看到它",
-  "source_ref": "docs/intents/INT-001.md"
+  "source_ref": "docs/intents/INT-001.md",
+  "goal": "",
+  "expected_outcomes": [],
+  "target": "",
+  "required_assertions": [],
+  "constraints": []
 }

@@ -100,7 +100,16 @@ function onUp(): void {
  *  truncation produced labels that were both wider than the ring spacing and
  *  identical to each other. */
 function shortNode(id: string): string {
-  return id.length <= 16 ? id : `${id.slice(0, 5)}…${id.slice(-10)}`
+  // Axe the "…:Evidence" type suffix first: it ate the whole 8-char budget and
+  // every evidence node ended up labelled "evd_…Evidence".
+  const base = id.split(':')[0] ?? id
+  // Ids are "<prefix>_<distinguishing-part>[_<case>]". Keep the prefix plus the
+  // tail of the timestamp / head of the hash, which is what differs per node.
+  const stamped = /^([a-z]+)_(\d{8,})/.exec(base)
+  if (stamped) return `${stamped[1].slice(0, 3)}·${stamped[2].slice(-6)}`
+  const parts = base.split('_')
+  if (parts.length > 1 && parts[1]) return `${parts[0].slice(0, 3)}·${parts[1].slice(0, 6)}`
+  return base.slice(0, 12)
 }
 
 function resetView(): void {
@@ -126,6 +135,10 @@ const positioned = computed(() => {
   return list.map((node, i) => {
     const angle = (2 * Math.PI * i) / Math.max(n, 1) - Math.PI / 2
     const cos = Math.cos(angle)
+    // Alternating push: with 30 nodes the ring gap (~49px) is smaller than a
+    // label (~95px), so neighbours at the top/bottom overlapped. A three-step
+    // stagger (0/13/26px) buys a full text line of clearance in each band.
+    const push = R + 12 + (i % 3) * 13
     return {
       node,
       x: cx + R * cos,
@@ -133,8 +146,8 @@ const positioned = computed(() => {
       color: colorOf(node.node_type),
       // Labels are pushed outward along the radius: with 20+ nodes on a ring,
       // a fixed right-side offset stacks them on top of each other.
-      labelX: cx + (R + 12) * cos,
-      labelY: cy + (R + 12) * Math.sin(angle) + 3,
+      labelX: cx + push * cos,
+      labelY: cy + push * Math.sin(angle) + 3,
       labelAnchor: cos >= -0.05 ? 'start' : 'end',
     }
   })
@@ -667,7 +680,9 @@ function loadAll(): void {
 }
 
 .node-label {
-  font-size: 10px;
+  /* The SVG is 760 units wide but renders ~650px in the split view, so a
+     10px font landed at ~8.6px on screen — too small to read at 100% zoom. */
+  font-size: 12px;
   fill: var(--tg-muted);
   pointer-events: none;
   /* Halo so a label crossing an edge stays readable. */
@@ -690,9 +705,11 @@ function loadAll(): void {
 
 .edge-list li {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  /* Two columns: relation badge + truncated src→dst on line 1, rule id on
+     line 2. Three columns clipped the rule id at the panel edge ("R-EMIT"). */
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
+  gap: 2px 8px;
   padding: 5px 6px;
   border-radius: var(--tg-radius-sm);
   border: 1px solid transparent;
@@ -721,8 +738,12 @@ function loadAll(): void {
 }
 
 .edge-list .rule {
+  grid-column: 1 / -1;
   font-size: 10.5px;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-left: 2px;
 }
 
 .path-bar {

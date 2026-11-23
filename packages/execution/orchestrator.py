@@ -26,6 +26,7 @@ import queue
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -125,6 +126,8 @@ class Orchestrator:
         trace_dir: Path | None = None,
         reset_before_run: bool = True,
         broker: Broker | None = None,
+        data_provider: Any | None = None,
+        graph: Any | None = None,
     ) -> None:
         self.tasks = TaskService(session_factory)
         self.runs = RunService(session_factory)
@@ -134,6 +137,10 @@ class Orchestrator:
         self.locators = locators
         self.trace_dir = trace_dir
         self.reset_before_run = reset_before_run
+        self.data_provider = data_provider
+        # Shared correlation graph: a chain run must write the same graph the
+        # Graph page reads, otherwise its nodes are invisible in the product.
+        self.graph = graph
         self.bus = EventBus()
         self.worker_id = f"inproc-{uuid.uuid4().hex[:8]}"
         self.worker_count = max_workers
@@ -196,6 +203,149 @@ class Orchestrator:
         case: TestCaseVersion = load_case(case_path)
         self._execute(job.run_id, job.task_id, case)
 
+    def run_chain(
+        self,
+        case: TestCaseVersion,
+        *,
+        workspace_id: str = "ws-default",
+        scenario_id: str = "",
+        timeout_s: float = 180.0,
+        after_run: Callable[[Any], dict[str, Any]] | None = None,
+        fault_events: list[dict[str, Any]] | None = None,
+        probe_requests: list[Any] | None = None,
+    ) -> tuple[RunView, Any]:
+        """Execute a FullChain under the standard Run lifecycle.
+
+        Before R5-4.2 the chain ran first and registered a Run afterwards, so
+        the run could not be observed, cancelled or retried while it executed
+        and its id was invented after the fact. Now:
+
+          Task -> Run (QUEUED) -> PREPARING -> RUNNING -> FINALIZING -> terminal
+
+        ``after_run`` is called while the run is FINALIZING (evidence/event
+        persistence). Its stages are recorded in the run report, so a
+        persistence failure is visible on the run instead of being swallowed.
+        """
+        from packages.execution.pipeline import FullChain
+
+        task_id = f"task_{case.case_id}"
+        try:
+            self.tasks.create(task_id, case.case_id, f"chain: {case.title}")
+        except Exception:  # noqa: BLE001 - retry reuses the logical task
+            logger.info("chain_task_exists: %s", task_id)
+
+        run_id = f"run_{datetime.now(UTC).strftime('%Y%m%d%H%M%S%f')}_{uuid.uuid4().hex[:6]}"
+        view = self.runs.create_run(
+            run_id=run_id,
+            task_id=task_id,
+            case_id=case.case_id,
+            case_version=case.version,
+            timeout_s=timeout_s,
+            worker_id=self.worker_id,
+        )
+        with self._lock:
+            self._start_times[run_id] = time.monotonic()
+        self.bus.publish("run.queued", run_id, task_id, mode="full_chain", case=case.case_id)
+
+        def progress(stage: str, status: str, detail: str) -> None:
+            self.bus.publish(
+                "run.stage", run_id, task_id, stage=stage, status=status, detail=detail
+            )
+            self.runs.update_progress(run_id, {"stage": stage, "status": status, "detail": detail})
+            self.runs.heartbeat(run_id, self.worker_id)
+
+        graph = self.graph
+        if graph is None:
+            # Writing evidence without the shared graph would produce nodes the
+            # Graph page can never read: fail loudly instead of half-persisting.
+            raise RuntimeError(
+                "full-chain run requires the shared correlation graph; "
+                "wire it via register_workbench(graph=...)"
+            )
+        chain = FullChain(
+            base_url=self.base_url,
+            graph=graph,
+            eval_token=self.eval_token,
+            locators=self.locators,
+            data_provider=self.data_provider,
+            progress=progress,
+        )
+        self.runs.transition(run_id, RunStatus.PREPARING, started_at=_now())
+        self.bus.publish("run.preparing", run_id, task_id, case=case.case_id)
+        self.runs.transition(run_id, RunStatus.RUNNING)
+        self.bus.publish("run.running", run_id, task_id, attempt=view.attempt)
+
+        report = chain.run(
+            scenario_id or case.case_id,
+            case,
+            fault_events=fault_events,
+            probe_requests=probe_requests,
+            workspace_id=workspace_id,
+            run_id_override=run_id,
+            cancel_check=lambda: self.runs.is_cancel_requested(run_id),
+        )
+
+        self.runs.transition(run_id, RunStatus.FINALIZING)
+        self.bus.publish(
+            "run.finalizing", run_id, task_id, verdict=report.execution.get("test_verdict")
+        )
+        if report.steps:
+            self.runs.append_steps(run_id, report.steps)
+
+        if after_run is not None:
+            try:
+                persisted = after_run(report) or {}
+            except Exception as exc:  # noqa: BLE001 - persistence failure is a finding
+                persisted = {"error": f"{type(exc).__name__}: {exc}"[:500]}
+            for entry in persisted.get("stages", []):
+                progress(
+                    str(entry.get("name", "persistence")),
+                    str(entry.get("status", "FAILED")),
+                    str(entry.get("detail", "")),
+                )
+            report.persisted = persisted
+
+        cancelled = bool(report.cancelled)
+        exec_status = str(report.execution.get("execution_status") or "")
+        # "Completed" means the chain ran to the end. A recorded execution error,
+        # a blocked run or a non-clean execution status must not produce a
+        # COMPLETED Run row even if a stage list looks complete.
+        execution_ok = (
+            bool(report.completed)
+            and not cancelled
+            and not report.execution.get("blocked")
+            and not report.execution.get("error")
+            and exec_status not in {"FAILED", "CANCELLED", "TIMED_OUT", "BLOCKED"}
+        )
+        if cancelled:
+            status = RunStatus.CANCELLED
+        elif execution_ok:
+            status = RunStatus.COMPLETED
+        else:
+            status = RunStatus.FAILED
+
+        final = self.runs.finalize(
+            run_id,
+            status=status,
+            execution_status=str(report.execution.get("execution_status") or "FAILED"),
+            test_verdict=str(report.execution.get("test_verdict") or "NOT_EVALUATED"),
+            report=report.to_dict(),
+            error=str(
+                report.execution.get("blocked_reason")
+                or report.execution.get("error")
+                or ("" if execution_ok else "chain did not complete")
+            )[:500],
+        )
+        self.bus.publish(
+            "run.finished",
+            run_id,
+            task_id,
+            status=final.status,
+            verdict=final.test_verdict,
+            chain_id=report.chain_id,
+        )
+        return final, report
+
     def _is_settled(self, job: ExecutionJob) -> bool:
         """True when a redelivered job has already reached a terminal state."""
         try:
@@ -247,6 +397,7 @@ class Orchestrator:
                 locators=self.locators,
                 trace_dir=self.trace_dir,
                 eval_token=self.eval_token,
+                data_provider=self.data_provider,
             )
             report = runner.run(
                 case,
