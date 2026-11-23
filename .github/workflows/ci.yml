@@ -24,7 +24,11 @@ jobs:
       - name: Type check (mypy)
         run: mypy packages apps --ignore-missing-imports
       - name: Unit + integration tests
-        # Coverage reporting is validated locally; CI runs the suite without
-        # --cov because pytest-cov 7.x on ubuntu/python3.13 exits with code 2
-        # in this project's isolated-subprocess test environment.
-        run: pytest -q
+        # Capture full output so failures are diagnosable from the artifact.
+        run: pytest -q 2>&1 | tee pytest-output.txt
+      - name: Upload pytest output on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-output
+          path: pytest-output.txt
