@@ -24,11 +24,19 @@ jobs:
       - name: Type check (mypy)
         run: mypy packages apps --ignore-missing-imports
       - name: Unit + integration tests
-        # pipefail preserves pytest's real exit code through tee;
-        # plain `pytest -q` under bash returns 2 here, so we capture via pipe.
+        # pipefail preserves pytest's real exit code through tee.
         run: |
           set -o pipefail
           pytest -q 2>&1 | tee pytest-output.txt
+      - name: Surface pytest error as annotation
+        if: failure()
+        run: |
+          echo "::group::pytest tail"
+          tail -40 pytest-output.txt
+          echo "::endgroup::"
+          # Emit the last error lines as a check annotation (readable via public API)
+          ERR=$(grep -E "ERROR|error|FAILED|E   |ImportError|ModuleNotFound|exit code" pytest-output.txt | tail -8 | tr '\n' ' ')
+          echo "::error::PYTEST_DIAG: ${ERR:0:600}"
       - name: Upload pytest output on failure
         if: failure()
         uses: actions/upload-artifact@v4
