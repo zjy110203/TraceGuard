@@ -263,6 +263,11 @@ def event_stream(request: Request) -> StreamingResponse:
                 durability = orch.bus.persistence_snapshot()
                 if durability["mode"] == "degraded" and durability["epoch"] != announced_epoch:
                     announced_epoch = int(durability["epoch"])
+                    # A new outage epoch invalidates the previous recovery: the
+                    # next successful write must announce persist-recovered again
+                    # (R5-5.1-R R4). Without this, only the first of several
+                    # independent outages ever reports its recovery on the wire.
+                    announced_recovered = False
                     yield _sse_notice("persist-degraded", durability)
                 elif durability["mode"] == "durable" and durability.get("recovered"):
                     if not announced_recovered:

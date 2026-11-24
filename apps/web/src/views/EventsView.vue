@@ -32,8 +32,19 @@ function noticeText(notice: StreamNotice): string {
       return `历史缺口 ${notice.from ?? '?'}→${notice.to ?? '?'}（缺 ${notice.missing ?? '?'} 条，队列溢出）`
     case 'persist-degraded':
       return `事件写入失败，当前流不可回溯：${notice.last_error ?? notice.detail ?? '未知原因'}`
-    case 'persist-recovered':
-      return `事件写入已恢复（失败 ${notice.failures ?? '?'} 次，未持久化区间 ${notice.undurable_first_delivery ?? '?'}→${notice.undurable_last_delivery ?? '?'}）；该区间不可回放`
+    case 'persist-recovered': {
+      // R5-5.1-R R4: the server exposes DISJOINT per-outage intervals. The old
+      // first→last pair is an aggregate that may span successful writes; never
+      // render it as one continuous non-replayable hole when intervals exist.
+      const ivs = notice.undurable_intervals as
+        | Array<{ first: number; last: number; count: number; recovered_at: number | null }>
+        | undefined
+      const rangeText =
+        ivs && ivs.length
+          ? ivs.map((iv) => `${iv.first}→${iv.last}`).join('、')
+          : `${notice.undurable_first_delivery ?? '?'}→${notice.undurable_last_delivery ?? '?'}`
+      return `事件写入已恢复（失败 ${notice.failures ?? '?'} 次，未持久化区间 ${rangeText}）；这些区间不可回放，区间之间的事件已正常持久化`
+    }
     default:
       return notice.code + (notice.detail ? `：${notice.detail}` : '')
   }

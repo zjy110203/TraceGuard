@@ -314,3 +314,69 @@ def test_degrade_mode_keeps_delivering_while_the_write_fails(tmp_path: Path) -> 
     finally:
         bus.unsubscribe(queue)
         engine.dispose()
+
+
+def test_two_independent_outages_keep_separate_undurable_intervals(tmp_path: Path) -> None:
+    """R5-5.1-R R4: a successful write between two faults splits the holes.
+
+    The single first/last pair is now only an aggregate and must NOT be read as
+    one continuous undurable range: the deliveries in between were persisted
+    and are replayable. Each outage gets its own bounded interval, closed at
+    the delivery where that specific outage recovered.
+    """
+    db_path = tmp_path / "two-outages.db"
+    engine = create_engine(
+        f"sqlite:///{db_path.as_posix()}?timeout={LOCK_TIMEOUT}",
+        connect_args={"check_same_thread": False},
+    )
+    create_event_tables(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    recorder = RunEventRecorder(EventStore(factory), producer_instance_id="bus-two-outages")
+    bus = EventBus(recorder)
+    try:
+        [bus.publish("run.progress", "r", "t", index=i) for i in range(100)]
+
+        with _write_outage(db_path):
+            f1 = [bus.publish("run.progress", "r", "t", index=i) for i in (100, 101)]
+        assert all(not e.durable for e in f1)
+        middle = [bus.publish("run.progress", "r", "t", index=i) for i in (102, 103, 104)]
+        assert all(e.durable for e in middle)  # the successful writes really persisted
+
+        with _write_outage(db_path):
+            f2 = [bus.publish("run.progress", "r", "t", index=i) for i in (105, 106, 107)]
+        assert all(not e.durable for e in f2)
+        tail = [bus.publish("run.progress", "r", "t", index=i) for i in range(108, 113)]
+
+        snapshot = bus.persistence_snapshot()
+        intervals = snapshot["undurable_intervals"]
+        assert len(intervals) == 2, snapshot
+        # Intervals are in the delivery/wire domain.
+        assert intervals[0] == {
+            "first": 101,
+            "last": 102,
+            "count": 2,
+            "recovered_at": 103,
+        }, intervals[0]
+        assert intervals[1] == {
+            "first": 106,
+            "last": 108,
+            "count": 3,
+            "recovered_at": 109,
+        }, intervals[1]
+        # The durably-persisted deliveries between the outages belong to no hole.
+        recovered_deliveries = {e.delivery_seq for e in middle}
+        covered = {d for iv in intervals for d in range(iv["first"], iv["last"] + 1)}
+        assert covered.isdisjoint(recovered_deliveries), (
+            "a successful write between outages must not be labelled undurable"
+        )
+        # Aggregate fields remain honest and backward compatible.
+        assert snapshot["undurable_first_delivery"] == 101
+        assert snapshot["undurable_last_delivery"] == 108
+        assert snapshot["undurable_count"] == 5
+        assert snapshot["recovered_at_delivery"] == 109
+        # Total durable positions stay contiguous: 100 + 3 + 5 = 108 events.
+        durable = [e.sequence for e in bus.history() + tail if e.sequence is not None]
+        assert len(set(durable)) == 108
+        assert set(durable) == set(range(1, 109))
+    finally:
+        engine.dispose()

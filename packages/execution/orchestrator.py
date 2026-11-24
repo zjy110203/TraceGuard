@@ -48,6 +48,11 @@ logger = get_logger(__name__)
 # an unbounded growth path, while keeping none makes the loss invisible. Ranges
 # are coalesced and capped: the newest 100 are enough to explain a gap.
 _MAX_DROP_RANGES = 100
+# A durability outage can happen more than once in a process lifetime. Keeping
+# every failed delivery would be unbounded; a bounded list of DISJOINT intervals
+# is enough to explain each outage without ever claiming the successful writes
+# between two outages were undurable (R5-5.1-R R4).
+_MAX_UNDURABLE_INTERVALS = 100
 _DEFAULT_QUEUE_MAXSIZE = 1000
 # In-memory history is a fast-replay cache, not the system of record (that is
 # the event store, when a recorder is attached). It is capped so a long soak
@@ -200,6 +205,14 @@ class EventBus:
         self.last_undurable_delivery: int | None = None
         self.undurable_count = 0
         self.last_durable_delivery: int | None = None
+        # Disjoint undurable intervals in the WIRE domain (delivery ordinals).
+        # The single first/last pair above stays for backward compatibility but
+        # cannot represent two outages separated by a successful write: it would
+        # mark the recovered deliveries in between as a continuous hole. Each
+        # interval is {first, last, count, recovered_at}; bounded so a long soak
+        # cannot grow it without limit. (R5-5.1-R R4)
+        self.undurable_intervals: list[dict[str, Any]] = []
+        self._interval_open = False
         # Bumped on every new failure epoch so a stream can tell "already
         # announced" from "degraded again just now".
         self.persistence_epoch = 0
@@ -326,20 +339,45 @@ class EventBus:
                 self.first_undurable_delivery = delivery_seq
             self.last_undurable_delivery = delivery_seq
             self.undurable_count += 1
+            # Open or extend a disjoint interval. A successful write closes the
+            # previous interval (below), so two outages never merge into one.
+            if not self._interval_open:
+                self.undurable_intervals.append(
+                    {
+                        "first": delivery_seq,
+                        "last": delivery_seq,
+                        "count": 1,
+                        "recovered_at": None,
+                    }
+                )
+                if len(self.undurable_intervals) > _MAX_UNDURABLE_INTERVALS:
+                    del self.undurable_intervals[0]
+                self._interval_open = True
+            else:
+                current = self.undurable_intervals[-1]
+                current["last"] = delivery_seq
+                current["count"] += 1
             return None
         self._sequence = max(self._sequence, position)
         if self.persistence_failures and self.recovered_epoch != self.persistence_epoch:
             self.recovered_epoch = self.persistence_epoch
             self.recovered_at_delivery = delivery_seq
+            # Close the interval that just recovered with THIS recovery point,
+            # not the process-wide last one (which a later outage overwrites).
+            if self._interval_open and self.undurable_intervals:
+                self.undurable_intervals[-1]["recovered_at"] = delivery_seq
+                self._interval_open = False
             logger.warning(
                 "event_persist_recovered: epoch=%d after_failures=%d "
-                "undurable_range=%s..%s durable_resumes_at=%d delivery_seq=%d",
+                "undurable_range=%s..%s durable_resumes_at=%d delivery_seq=%d "
+                "intervals=%s",
                 self.persistence_epoch,
                 self.persistence_failures,
                 self.first_undurable_delivery,
                 self.last_undurable_delivery,
                 position,
                 delivery_seq,
+                self.undurable_intervals,
             )
         self.last_durable_delivery = delivery_seq
         return position
@@ -490,6 +528,11 @@ class EventBus:
             "failures": self.persistence_failures,
             "last_error": self.persistence_last_error,
             "undurable_count": self.undurable_count,
+            # Disjoint per-outage intervals; authoritative for "which deliveries
+            # were never persisted". The first/last pair above remains an
+            # aggregate for backward-compatible consumers and may span multiple
+            # outages (do not read it as one continuous hole).
+            "undurable_intervals": [dict(i) for i in self.undurable_intervals],
             "undurable_first_delivery": self.first_undurable_delivery,
             "undurable_last_delivery": self.last_undurable_delivery,
             # Deprecated alias kept for consumers written against R5-5.1: it is
