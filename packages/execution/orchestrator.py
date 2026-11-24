@@ -35,6 +35,7 @@ from typing import Any
 import httpx
 
 from packages.core.logging import get_logger
+from packages.evidence.run_events import CursorResolution, RunEventRecorder
 from packages.execution.broker import Broker, Dispatcher, ExecutionJob, InProcessBroker
 from packages.execution.locators import LocatorRegistry
 from packages.execution.models import TestCaseVersion, load_case
@@ -48,6 +49,10 @@ logger = get_logger(__name__)
 # are coalesced and capped: the newest 100 are enough to explain a gap.
 _MAX_DROP_RANGES = 100
 _DEFAULT_QUEUE_MAXSIZE = 1000
+# In-memory history is a fast-replay cache, not the system of record (that is
+# the event store, when a recorder is attached). It is capped so a long soak
+# cannot grow without bound.
+_MAX_MEMORY_HISTORY = 5000
 
 
 def _now() -> str:
@@ -119,16 +124,52 @@ class SubscriberQueue(queue.Queue[RunEvent]):
 
 
 class EventBus:
-    """Fan-out bus with per-subscriber queues and a monotonic sequence."""
+    """Fan-out bus with per-subscriber queues and a monotonic sequence.
 
-    def __init__(self) -> None:
+    R5-5.1: an optional :class:`RunEventRecorder` makes the stream durable. The
+    bus keeps its fan-out role; the recorder supplies the order. When a recorder
+    is attached:
+
+    * ``sequence`` is the store-assigned ``stream_seq``, so it stays monotonic
+      across a restart (a new process does not restart at 1);
+    * the stream can be replayed after a restart;
+    * a failed write is **never** reported as durable — the event is still
+      delivered live (see ``persistence_failure_policy``) and the degradation is
+      counted and exposed, so "the stream is fine" is never claimed on the
+      strength of a write that did not happen.
+    """
+
+    def __init__(
+        self,
+        recorder: RunEventRecorder | None = None,
+        *,
+        strict_persistence: bool = False,
+    ) -> None:
         self._lock = threading.Lock()
         self._subscribers: list[SubscriberQueue] = []
         self._sequence = 0
         self._history: list[RunEvent] = []
         # Aggregate loss across every subscriber ever served by this bus.
-        # Process-local, like ``_history``: it resets on restart.
         self.dropped_total = 0
+        self._recorder = recorder
+        # ``strict`` raises on a failed write (gates/tests); ``degrade`` keeps
+        # executing but reports the gap in durability.
+        self.strict_persistence = strict_persistence
+        self.producer_instance_id = (
+            recorder.producer_instance_id
+            if recorder is not None
+            else f"bus-{uuid.uuid4().hex[:12]}"
+        )
+        self.persistence_failures = 0
+        self.persistence_last_error = ""
+        self.first_undurable_sequence: int | None = None
+        # Bumped on every new failure epoch so a stream can tell "already
+        # announced" from "degraded again just now".
+        self.persistence_epoch = 0
+        self.startup_report: dict[str, Any] = {}
+        if recorder is not None:
+            self.startup_report = recorder.start()
+            self._sequence = int(self.startup_report.get("latest", 0))
 
     def subscribe(self, maxsize: int = _DEFAULT_QUEUE_MAXSIZE) -> SubscriberQueue:
         """Register a subscriber queue. ``maxsize`` exists for tests/gateways."""
@@ -154,31 +195,203 @@ class EventBus:
 
     def publish(self, event_type: str, run_id: str, task_id: str, **payload: Any) -> RunEvent:
         with self._lock:
-            self._sequence += 1
+            event_id = f"runevt_{uuid.uuid4().hex[:12]}"
+            occurred_at = _now()
+            blob = dict(payload)
+            sequence = self._next_sequence(event_id, event_type, run_id, task_id, blob, occurred_at)
             event = RunEvent(
-                event_id=f"runevt_{uuid.uuid4().hex[:12]}",
+                event_id=event_id,
                 event_type=event_type,
                 run_id=run_id,
                 task_id=task_id,
-                sequence=self._sequence,
-                occurred_at=_now(),
-                payload=dict(payload),
+                sequence=sequence,
+                occurred_at=occurred_at,
+                payload=blob,
             )
             self._history.append(event)
-            for q in list(self._subscribers):
-                try:
-                    q.put_nowait(event)
-                except queue.Full:
-                    # Slow consumer: drop for this subscriber only, but make the
-                    # loss observable so the SSE stream can emit a gap frame and
-                    # an operator can see it in dropped_total / subscriber_stats.
-                    q.note_drop(event.sequence)
-                    self.dropped_total += 1
+            if len(self._history) > _MAX_MEMORY_HISTORY:
+                del self._history[: len(self._history) - _MAX_MEMORY_HISTORY]
+            dropped = self._fan_out(event)
+        if dropped:
+            logger.warning(
+                "event_dropped_for_slow_subscriber: event_id=%s sequence=%d "
+                "subscribers_affected=%d",
+                event_id,
+                event.sequence,
+                dropped,
+            )
         return event
+
+    def _next_sequence(
+        self,
+        event_id: str,
+        event_type: str,
+        run_id: str,
+        task_id: str,
+        payload: dict[str, Any],
+        occurred_at: str,
+    ) -> int:
+        """Durable position when persisted, process counter otherwise.
+
+        A failed write must not look like a success: the counter still advances
+        (so the wire stays ordered) but the event is recorded as undurable and
+        ``strict_persistence`` re-raises instead of pretending.
+        """
+        if self._recorder is None:
+            self._sequence += 1
+            return self._sequence
+        try:
+            position = self._recorder.append(
+                event_id=event_id,
+                event_type=event_type,
+                run_id=run_id,
+                task_id=task_id,
+                payload=payload,
+                occurred_at=occurred_at,
+            )
+        except Exception as exc:  # noqa: BLE001 - any write failure means "not durable"
+            self.persistence_failures += 1
+            self.persistence_last_error = f"{type(exc).__name__}: {exc}"[:300]
+            self.persistence_epoch += 1
+            logger.error(
+                "event_persist_failed: event_id=%s event_type=%s run_id=%s error=%s",
+                event_id,
+                event_type,
+                run_id,
+                self.persistence_last_error,
+            )
+            if self.strict_persistence:
+                raise
+            self._sequence += 1
+            if self.first_undurable_sequence is None:
+                self.first_undurable_sequence = self._sequence
+            return self._sequence
+        self._sequence = max(self._sequence, position)
+        return position
+
+    def _fan_out(self, event: RunEvent) -> int:
+        affected = 0
+        for q in list(self._subscribers):
+            try:
+                q.put_nowait(event)
+            except queue.Full:
+                # Slow consumer: drop for this subscriber only, but make the
+                # loss observable so the SSE stream can emit a gap frame and
+                # an operator can see it in dropped_total / subscriber_stats.
+                q.note_drop(event.sequence)
+                self.dropped_total += 1
+                affected += 1
+        return affected
 
     def history(self, after_sequence: int = 0) -> list[RunEvent]:
         with self._lock:
             return [e for e in self._history if e.sequence > after_sequence]
+
+    def replay_after(self, after_sequence: int, limit: int = 500) -> list[RunEvent]:
+        """History that survives a restart.
+
+        With a recorder this reads the store (bounded by ``limit``); without one
+        it is the in-memory list, i.e. exactly the pre-R5-5.1 behaviour.
+        """
+        if self._recorder is None:
+            return self.history(after_sequence)[:limit]
+        events, _ = self.replay_page(after_sequence, limit)
+        return events
+
+    def replay_page(self, after_sequence: int, limit: int = 500) -> tuple[list[RunEvent], int]:
+        """One page of durable history plus the position it advanced to."""
+        if self._recorder is None:
+            events = self.history(after_sequence)[:limit]
+            return events, (events[-1].sequence if events else after_sequence)
+        rows, position = self._recorder.replay_page(after_sequence, limit)
+        return [self._row_to_event(row) for row in rows], position
+
+    @staticmethod
+    def _row_to_event(row: dict[str, Any]) -> RunEvent:
+        refs = row.get("context_refs") or {}
+        return RunEvent(
+            event_id=str(row["event_id"]),
+            event_type=str(row["event_type"]),
+            run_id=str(refs.get("run_id") or ""),
+            task_id=str(refs.get("task_id") or ""),
+            sequence=int(row["sequence"]),
+            occurred_at=str(row["occurred_at"]),
+            payload=dict(row.get("payload") or {}),
+        )
+
+    def resolve_cursor(self, token: str) -> CursorResolution:
+        """Map a ``Last-Event-ID`` to a trustworthy resume position."""
+        if self._recorder is not None:
+            return (
+                self._recorder.resolve(token)
+                if token
+                else CursorResolution(
+                    kind="first",
+                    after=0,
+                    latest=self._recorder.latest(),
+                    oldest=None,
+                    pruned_through=0,
+                )
+            )
+        # Memory mode: the only cursors that exist are the ones in this process.
+        if not token:
+            with self._lock:
+                return CursorResolution("first", 0, self._sequence, None, 0)
+        with self._lock:
+            latest = self._sequence
+            for event in self._history:
+                if event.event_id == token:
+                    return CursorResolution("ok", event.sequence, latest, None, 0)
+        return CursorResolution(
+            "unknown",
+            latest,
+            latest,
+            None,
+            0,
+            detail="event id not in this process's memory history (restarted?)",
+        )
+
+    def cursor_token(self, event: RunEvent) -> str:
+        """Cursor to put in ``id:``. Persisted mode encodes the position."""
+        if self._recorder is None:
+            return event.event_id
+        return self._recorder.cursor_token(event.sequence)
+
+    def durability_state(self) -> dict[str, Any]:
+        """Honest report of whether this stream can be replayed later."""
+        state = self.persistence_snapshot()
+        state["dropped_total"] = self.dropped_total
+        if self._recorder is not None:
+            state.update(self._recorder.stats())
+        return state
+
+    def persistence_snapshot(self) -> dict[str, Any]:
+        """Cheap (no DB) durability view for a per-poll SSE check."""
+        if self._recorder is None:
+            mode = "memory"
+        elif self.persistence_failures:
+            mode = "degraded"
+        else:
+            mode = "durable"
+        return {
+            "mode": mode,
+            "producer_instance_id": self.producer_instance_id,
+            "sequence": self._sequence,
+            "failures": self.persistence_failures,
+            "last_error": self.persistence_last_error,
+            "first_undurable_sequence": self.first_undurable_sequence,
+            "epoch": self.persistence_epoch,
+        }
+
+    def prune_events(self, keep_last: int) -> dict[str, Any]:
+        """Apply the retention window now (ops/testing entry point)."""
+        if self._recorder is None:
+            raise RuntimeError("no durable event stream to prune")
+        return self._recorder.store.prune_stream(keep_last)
+
+    def latest_sequence(self) -> int:
+        with self._lock:
+            return self._sequence
 
     def subscriber_stats(self) -> list[dict[str, Any]]:
         """Per-subscriber queue depth and drop accounting (diagnostics only)."""
@@ -235,6 +448,7 @@ class Orchestrator:
         broker: Broker | None = None,
         data_provider: Any | None = None,
         graph: Any | None = None,
+        bus: EventBus | None = None,
     ) -> None:
         self.tasks = TaskService(session_factory)
         self.runs = RunService(session_factory)
@@ -248,7 +462,8 @@ class Orchestrator:
         # Shared correlation graph: a chain run must write the same graph the
         # Graph page reads, otherwise its nodes are invisible in the product.
         self.graph = graph
-        self.bus = EventBus()
+        # An injected bus may carry a durable recorder (R5-5.1).
+        self.bus = bus if bus is not None else EventBus()
         self.worker_id = f"inproc-{uuid.uuid4().hex[:8]}"
         self.worker_count = max_workers
         # Dispatch goes through a broker so at-least-once delivery, visibility

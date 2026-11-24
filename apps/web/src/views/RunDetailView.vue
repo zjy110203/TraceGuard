@@ -65,6 +65,32 @@ function fmtTs(value: string | null | undefined): string {
   return value.replace('T', ' ').slice(0, 19)
 }
 
+// R5-5.1 §11: teardown is a *resource* fact, not a business verdict. The two
+// are shown side by side and never merged, so "browser did not close" cannot
+// read as "the test failed".
+const cleanup = computed(() => report.value?.cleanup ?? null)
+const cleanupProblems = computed(() => {
+  const c = cleanup.value
+  if (!c) return [] as { label: string; detail: string }[]
+  const problems: { label: string; detail: string }[] = []
+  if (c.browser_closed === false) {
+    problems.push({ label: '浏览器关闭失败', detail: c.browser_close_error || '未提供原因' })
+  }
+  if (c.trace_stopped === false) {
+    problems.push({ label: 'Trace 停止失败', detail: c.trace_stop_error || '未提供原因' })
+  }
+  if (c.playwright_stopped === false) {
+    problems.push({ label: 'Playwright 停止失败', detail: c.playwright_stop_error || '未提供原因' })
+  }
+  if (c.page_crashed) {
+    problems.push({ label: '页面崩溃', detail: c.page_crash_detail || '执行期间页面崩溃' })
+  }
+  for (const detail of c.evidence_errors ?? []) {
+    problems.push({ label: 'Evidence 采集失败', detail })
+  }
+  return problems
+})
+
 const tabs = computed(() => [
   { label: '步骤执行', path: `/runs/${props.runId}/steps` },
   { label: '断言结果', path: `/runs/${props.runId}/assertions` },
@@ -125,6 +151,30 @@ const tabs = computed(() => [
         </a>
         <span class="muted small tab-note">Event 与 Evidence 请在证据中心按 run_id 检索</span>
       </nav>
+
+      <h2>资源清理（Cleanup）</h2>
+      <p class="small muted cleanup-note">
+        清理状态描述浏览器 / Trace / 取证的资源释放结果，<strong>与业务 Verdict 是两个维度</strong>：
+        清理失败不代表业务测试失败，业务通过也不代表资源已全部释放。
+      </p>
+      <div v-if="!cleanup || Object.keys(cleanup).length === 0" class="muted small">
+        该报告未记录清理状态（旧版执行或未启用浏览器取证）。
+      </div>
+      <div v-else class="meta cleanup-block">
+        <div>
+          <span class="k">整体</span>
+          <StatusPill :value="cleanup.is_clean ? 'CLEAN' : 'DEGRADED'" />
+        </div>
+        <div><span class="k">浏览器</span><span class="small">{{ cleanup.browser_closed === false ? '关闭失败' : '已关闭' }}</span></div>
+        <div><span class="k">Trace</span><span class="small">{{ cleanup.trace_stopped === false ? '停止失败' : '已停止' }}</span></div>
+        <div><span class="k">Playwright</span><span class="small">{{ cleanup.playwright_stopped === false ? '停止失败' : '已停止' }}</span></div>
+        <div><span class="k">取证异常</span><span class="small">{{ (cleanup.evidence_errors ?? []).length }} 条</span></div>
+      </div>
+      <ul v-if="cleanupProblems.length" class="cleanup-problems small">
+        <li v-for="(item, i) in cleanupProblems" :key="i" class="notice-text">
+          <strong>{{ item.label }}</strong>：{{ item.detail }}
+        </li>
+      </ul>
 
       <h2>执行报告</h2>
       <div v-if="reportStatus === 'failed'" class="report-state error-text">
@@ -222,6 +272,16 @@ const tabs = computed(() => [
 }
 .tab-note {
   margin-left: 12px;
+}
+.cleanup-block {
+  margin-top: 8px;
+}
+.cleanup-note {
+  margin: 4px 0 10px;
+}
+.cleanup-problems {
+  margin: 8px 0 0;
+  padding-left: 18px;
 }
 .report-state {
   display: flex;

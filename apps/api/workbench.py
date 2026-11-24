@@ -24,7 +24,7 @@ from packages.core.logging import get_logger
 from packages.execution.eventaudit import count_dropped_in_range
 from packages.execution.locators import LocatorRegistry
 from packages.execution.models import TestCaseVersion, load_cases_dir
-from packages.execution.orchestrator import Orchestrator, RunEvent, SubscriberQueue
+from packages.execution.orchestrator import EventBus, Orchestrator, RunEvent, SubscriberQueue
 
 logger = get_logger(__name__)
 
@@ -37,6 +37,9 @@ _SSE_KEEPALIVE_S = 15.0
 # Bounded per-connection buffer. Overflow is recorded by the bus and reported to
 # the client as a gap comment frame instead of being lost silently.
 _SSE_QUEUE_MAXSIZE = 1000
+# Replay is read in bounded batches so a large retained history does not
+# block the event loop or other clients.
+_SSE_REPLAY_BATCH = 500
 
 
 class CreateTaskBody(BaseModel):
@@ -121,53 +124,75 @@ def cancel_run(run_id: str, request: Request) -> dict[str, Any]:
 
 
 @router.get("/events")
-def event_history(after_sequence: int = 0, request: Request = None) -> list[dict[str, Any]]:  # type: ignore[assignment]
+def event_history(
+    after_sequence: int = 0,
+    limit: int = 5000,
+    request: Request = None,  # type: ignore[assignment]
+) -> list[dict[str, Any]]:
+    """Event history — durable when persistence is on, in-memory otherwise."""
     orch: Orchestrator = request.app.state.orchestrator  # type: ignore[union-attr]
-    return [e.to_dict() for e in orch.bus.history(after_sequence)]
+    return [e.to_dict() for e in orch.bus.replay_after(after_sequence, limit)]
+
+
+@router.get("/events/durability")
+def event_durability(request: Request) -> dict[str, Any]:
+    """Whether the stream can be replayed later, and which part cannot.
+
+    A separate endpoint from ``/health`` on purpose: the database can be healthy
+    while event persistence is degraded (a failed write must not be reported as
+    a database outage, and a healthy database must not imply a durable stream).
+    """
+    return _orchestrator(request).bus.durability_state()
 
 
 @router.get("/events/stream")
 def event_stream(request: Request) -> StreamingResponse:
-    """SSE stream of real orchestration events. Consumer replays from history
-    using the ``Last-Event-ID`` header (at-least-once, idempotent by event_id).
+    """SSE stream of real orchestration events.
+
+    R5-5.1 changes, all backward compatible at the transport level:
+
+    * ``id:`` carries a durable cursor (``v2:<stream_seq>:<instance>``) when the
+      bus is persisted, and the event_id otherwise. The server accepts **both**
+      formats on reconnect, so an old tab with a stored ``event_id`` still works.
+    * an unknown cursor is no longer replayed from 0 (that silently re-delivered
+      the whole history). It is announced as ``stream.notice`` and live-only
+      streaming resumes from the current tip.
+    * an expired cursor (older than the retention window) replays everything
+      retained and announces ``cursor-expired``.
+    * a failed durable write is announced as ``persist-degraded``; the stream
+      keeps flowing but never claims that part of it can be replayed.
+
+    ``stream.notice`` is a transport control event with a JSON body. It is not a
+    C05 ``RunEvent``: the event contract is untouched, and clients that do not
+    know the event name simply ignore it.
+
+    A sequence gap (queue overflow for this subscriber, or events the server has
+    no history for) is announced with an SSE **comment** frame
+    ``: gap from=<a> to=<b> dropped=<n>`` (unchanged, for existing clients) plus
+    a ``stream.notice{code:"gap"}`` frame for the UI.
 
     The generator MUST be async: ``request.is_disconnected()`` is a coroutine.
     Calling it from a sync generator returns a (always truthy) coroutine object,
     which terminated the stream right after replay and left live events
-    undelivered (found by R5-4.9 audit; the old test only asserted headers).
-
-    A sequence gap (queue overflow for this subscriber, or events the server has
-    no history for) is announced with an SSE **comment** frame
-    ``: gap from=<a> to=<b> dropped=<n>``, where ``dropped`` counts the missing
-    sequences this subscriber's queue actually recorded as dropped (0 means the
-    loss did not come from this queue — e.g. history lost on restart). Comments
-    are ignored by every spec-compliant client, so no `RunEvent` field and no
-    event type is added (C05 stays intact); a debugging client can still surface
-    the loss.
-
-    Two detection paths, one signal:
-
-    * a delivered event whose sequence jumps ahead of the cursor (something was
-      lost in between);
-    * an idle poll where the subscriber queue *recorded* dropping sequences.
-      Without this, a loss that happens after the last delivered event would
-      stay invisible until — if ever — the next event is published.
+    undelivered (found by R5-4.9 audit).
     """
 
     orch = _orchestrator(request)
     last_id = request.headers.get("last-event-id", "")
-    after_seq = 0
-    if last_id:
-        for e in orch.bus.history():
-            if e.event_id == last_id:
-                after_seq = e.sequence
-                break
-        else:
-            # Unknown/expired cursor: the old behaviour was to fall back to 0 and
-            # replay the whole (in-process) history. Keep that at-least-once
-            # behaviour, but say so — silence here is what made a restart look
-            # like "the stream is fine".
-            logger.warning("sse_unknown_cursor: %s; replaying from sequence 0", last_id)
+    resolution = orch.bus.resolve_cursor(last_id)
+    after_seq = resolution.after
+    if not resolution.ok:
+        # Loud on purpose: the old code logged at warning level and then quietly
+        # replayed everything, which made a restart look like a healthy stream.
+        logger.warning(
+            "sse_cursor_%s: token=%s after=%d latest=%d watermark=%d detail=%s",
+            resolution.kind,
+            last_id,
+            resolution.after,
+            resolution.latest,
+            resolution.pruned_through,
+            resolution.detail,
+        )
 
     async def generate() -> AsyncIterator[str]:
         # Subscribe INSIDE the generator: if the client is gone before the body
@@ -177,19 +202,57 @@ def event_stream(request: Request) -> StreamingResponse:
         q = orch.bus.subscribe(maxsize=_SSE_QUEUE_MAXSIZE)
         last_seq = after_seq
         try:
-            # Replay missed events first (at-least-once), then continue live.
-            for event in orch.bus.history(last_seq):
-                last_seq = event.sequence
-                yield _sse(event)
+            # Only a *doubtful* cursor is announced. A normal resume must not add
+            # frames: an unchanged client would otherwise see noise on every
+            # reconnect, and replay determinism would depend on the header.
+            if resolution.kind in ("unknown", "expired"):
+                yield _sse_notice(
+                    "cursor-" + resolution.kind,
+                    {
+                        "requested": last_id,
+                        "resume_after": resolution.after,
+                        "latest": resolution.latest,
+                        "oldest_retained": resolution.oldest,
+                        "pruned_through": resolution.pruned_through,
+                        "detail": resolution.detail,
+                    },
+                )
+
+            # Replay in bounded batches: a 20k-event history must not be read
+            # into memory in one query, and other clients must not wait for it.
+            target = orch.bus.latest_sequence()
+            while True:
+                batch, position = orch.bus.replay_page(last_seq, _SSE_REPLAY_BATCH)
+                if position <= last_seq:
+                    # Defensive: a page that does not advance the cursor would
+                    # spin here and block the event loop (this happened when an
+                    # event's own sequence was used instead of its position).
+                    logger.error(
+                        "sse_replay_no_progress: after=%d position=%d batch=%d",
+                        last_seq,
+                        position,
+                        len(batch),
+                    )
+                    break
+                for event in batch:
+                    yield _sse(event, orch.bus.cursor_token(event))
+                last_seq = position
+                if last_seq >= target:
+                    break
 
             last_emit = time.monotonic()
             # Highest sequence already announced as missing. Kept separate from
             # `last_seq` (highest sequence actually delivered): a sequence may be
             # legitimately absent without ever being delivered.
             announced_seq = last_seq
+            announced_epoch = -1
             while True:
                 if await request.is_disconnected():
                     break
+                durability = orch.bus.persistence_snapshot()
+                if durability["mode"] == "degraded" and durability["epoch"] != announced_epoch:
+                    announced_epoch = int(durability["epoch"])
+                    yield _sse_notice("persist-degraded", durability)
                 try:
                     event = q.get_nowait()
                 except queue.Empty:
@@ -211,6 +274,18 @@ def event_stream(request: Request) -> StreamingResponse:
                             orch.bus.dropped_total,
                         )
                         yield _sse_gap(gap_start, gap_end, covered)
+                        yield _sse_notice(
+                            "gap",
+                            {
+                                "from": gap_start,
+                                "to": gap_end,
+                                "missing": gap_end - gap_start + 1,
+                                "queue_dropped": q.dropped,
+                                "covered_by_queue_drops": covered,
+                                "reason": "queue_overflow",
+                                "recoverable": True,
+                            },
+                        )
                         continue
                     if time.monotonic() - last_emit >= _SSE_KEEPALIVE_S:
                         yield ": keep-alive\n\n"
@@ -242,18 +317,38 @@ def event_stream(request: Request) -> StreamingResponse:
                             orch.bus.dropped_total,
                         )
                         yield _sse_gap(gap_start, gap_end, covered)
+                        yield _sse_notice(
+                            "gap",
+                            {
+                                "from": gap_start,
+                                "to": gap_end,
+                                "missing": gap_end - gap_start + 1,
+                                "queue_dropped": q.dropped,
+                                "covered_by_queue_drops": covered,
+                                "reason": "sequence_jump",
+                                "recoverable": True,
+                            },
+                        )
                 last_seq = event.sequence
                 last_emit = time.monotonic()
-                yield _sse(event)
+                yield _sse(event, orch.bus.cursor_token(event))
         finally:
             orch.bus.unsubscribe(q)
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
 
-def _sse(event: RunEvent) -> str:
+def _sse(event: RunEvent, cursor: str | None = None) -> str:
     payload = json.dumps(event.to_dict(), ensure_ascii=False)
-    return f"id: {event.event_id}\nevent: {event.event_type}\ndata: {payload}\n\n"
+    # The cursor is opaque to clients; it is what they hand back in
+    # Last-Event-ID. Falling back to the event_id keeps memory-mode identical.
+    return f"id: {cursor or event.event_id}\nevent: {event.event_type}\ndata: {payload}\n\n"
+
+
+def _sse_notice(code: str, data: dict[str, Any]) -> str:
+    """Transport-level control frame (NOT a C05 event)."""
+    payload = json.dumps({"code": code, **data}, ensure_ascii=False, default=str)
+    return f"event: stream.notice\ndata: {payload}\n\n"
 
 
 def _sse_gap(start: int, end: int, dropped: int) -> str:
@@ -291,13 +386,39 @@ def register_workbench(
     trace_dir: Path | None = None,
     data_provider: Any | None = None,
     graph: Any | None = None,
+    event_persistence: bool = True,
+    workspace_id: str = "ws-default",
+    event_retention_events: int = 20000,
 ) -> Orchestrator:
-    """Wire the orchestrator into an app and include the router."""
+    """Wire the orchestrator into an app and include the router.
+
+    ``event_persistence`` (R5-5.1) attaches the durable event store so the SSE
+    history survives a restart and ``Last-Event-ID`` can be resumed. Passing
+    ``False`` keeps the pre-R5-5.1 in-memory stream, which the tests rely on.
+    """
+    import uuid
+
+    from packages.evidence.events import EventStore, create_event_tables
+    from packages.evidence.run_events import RunEventRecorder
     from packages.execution.tasks import create_task_tables
 
     create_task_tables(app.state.engine)
     locators_path = case_dir / "locators.json"
     locators = LocatorRegistry.from_file(locators_path) if locators_path.exists() else None
+    bus = None
+    if event_persistence:
+        create_event_tables(app.state.engine)
+        recorder = RunEventRecorder(
+            EventStore(session_factory),
+            producer_instance_id=f"bus-{uuid.uuid4().hex[:12]}",
+            workspace_id=workspace_id,
+            retention_events=event_retention_events,
+        )
+        bus = EventBus(recorder)
+        logger.info(
+            "event_persistence_enabled",
+            extra={"extra_fields": dict(bus.startup_report)},
+        )
     orch = Orchestrator(
         session_factory=session_factory,
         case_dir=case_dir,
@@ -308,6 +429,7 @@ def register_workbench(
         trace_dir=trace_dir,
         data_provider=data_provider,
         graph=graph,
+        bus=bus,
     )
     app.state.orchestrator = orch
     app.state.case_dir = case_dir

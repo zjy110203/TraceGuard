@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref } from 'vue'
-import { api, subscribeEventsSafe } from '../api/client'
+import { api, subscribeEventStream, type StreamNotice, type StreamState } from '../api/client'
 import { useAsync } from '../composables/useAsync'
 import StateBlock from '../components/StateBlock.vue'
 import Pagination from '../components/Pagination.vue'
@@ -10,7 +10,32 @@ import type { EventRow } from '../api/types'
 const source = ref<'orchestration' | 'evidence'>('orchestration')
 const live = ref(false)
 const sseOpen = ref(false)
+const streamState = ref<StreamState>('closed')
+const reconnects = ref(0)
+const notices = ref<StreamNotice[]>([])
 const liveRows = ref<EventRow[]>([])
+
+const STATE_TEXT: Record<StreamState, string> = {
+  connecting: '连接中…',
+  live: '已连接（实时）',
+  reconnecting: '连接已断开，自动重连中',
+  closed: '已关闭',
+}
+
+function noticeText(notice: StreamNotice): string {
+  switch (notice.code) {
+    case 'cursor-unknown':
+      return `游标无法识别（${notice.detail ?? '服务端不认识这个 Last-Event-ID'}）；为避免重复投递，未回放历史`
+    case 'cursor-expired':
+      return `游标已过期（保留水位 ${notice.pruned_through ?? '—'}）；已回放仍保留的历史`
+    case 'gap':
+      return `历史缺口 ${notice.from ?? '?'}→${notice.to ?? '?'}（缺 ${notice.missing ?? '?'} 条，队列溢出）`
+    case 'persist-degraded':
+      return `事件写入失败，当前流不可回溯：${notice.last_error ?? notice.detail ?? '未知原因'}`
+    default:
+      return notice.code + (notice.detail ? `：${notice.detail}` : '')
+  }
+}
 
 const orchestration = useAsync(() => api.events())
 const evidence = useAsync(() => api.evidenceEvents({ limit: 200 }))
@@ -37,14 +62,20 @@ function toggleLive(): void {
     return
   }
   live.value = true
-  unsubscribe = subscribeEventsSafe(
-    (event) => {
+  notices.value = []
+  unsubscribe = subscribeEventStream({
+    onEvent: (event) => {
       liveRows.value = [event, ...liveRows.value].slice(0, 50)
     },
-    (open) => {
-      sseOpen.value = open
+    onState: (state, info) => {
+      streamState.value = state
+      reconnects.value = info.reconnects
+      sseOpen.value = state === 'live'
     },
-  )
+    onNotice: (notice) => {
+      notices.value = [notice, ...notices.value].slice(0, 10)
+    },
+  })
 }
 onUnmounted(() => unsubscribe?.())
 
@@ -67,7 +98,7 @@ function refresh(): void {
   <section class="page">
     <PageHeader
       title="Event"
-      subtitle="编排事件来自内存总线（重启即清空）；证据事件来自持久化 Event Store。SSE 仅作实时提示，权威状态以表格数据为准。"
+      subtitle="编排事件已持久化（R5-5.1：重启后可回放，Last-Event-ID 可续接）；证据事件来自 Event Store。SSE 仅作实时提示，权威状态以表格数据为准。"
     >
       <label class="inline-label">
         <span class="sr-only">数据源</span>
@@ -84,7 +115,7 @@ function refresh(): void {
         :title="source === 'evidence' ? '实时流只覆盖编排事件' : undefined"
         @click="toggleLive"
       >
-        {{ live ? (sseOpen ? '停止实时' : '实时（重连中）') : '实时订阅' }}
+        {{ live ? '停止实时' : '实时订阅' }}
       </button>
       <button class="btn" type="button" @click="refresh">刷新</button>
     </PageHeader>
@@ -93,9 +124,15 @@ function refresh(): void {
       <h2>
         实时帧（{{ liveRows.length }}）
         <span class="small" :class="sseOpen ? 'notice-text' : 'error-text'">
-          {{ sseOpen ? '· 已连接' : '· 连接已断开，自动重连中' }}
+          · {{ STATE_TEXT[streamState] }}
+          <template v-if="reconnects">（已重连 {{ reconnects }} 次）</template>
         </span>
       </h2>
+      <ul v-if="notices.length" class="plain small notices">
+        <li v-for="(n, i) in notices" :key="`${n.code}-${i}`" class="notice-text">
+          {{ noticeText(n) }}
+        </li>
+      </ul>
       <p v-if="!liveRows.length" class="muted small">等待新事件…</p>
       <ul v-else class="plain mono small">
         <li v-for="(e, i) in liveRows" :key="`${e.event_id}-${i}`">
@@ -179,5 +216,9 @@ function refresh(): void {
   padding-left: 16px;
   max-height: 180px;
   overflow: auto;
+}
+.notices {
+  margin-bottom: 10px;
+  padding-left: 18px;
 }
 </style>

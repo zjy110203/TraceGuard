@@ -231,36 +231,81 @@ export const api = {
 }
 
 // SSE: real orchestration events, replayed from Last-Event-ID by the server.
-// The safe wrapper reports connection state so the UI can distinguish "live"
-// from "reconnecting/disconnected" instead of pretending the stream is up.
-export function subscribeEvents(onEvent: (row: EventRow) => void): () => void {
+//
+// R5-5.1: the server also sends transport-level ``stream.notice`` frames
+// (cursor-unknown / cursor-expired / gap / persist-degraded). They are NOT
+// run events, so they get their own handler and never enter the event list.
+
+export type StreamState = 'connecting' | 'live' | 'reconnecting' | 'closed'
+
+export interface StreamNotice {
+  code: string
+  detail?: string
+  latest?: number
+  oldest_retained?: number | null
+  pruned_through?: number
+  from?: number
+  to?: number
+  missing?: number
+  [key: string]: unknown
+}
+
+export interface StreamHandlers {
+  onEvent: (row: EventRow) => void
+  onState?: (state: StreamState, info: { reconnects: number }) => void
+  onNotice?: (notice: StreamNotice) => void
+}
+
+export function subscribeEventStream(handlers: StreamHandlers): () => void {
+  let reconnects = 0
+  let opened = false
+  let closed = false
   const source = new EventSource(`${BASE}/events/stream`)
-  const handler = (ev: MessageEvent) => {
+  handlers.onState?.('connecting', { reconnects })
+
+  source.onopen = () => {
+    opened = true
+    handlers.onState?.('live', { reconnects })
+  }
+  source.onerror = () => {
+    if (closed) return
+    // EventSource reconnects by itself; report it instead of pretending the
+    // stream is up (the old wrapper flipped a boolean and lost the count).
+    if (opened) reconnects += 1
+    handlers.onState?.('reconnecting', { reconnects })
+  }
+  source.onmessage = (ev: MessageEvent) => {
     try {
-      onEvent(JSON.parse(ev.data) as EventRow)
+      handlers.onEvent(JSON.parse(ev.data) as EventRow)
     } catch {
       /* ignore malformed frame */
     }
   }
-  source.onmessage = handler
-  return () => source.close()
+  source.addEventListener('stream.notice', (ev: MessageEvent) => {
+    try {
+      handlers.onNotice?.(JSON.parse((ev as MessageEvent).data) as StreamNotice)
+    } catch {
+      /* ignore malformed notice */
+    }
+  })
+  return () => {
+    closed = true
+    source.close()
+    handlers.onState?.('closed', { reconnects })
+  }
 }
 
+export function subscribeEvents(onEvent: (row: EventRow) => void): () => void {
+  return subscribeEventStream({ onEvent })
+}
+
+// Kept for existing call sites: maps the richer state back to "is it open".
 export function subscribeEventsSafe(
   onEvent: (row: EventRow) => void,
   onState: (open: boolean) => void,
 ): () => void {
-  const source = new EventSource(`${BASE}/events/stream`)
-  const handler = (ev: MessageEvent) => {
-    onState(true)
-    try {
-      onEvent(JSON.parse(ev.data) as EventRow)
-    } catch {
-      /* ignore malformed frame */
-    }
-  }
-  source.onopen = () => onState(true)
-  source.onerror = () => onState(false)
-  source.onmessage = handler
-  return () => source.close()
+  return subscribeEventStream({
+    onEvent,
+    onState: (state) => onState(state === 'live' || state === 'connecting'),
+  })
 }

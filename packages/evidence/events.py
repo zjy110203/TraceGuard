@@ -32,6 +32,8 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     create_engine,
+    delete,
+    func,
     select,
 )
 from sqlalchemy.engine import Engine
@@ -118,6 +120,34 @@ class ProducerInstance(EventBase):
     last_sequence: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
 
+class StreamCursorRow(EventBase):
+    """Durable, database-ordered position of one event in the stream.
+
+    R5-5.1: ``EventRow.observed_at`` is a wall-clock string — two events in the
+    same millisecond tie, and a clock adjustment can move it backwards, so it
+    cannot be the ordering key for replay. This table is written in the same
+    transaction as the event and gets its number from the database, which makes
+    the order authoritative without inventing a second event store.
+
+    It is a **cursor index over EventRow**, not a parallel store: every field
+    that describes the event still lives in ``ev_event``.
+    """
+
+    __tablename__ = "ev_stream_cursor"
+
+    stream_seq: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    event_id: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+
+
+class StreamStateRow(EventBase):
+    """Singleton row holding the retention watermark (``pruned_through``)."""
+
+    __tablename__ = "ev_stream_state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    pruned_through: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
 @dataclass(frozen=True)
 class InboxResult:
     """Outcome of a consumer processing one event."""
@@ -198,20 +228,8 @@ class EventStore:
         key = idempotency_key or f"{producer_instance_id}:{sequence}"
         blob = payload or {}
         with self._sessions() as s:
-            existing = s.scalar(select(EventRow).where(EventRow.idempotency_key == key))
+            existing = self._conflict_or_existing(s, key=key, event_type=event_type, blob=blob)
             if existing is not None:
-                if existing.payload != blob or existing.event_type != event_type:
-                    s.add(
-                        AuditRow(
-                            action="IDEMPOTENCY_CONFLICT",
-                            detail=f"key={key} event_type={event_type}",
-                        )
-                    )
-                    s.commit()
-                    raise ConflictError(
-                        "idempotency_key reused with different payload/event_type",
-                        details={"idempotency_key": key},
-                    )
                 return existing.to_dict()  # duplicate delivery: no new row
             row = EventRow(
                 event_id=event_id,
@@ -230,6 +248,103 @@ class EventStore:
             s.add(row)
             s.commit()
             return row.to_dict()
+
+    def _conflict_or_existing(
+        self, s: Session, *, key: str, event_type: str, blob: dict[str, Any]
+    ) -> EventRow | None:
+        """Return the already-stored row for ``key``, or raise on a real conflict."""
+        existing = s.scalar(select(EventRow).where(EventRow.idempotency_key == key))
+        if existing is None:
+            return None
+        if existing.payload != blob or existing.event_type != event_type:
+            s.add(
+                AuditRow(
+                    action="IDEMPOTENCY_CONFLICT",
+                    detail=f"key={key} event_type={event_type}",
+                )
+            )
+            s.commit()
+            raise ConflictError(
+                "idempotency_key reused with different payload/event_type",
+                details={"idempotency_key": key},
+            )
+        return existing
+
+    def append_stream(
+        self,
+        *,
+        event_id: str,
+        event_type: str,
+        workspace_id: str,
+        producer_id: str,
+        producer_instance_id: str,
+        context_refs: dict[str, Any] | None = None,
+        payload: dict[str, Any] | None = None,
+        occurred_at: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> tuple[dict[str, Any], int]:
+        """Append with a durable stream position, allocated in the same transaction.
+
+        ``sequence`` is NOT passed in: it becomes the database-assigned
+        ``stream_seq`` so the wire sequence a client saw and the row on disk can
+        never disagree, and a process restart continues the same global order
+        instead of restarting at 1.
+
+        Idempotency: the caller supplies ``idempotency_key`` (the run-event
+        recorder uses the event_id). Re-appending the same key returns the
+        existing row and its stream position — no second row, no third position.
+        """
+        refs = dict(context_refs or {})
+        refs["workspace_id"] = workspace_id
+        now = _now()
+        key = idempotency_key or f"{producer_instance_id}:{event_id}"
+        blob = payload or {}
+        with self._sessions() as s:
+            existing = self._conflict_or_existing(s, key=key, event_type=event_type, blob=blob)
+            if existing is not None:
+                position = s.scalar(
+                    select(StreamCursorRow.stream_seq).where(
+                        StreamCursorRow.event_id == existing.event_id
+                    )
+                )
+                if position is None:
+                    # A pre-R5-5.1 row: give it a position instead of silently
+                    # returning "no cursor" (which would look like loss).
+                    cursor = StreamCursorRow(event_id=existing.event_id)
+                    s.add(cursor)
+                    s.flush()
+                    position = int(cursor.stream_seq)
+                    s.commit()
+                return existing.to_dict(), int(position)
+            cursor = StreamCursorRow(event_id=event_id)
+            s.add(cursor)
+            s.flush()  # assigns stream_seq from the database counter
+            row = EventRow(
+                event_id=event_id,
+                event_type=event_type,
+                workspace_id=workspace_id,
+                context_refs=refs,
+                producer_id=producer_id,
+                producer_instance_id=producer_instance_id,
+                sequence=int(cursor.stream_seq),
+                occurred_at=occurred_at or now,
+                observed_at=now,
+                idempotency_key=key,
+                payload=blob,
+                published=0,
+            )
+            s.add(row)
+            s.flush()
+            self._sync_producer_sequence(s, producer_instance_id, int(cursor.stream_seq))
+            s.commit()
+            return row.to_dict(), int(cursor.stream_seq)
+
+    @staticmethod
+    def _sync_producer_sequence(s: Session, instance_id: str, sequence: int) -> None:
+        """Keep the per-instance high-water mark truthful (diagnostics only)."""
+        instance = s.get(ProducerInstance, instance_id)
+        if instance is not None and instance.last_sequence < sequence:
+            instance.last_sequence = sequence
 
     def query(
         self,
@@ -268,6 +383,133 @@ class EventStore:
             return [
                 {"action": r.action, "detail": r.detail, "recorded_at": r.recorded_at} for r in rows
             ]
+
+    # ------------------------------------------------------------------ stream
+    # R5-5.1: durable ordering / replay / retention. These read and write the
+    # same EventRow rows — the cursor table only supplies an order.
+
+    def latest_stream_seq(self) -> int:
+        with self._sessions() as s:
+            value = s.scalar(select(func.max(StreamCursorRow.stream_seq)))
+            return int(value or 0)
+
+    def oldest_stream_seq(self) -> int | None:
+        with self._sessions() as s:
+            value = s.scalar(select(func.min(StreamCursorRow.stream_seq)))
+            return None if value is None else int(value)
+
+    def stream_position(self, event_id: str) -> int | None:
+        with self._sessions() as s:
+            value = s.scalar(
+                select(StreamCursorRow.stream_seq).where(StreamCursorRow.event_id == event_id)
+            )
+            return None if value is None else int(value)
+
+    def pruned_through(self) -> int:
+        with self._sessions() as s:
+            state = s.get(StreamStateRow, 1)
+            return int(state.pruned_through) if state is not None else 0
+
+    def replay_stream(
+        self, after: int, limit: int = 500, *, producer_id: str | None = None
+    ) -> list[tuple[int, dict[str, Any]]]:
+        """Events with ``stream_seq > after`` in durable order (oldest first).
+
+        ``producer_id`` narrows the replay to one producer's stream. The run-event
+        stream must do this: the event table is shared with the evidence plane
+        (``chain_api`` writes evidence events with their own per-run sequence),
+        and replaying those as run events both mixes two sequence spaces and
+        makes "advance by sequence" ambiguous.
+        """
+        if limit <= 0:
+            return []
+        with self._sessions() as s:
+            stmt = (
+                select(StreamCursorRow.stream_seq, EventRow)
+                .join(EventRow, EventRow.event_id == StreamCursorRow.event_id)
+                .where(StreamCursorRow.stream_seq > after)
+                .order_by(StreamCursorRow.stream_seq)
+                .limit(limit)
+            )
+            if producer_id is not None:
+                stmt = stmt.where(EventRow.producer_id == producer_id)
+            rows = s.execute(stmt).all()
+            return [(int(seq), row.to_dict()) for seq, row in rows]
+
+    def backfill_stream_cursors(self) -> int:
+        """Give pre-R5-5.1 rows a position. Migration, not a silent skip.
+
+        Ordering uses ``(observed_at, sequence, event_id)`` only here: legacy rows
+        have no better information, and the result is written once so replay is
+        stable afterwards. The count is returned so the caller can log it.
+        """
+        with self._sessions() as s:
+            rows = (
+                s.execute(
+                    select(EventRow)
+                    .outerjoin(StreamCursorRow, StreamCursorRow.event_id == EventRow.event_id)
+                    .where(StreamCursorRow.event_id.is_(None))
+                    .order_by(EventRow.observed_at, EventRow.sequence, EventRow.event_id)
+                )
+                .scalars()
+                .all()
+            )
+            for row in rows:
+                s.add(StreamCursorRow(event_id=row.event_id))
+            s.commit()
+            return len(rows)
+
+    def prune_stream(self, keep_last: int) -> dict[str, int]:
+        """Drop events older than the retention window; keep the watermark.
+
+        Only ``ev_event`` copies and their cursor rows are removed. Run rows,
+        evidence, graph nodes and the audit log are never touched — a pruned
+        event means "this old stream copy is gone", not "the run never happened".
+        """
+        if keep_last < 0:
+            raise ValueError(f"keep_last must be >= 0, got {keep_last}")
+        latest = self.latest_stream_seq()
+        cutoff = latest - keep_last
+        if cutoff <= 0:
+            return {"pruned": 0, "cutoff": 0, "latest": latest}
+        pruned = 0
+        with self._sessions() as s:
+            state = s.get(StreamStateRow, 1)
+            if state is not None and int(state.pruned_through) >= cutoff:
+                return {"pruned": 0, "cutoff": cutoff, "latest": latest}
+            while True:
+                event_ids = list(
+                    s.scalars(
+                        select(StreamCursorRow.event_id)
+                        .where(StreamCursorRow.stream_seq <= cutoff)
+                        .limit(500)
+                    ).all()
+                )
+                if not event_ids:
+                    break
+                s.execute(delete(EventRow).where(EventRow.event_id.in_(event_ids)))
+                s.execute(delete(StreamCursorRow).where(StreamCursorRow.event_id.in_(event_ids)))
+                s.commit()
+                pruned += len(event_ids)
+            if state is None:
+                s.add(StreamStateRow(id=1, pruned_through=cutoff))
+            else:
+                state.pruned_through = max(int(state.pruned_through), cutoff)
+            s.commit()
+        return {"pruned": pruned, "cutoff": cutoff, "latest": latest}
+
+    def stream_stats(self) -> dict[str, Any]:
+        with self._sessions() as s:
+            retained = int(s.scalar(select(func.count()).select_from(StreamCursorRow)) or 0)
+            latest = int(s.scalar(select(func.max(StreamCursorRow.stream_seq))) or 0)
+            oldest = s.scalar(select(func.min(StreamCursorRow.stream_seq)))
+            state = s.get(StreamStateRow, 1)
+        return {
+            "retained": retained,
+            "latest": latest,
+            "oldest": None if oldest is None else int(oldest),
+            "pruned_through": int(state.pruned_through) if state is not None else 0,
+        }
 
 
 class Outbox:

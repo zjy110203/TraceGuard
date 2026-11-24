@@ -178,6 +178,24 @@ export interface RunReport {
   evidence: Record<string, unknown>[]
   events: Record<string, unknown>[]
   aborted_reason: string
+  // R5-4.10/R5-5.1: resource teardown is reported separately from the business
+  // verdict. A failed browser close must never colour the test result.
+  cleanup?: CleanupStatus
+}
+
+export interface CleanupStatus {
+  browser_closed?: boolean
+  trace_stopped?: boolean
+  playwright_stopped?: boolean
+  page_crashed?: boolean
+  cancelled?: boolean
+  browser_close_error?: string
+  trace_stop_error?: string
+  playwright_stop_error?: string
+  page_crash_detail?: string
+  evidence_errors?: string[]
+  is_clean?: boolean
+  problems?: string[]
 }
 
 export interface RunDetail extends RunRow {
