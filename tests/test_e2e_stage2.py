@@ -14,7 +14,6 @@ Three scenarios exercise the key diagnostic property:
 
 from __future__ import annotations
 
-import socket
 import threading
 import time
 from collections.abc import Generator
@@ -33,30 +32,26 @@ from packages.execution.models import (
 )
 from packages.execution.runner import LocalRunner
 from packages.execution.verdict import OracleVerdict
+from tests.netutil import release_reserved, reserve_port, take_reserved
 
 for _model in (TestCaseVersion, TestIntent, TestStep):
     _model.__test__ = False
 
-BASE = "http://127.0.0.1:8031"  # rebound to a free port by the fixture below
+BASE = ""  # set by the fixture below to the reserved port's URL
 EVAL_H = {"X-Eval-Token": "local-dev-eval-token-change-me"}
-
-
-def _free_port() -> int:
-    """Ask the OS for an unused loopback port (avoids hardcoded-port clashes)."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
 
 
 @pytest.fixture(scope="module")
 def teamflow_server(tmp_path_factory: pytest.TempPathFactory) -> Generator[None, None, None]:
-    """Start TeamFlow on a free port against an isolated temp DB.
+    """Start TeamFlow on a reserved port against an isolated temp DB.
 
     The app is built explicitly here. It deliberately does NOT reuse the
     module-level ``apps.teamflow.main.app`` that conftest's import creates,
     because that instance is bound to the production ``data/traceguard.db``.
-    Building our own keeps this E2E off real data, and the server is stopped in
-    ``finally`` so a failed health check can never leave the port wedged.
+    Building our own keeps this E2E off real data. The listening socket is
+    reserved before the thread starts and handed to uvicorn, so the port cannot
+    be stolen between allocation and bind; the server is stopped in ``finally``
+    and the reservation released even if the health check fails.
     """
     global BASE
 
@@ -72,43 +67,31 @@ def teamflow_server(tmp_path_factory: pytest.TempPathFactory) -> Generator[None,
         eval_control_token="local-dev-eval-token-change-me",
     )
     app = build_app(settings)
-    # A free port is only free until we bind it, and the full suite starts other
-    # servers on random ports concurrently. Three attempts turn that race from a
-    # spurious fixture error into a retry; the real failure detail is kept so a
-    # genuine startup problem is still visible.
-    server: uvicorn.Server | None = None
-    thread: threading.Thread | None = None
-    healthy = False
+    port = reserve_port()
+    BASE = f"http://127.0.0.1:{port}"
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    server = uvicorn.Server(config)
+    thread = threading.Thread(
+        target=server.run, kwargs={"sockets": take_reserved(port)}, daemon=True
+    )
+    thread.start()
     last_error = "no HTTP response"
-    for _attempt in range(3):
-        port = _free_port()
-        BASE = f"http://127.0.0.1:{port}"
-        config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
-        server = uvicorn.Server(config)
-        thread = threading.Thread(target=server.run, daemon=True)
-        thread.start()
+    try:
         for _ in range(60):
             try:
                 if httpx.get(f"{BASE}/health", timeout=1, trust_env=False).status_code == 200:
-                    healthy = True
                     break
             except httpx.HTTPError as exc:
                 last_error = f"{type(exc).__name__}: {exc}"
             time.sleep(0.2)
-        if healthy:
-            break
-        server.should_exit = True
-        thread.join(timeout=10)
-
-    if not healthy:
-        pytest.fail(f"TeamFlow server did not become healthy after 3 ports ({last_error})")
-    try:
+        else:
+            pytest.fail(f"TeamFlow server did not become healthy ({last_error})")
         yield
     finally:
-        if server is not None:
-            server.should_exit = True
-        if thread is not None:
-            thread.join(timeout=10)
+        server.should_exit = True
+        thread.join(timeout=15)
+        assert not thread.is_alive(), "server thread did not stop"
+        release_reserved(port)
 
 
 def _case(name: str = "E2E Proj") -> TestCaseVersion:

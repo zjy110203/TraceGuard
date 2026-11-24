@@ -14,7 +14,6 @@ fault state for the negative scenario and to assert persistence afterwards.)
 
 from __future__ import annotations
 
-import socket
 import tempfile
 import threading
 import time
@@ -29,15 +28,10 @@ from playwright.sync_api import Page, sync_playwright
 from apps.api.main import build_app
 from packages.core.config import Settings
 from packages.execution.browser import browser_channel
+from tests.netutil import release_reserved, reserve_port, take_reserved
 
 ROOT = Path(__file__).resolve().parents[2]
 DIST = ROOT / "apps" / "web" / "dist"
-
-
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return int(s.getsockname()[1])
 
 
 def _wait_healthy(base: str, timeout_s: float = 30) -> None:
@@ -53,20 +47,26 @@ def _wait_healthy(base: str, timeout_s: float = 30) -> None:
 
 @pytest.fixture(scope="module")
 def teamflow() -> Iterator[str]:
-    port = _free_port()
+    port = reserve_port()
     db = Path(tempfile.mkdtemp(prefix="tg_journey_tf_")) / "teamflow.db"
     config = uvicorn.Config(
         "apps.teamflow.main:app", host="127.0.0.1", port=port, log_level="warning"
     )
     server = uvicorn.Server(config)
-    thread = threading.Thread(target=server.run, daemon=True)
+    thread = threading.Thread(
+        target=server.run, kwargs={"sockets": take_reserved(port)}, daemon=True
+    )
     thread.start()
     base = f"http://127.0.0.1:{port}"
-    _wait_healthy(base)
-    yield base
-    server.should_exit = True
-    thread.join(timeout=10)
-    db.unlink(missing_ok=True)
+    try:
+        _wait_healthy(base)
+        yield base
+    finally:
+        server.should_exit = True
+        thread.join(timeout=15)
+        assert not thread.is_alive(), "server thread did not stop"
+        release_reserved(port)
+        db.unlink(missing_ok=True)
 
 
 @pytest.fixture(scope="module")
@@ -87,16 +87,22 @@ def platform(teamflow: str, tmp_path_factory: pytest.TempPathFactory) -> Iterato
         teamflow_port=int(teamflow.rsplit(":", 1)[1]),
     )
     app = build_app(settings)
-    port = _free_port()
+    port = reserve_port()
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     server = uvicorn.Server(config)
-    thread = threading.Thread(target=server.run, daemon=True)
+    thread = threading.Thread(
+        target=server.run, kwargs={"sockets": take_reserved(port)}, daemon=True
+    )
     thread.start()
     base = f"http://127.0.0.1:{port}"
-    _wait_healthy(base)
-    yield base
-    server.should_exit = True
-    thread.join(timeout=10)
+    try:
+        _wait_healthy(base)
+        yield base
+    finally:
+        server.should_exit = True
+        thread.join(timeout=15)
+        assert not thread.is_alive(), "server thread did not stop"
+        release_reserved(port)
 
 
 @pytest.fixture(scope="module")

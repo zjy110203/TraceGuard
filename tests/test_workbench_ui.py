@@ -11,7 +11,6 @@ would still pass — so it also asserts that a value only the backend knows
 from __future__ import annotations
 
 import os
-import socket
 import tempfile
 import threading
 import time
@@ -27,15 +26,10 @@ from playwright.sync_api import sync_playwright
 from apps.api.main import build_app
 from packages.core.config import Settings
 from packages.execution.browser import browser_channel
+from tests.netutil import release_reserved, reserve_port, take_reserved
 
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "apps" / "web" / "dist"
-
-
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return int(s.getsockname()[1])
 
 
 @pytest.fixture(scope="module")
@@ -43,7 +37,7 @@ def served() -> Any:
     if not (DIST / "index.html").exists():
         pytest.skip("workbench not built; run `npm run build` in apps/web")
 
-    port = _free_port()
+    port = reserve_port()
     db = os.path.join(tempfile.gettempdir(), f"tg_ui_{uuid.uuid4().hex[:8]}.db")
     settings = Settings(
         app_env="test",
@@ -53,27 +47,32 @@ def served() -> Any:
     app = build_app(settings)
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     server = uvicorn.Server(config)
-    thread = threading.Thread(target=server.run, daemon=True)
+    thread = threading.Thread(
+        target=server.run, kwargs={"sockets": take_reserved(port)}, daemon=True
+    )
     thread.start()
 
     base = f"http://127.0.0.1:{port}"
-    for _ in range(80):
-        try:
-            if httpx.get(f"{base}/health", timeout=1, trust_env=False).status_code == 200:
-                break
-        except httpx.HTTPError:
-            time.sleep(0.1)
-    else:  # pragma: no cover
-        server.should_exit = True
-        raise RuntimeError("api server did not start")
-
-    yield base
-    server.should_exit = True
-    thread.join(timeout=10)
     try:
-        Path(db).unlink(missing_ok=True)
-    except PermissionError:  # Windows keeps the sqlite handle briefly
-        pass
+        for _ in range(80):
+            try:
+                if httpx.get(f"{base}/health", timeout=1, trust_env=False).status_code == 200:
+                    break
+            except httpx.HTTPError:
+                time.sleep(0.1)
+        else:  # pragma: no cover
+            raise RuntimeError("api server did not start")
+
+        yield base
+    finally:
+        server.should_exit = True
+        thread.join(timeout=15)
+        assert not thread.is_alive(), "server thread did not stop"
+        release_reserved(port)
+        try:
+            Path(db).unlink(missing_ok=True)
+        except PermissionError:  # Windows keeps the sqlite handle briefly
+            pass
 
 
 def test_spa_index_is_served(served: str) -> None:

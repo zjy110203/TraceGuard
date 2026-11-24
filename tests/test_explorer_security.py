@@ -37,9 +37,9 @@ from packages.agents.llm import ModelConfig, ScriptedProvider, TracedClient
 from packages.agents.llm_policy import DECISION_SCHEMA, TOOL_ENUM, LLMPolicy
 from packages.core.config import Settings
 from packages.core.errors import ForbiddenError
-from tests.netutil import free_port
+from tests.netutil import release_reserved, reserve_port, take_reserved
 
-TF_PORT = free_port()
+TF_PORT = reserve_port()
 TF_BASE = f"http://127.0.0.1:{TF_PORT}"
 ORIGIN = f"http://127.0.0.1:{TF_PORT}"
 
@@ -58,19 +58,25 @@ def teamflow(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
     server = uvicorn.Server(
         uvicorn.Config(app, host="127.0.0.1", port=TF_PORT, log_level="warning")
     )
-    thread = threading.Thread(target=server.run, daemon=True)
+    thread = threading.Thread(
+        target=server.run, kwargs={"sockets": take_reserved(TF_PORT)}, daemon=True
+    )
     thread.start()
-    for _ in range(60):
-        try:
-            if httpx.get(f"{TF_BASE}/health", timeout=1, trust_env=False).status_code == 200:
-                break
-        except httpx.HTTPError:
-            time.sleep(0.2)
-    else:  # pragma: no cover
-        pytest.fail("TeamFlow did not become healthy")
-    yield TF_BASE
-    server.should_exit = True
-    thread.join(timeout=10)
+    try:
+        for _ in range(60):
+            try:
+                if httpx.get(f"{TF_BASE}/health", timeout=1, trust_env=False).status_code == 200:
+                    break
+            except httpx.HTTPError:
+                time.sleep(0.2)
+        else:  # pragma: no cover
+            pytest.fail("TeamFlow did not become healthy")
+        yield TF_BASE
+    finally:
+        server.should_exit = True
+        thread.join(timeout=15)
+        assert not thread.is_alive(), "server thread did not stop"
+        release_reserved(TF_PORT)
 
 
 # ------------------------------------------------------------ one vocabulary

@@ -33,12 +33,24 @@ from packages.core.errors import ForbiddenError
 from packages.execution.browser import BrowserManager
 from packages.execution.events import EventCollector
 from packages.execution.netpolicy import OriginPolicy
-from tests.netutil import free_port, serve_http
+from tests.netutil import release_reserved, reserve_port, serve_http
 
-# URL-only matrix: nothing is bound to these ports, they just differ.
-POLICY_TARGET_PORT = free_port()
+# URL-only matrix: nothing is bound to these ports, they just must DIFFER.
+# ``free_port()`` closed each socket before the next call, and the OS reuses the
+# most recently freed port first — so both calls could return the same number
+# and the "other origin is refused" cases would silently test the allowed one.
+# Holding both sockets open makes the two origins provably distinct.
+POLICY_TARGET_PORT = reserve_port()
 POLICY_TARGET = f"http://127.0.0.1:{POLICY_TARGET_PORT}"
-POLICY_OTHER = f"http://127.0.0.1:{free_port()}"
+POLICY_OTHER_PORT = reserve_port()
+POLICY_OTHER = f"http://127.0.0.1:{POLICY_OTHER_PORT}"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _release_policy_ports() -> Iterator[None]:
+    yield
+    release_reserved(POLICY_TARGET_PORT)
+    release_reserved(POLICY_OTHER_PORT)
 
 
 class _CountingHandler(http.server.BaseHTTPRequestHandler):

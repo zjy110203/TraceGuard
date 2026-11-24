@@ -16,7 +16,6 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
-import socket
 import threading
 import time
 import uuid
@@ -33,8 +32,13 @@ from packages.evidence.graph import make_in_memory_graph
 from packages.execution.models import load_case
 from packages.execution.pipeline import FullChain
 from packages.execution.repair import DiffEntry, RepairService
+from tests.netutil import release_reserved, reserve_port, take_reserved
 
-TF_PORT = 8037
+# The server is per-test (see below), but the module-level constants are read by
+# the helpers, so they must hold a valid reserved port even before the first
+# fixture runs. The reservation is released on the first fixture entry.
+_BOOTSTRAP_PORT = reserve_port()
+TF_PORT = _BOOTSTRAP_PORT
 TF_BASE = f"http://127.0.0.1:{TF_PORT}"
 EVAL_H = {"X-Eval-Token": "local-dev-eval-token-change-me"}
 CREATE = load_case(Path("benchmark/cases/TC-CREATE-001.json"))
@@ -42,12 +46,6 @@ CREATE_WITH_BANNER = load_case(Path("benchmark/cases/TC-CREATE-002.json"))
 
 # R4-4 isolation evidence: one JSONL entry per test run (db path, worker, port).
 ISOLATION_LOG = Path(".traceguard-tmp/r4/s2-isolation/run-log.jsonl")
-
-
-def _free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
 
 
 def _log_isolation(entry: dict[str, Any]) -> None:
@@ -75,54 +73,61 @@ def teamflow_server(tmp_path: Path) -> str:
     db_path = tmp_path / f"teamflow-{uuid.uuid4().hex[:10]}.db"
     settings = Settings(database_url=f"sqlite:///{db_path.as_posix()}", app_env="test")
     app = build_app(settings)
-    port = _free_port()
+    # Release the module-level placeholder reservation (idempotent: no-op once
+    # consumed) before reserving this test's own port.
+    release_reserved(_BOOTSTRAP_PORT)
+    port = reserve_port()
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
-    t = threading.Thread(target=server.run, daemon=True)
+    t = threading.Thread(target=server.run, kwargs={"sockets": take_reserved(port)}, daemon=True)
     t.start()
     base = f"http://127.0.0.1:{port}"
-    for _ in range(60):
-        try:
-            if httpx.get(f"{base}/health", timeout=1, trust_env=False).status_code == 200:
-                break
-        except httpx.HTTPError:
-            time.sleep(0.2)
-    else:
-        pytest.fail("isolated TeamFlow not healthy")
-    TF_PORT, TF_BASE = port, base
+    try:
+        for _ in range(60):
+            try:
+                if httpx.get(f"{base}/health", timeout=1, trust_env=False).status_code == 200:
+                    break
+            except httpx.HTTPError:
+                time.sleep(0.2)
+        else:
+            pytest.fail("isolated TeamFlow not healthy")
+        TF_PORT, TF_BASE = port, base
 
-    # Seed the six authoritative scenarios into THIS test's eval plane so the
-    # isolated DB has the same GT content the shared DB used to carry.
-    from scripts.seed_scenarios import META, SCENARIOS
+        # Seed the six authoritative scenarios into THIS test's eval plane so the
+        # isolated DB has the same GT content the shared DB used to carry.
+        from scripts.seed_scenarios import META, SCENARIOS
 
-    with app.state.session_factory() as session:
-        for sid, fid, desc, gt in SCENARIOS:
-            meta = dict(META)
-            meta["fault_id"] = fid or "NONE"
-            tf_service.seed_scenario(session, sid, fid, desc, meta, gt)
-            session.commit()
+        with app.state.session_factory() as session:
+            for sid, fid, desc, gt in SCENARIOS:
+                meta = dict(META)
+                meta["fault_id"] = fid or "NONE"
+                tf_service.seed_scenario(session, sid, fid, desc, meta, gt)
+                session.commit()
 
-    _reset()
-    _log_isolation(
-        {
-            "at": datetime.now(UTC).isoformat(),
-            "pid": os.getpid(),
-            "port": port,
-            "db": str(db_path),
-            "fault_config": "none (per-test reset before test body)",
-        }
-    )
-    yield base
-    server.should_exit = True
-    t.join(timeout=10)
-    _log_isolation(
-        {
-            "at": datetime.now(UTC).isoformat(),
-            "pid": os.getpid(),
-            "port": port,
-            "db": str(db_path),
-            "fault_config": "teardown: server stopped, isolated DB retained in tmp",
-        }
-    )
+        _reset()
+        _log_isolation(
+            {
+                "at": datetime.now(UTC).isoformat(),
+                "pid": os.getpid(),
+                "port": port,
+                "db": str(db_path),
+                "fault_config": "none (per-test reset before test body)",
+            }
+        )
+        yield base
+        _log_isolation(
+            {
+                "at": datetime.now(UTC).isoformat(),
+                "pid": os.getpid(),
+                "port": port,
+                "db": str(db_path),
+                "fault_config": "teardown: server stopped, isolated DB retained in tmp",
+            }
+        )
+    finally:
+        server.should_exit = True
+        t.join(timeout=15)
+        assert not t.is_alive(), "server thread did not stop"
+        release_reserved(port)
 
 
 def _reset() -> None:

@@ -49,6 +49,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -65,6 +66,20 @@ sys.path.insert(0, str(ROOT))
 
 TERMINAL_RUN_STATES = frozenset({"COMPLETED", "FAILED", "TIMED_OUT", "CANCELLED"})
 PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
+
+# A subprocess cannot reliably inherit the host's bound socket, so uvicorn in
+# the child binds ``free_port()`` by itself. The number is only free until that
+# bind happens, so retries are allowed — but only when the child's log proves
+# the failure was a port steal (early exit + a bind error), never for a child
+# that is alive yet unhealthy (that is a real bug worth seeing).
+_START_ATTEMPTS = 3
+_LOG_TAIL_CHARS = 4000
+_PORT_CONFLICT_MARKERS = (
+    "address already in use",
+    "errno 98",
+    "errno 10048",
+    "winerror 10048",
+)
 
 
 def _is_windows() -> bool:
@@ -238,28 +253,86 @@ class ProductFlow:
 
     # ------------------------------------------------------------- processes
 
-    def _spawn(self, name: str, argv: list[str], env: dict[str, str], port: int) -> bool:
-        log_path = self.work / f"{name}.log"
-        handle = log_path.open("w", encoding="utf-8")
-        self._logs.append(handle)
-        proc = subprocess.Popen(  # noqa: S603 - argv is internal, no shell
-            argv,
-            cwd=str(ROOT),
-            env=env,
-            stdout=handle,
-            stderr=subprocess.STDOUT,
+    def _spawn(
+        self, name: str, module: str, build_env: Callable[[int], dict[str, str]]
+    ) -> tuple[bool, int, str]:
+        """Start ``module`` under uvicorn; retry only on port-steal evidence.
+
+        Returns ``(healthy, port, detail)``. Each attempt asks the OS for a fresh
+        port and passes it to ``build_env``; a taken port therefore never
+        surfaces as "TeamFlow is broken" — the ports tried and the last log
+        excerpt travel with the failure.
+        """
+        tried: list[int] = []
+        last_log = ""
+        last_conflict = False
+        for attempt in range(1, _START_ATTEMPTS + 1):
+            port = free_port()
+            tried.append(port)
+            argv = [
+                PY,
+                "-m",
+                "uvicorn",
+                module,
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(port),
+                "--log-level",
+                "warning",
+            ]
+            env = build_env(port)
+            # Keep the historical name for a first-attempt success; suffix only
+            # retries so their evidence is not overwritten.
+            log_path = self.work / (f"{name}.log" if attempt == 1 else f"{name}-{attempt}.log")
+            handle = log_path.open("w", encoding="utf-8")
+            proc = subprocess.Popen(  # noqa: S603 - argv is internal, no shell
+                argv,
+                cwd=str(ROOT),
+                env=env,
+                stdout=handle,
+                stderr=subprocess.STDOUT,
+            )
+            deadline = time.monotonic() + 90
+            exited = False
+            healthy = False
+            while time.monotonic() < deadline:
+                if proc.poll() is not None:
+                    exited = True
+                    break
+                if _healthy(f"http://127.0.0.1:{port}/health"):
+                    healthy = True
+                    break
+                time.sleep(0.2)
+            if healthy:
+                self._procs.append((name, proc))
+                self._logs.append(handle)
+                return True, port, ""
+            handle.close()
+            last_log = _log_tail(log_path)
+            last_conflict = _log_shows_port_conflict(last_log)
+            _terminate(proc)
+            if not exited:
+                # Alive but unhealthy: not a port problem, retrying hides a bug.
+                print(
+                    f"[x] {name} stayed alive but never became healthy on port "
+                    f"{port}; see {log_path.name}"
+                )
+                return False, port, last_log[-600:]
+            print(
+                f"[i] {name} exited on port {port} before healthy "
+                f"(port_conflict_evidence={last_conflict}); see {log_path.name}"
+            )
+        kind = "port conflict" if last_conflict else "startup failure (no port-conflict evidence)"
+        print(
+            f"[x] {name}: {kind} after {_START_ATTEMPTS} attempts; ports tried={tried}; "
+            f"last log: {last_log[-_LOG_TAIL_CHARS:]}"
         )
-        self._procs.append((name, proc))
-        deadline = time.monotonic() + 90
-        while time.monotonic() < deadline:
-            if proc.poll() is not None:
-                print(f"[x] {name} exited early (rc={proc.returncode}); see {log_path.name}")
-                return False
-            if _healthy(f"http://127.0.0.1:{port}/health"):
-                return True
-            time.sleep(0.2)
-        print(f"[x] {name} did not become healthy in time; see {log_path.name}")
-        return False
+        return (
+            False,
+            tried[-1] if tried else 0,
+            (f"{kind}; ports tried={tried}; last log: {last_log[-_LOG_TAIL_CHARS:]}"),
+        )
 
     def _stop_all(self) -> None:
         for name, proc in reversed(self._procs):
@@ -283,13 +356,6 @@ class ProductFlow:
             if prod_db.exists()
             else None
         )
-
-        tf_port = free_port()
-        api_port = free_port()
-        tf_base = f"http://127.0.0.1:{tf_port}"
-        base = f"http://127.0.0.1:{api_port}"
-        self.result.teamflow_url = tf_base
-        self.result.base_url = base
 
         # ---- 1. isolation layout ------------------------------------------
         self.begin()
@@ -326,77 +392,56 @@ class ProductFlow:
                 "PYTHONUTF8": "1",
                 "APP_ENV": "test",
                 "TEAMFLOW_HOST": "127.0.0.1",
-                "TEAMFLOW_PORT": str(tf_port),
                 # Both processes read the same values, so the seeded account and
                 # the provider-side credential agree by construction.
                 "TEAMFLOW_TEST_USER": self.username,
                 "TEAMFLOW_TEST_PASSWORD": self.password,
             }
         )
-        tf_env = common | {
-            "DATABASE_URL": f"sqlite:///{teamflow_db.as_posix()}",
-            "TRACEGUARD_DATABASE_URL": f"sqlite:///{teamflow_db.as_posix()}",
-        }
-        api_env = common | {
-            "DATABASE_URL": f"sqlite:///{platform_db.as_posix()}",
-            "TRACEGUARD_DATABASE_URL": f"sqlite:///{platform_db.as_posix()}",
-            "CASE_DIR": str(dirs["cases"]),
-            "CHAIN_DATA_DIR": str(dirs["chains"]),
-            "BLOB_DIR": str(dirs["blobs"]),
-            "CANDIDATE_DATA_DIR": str(dirs["candidates"]),
-            "EXPLORATION_DATA_DIR": str(dirs["explorations"]),
-            "BENCHMARK_DATA_DIR": str(dirs["benchmark"]),
-        }
+
+        def tf_env_for(port: int) -> dict[str, str]:
+            return common | {
+                "TEAMFLOW_PORT": str(port),
+                "DATABASE_URL": f"sqlite:///{teamflow_db.as_posix()}",
+                "TRACEGUARD_DATABASE_URL": f"sqlite:///{teamflow_db.as_posix()}",
+            }
 
         self.begin()
-        tf_up = self._spawn(
-            "teamflow",
-            [
-                PY,
-                "-m",
-                "uvicorn",
-                "apps.teamflow.main:app",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                str(tf_port),
-                "--log-level",
-                "warning",
-            ],
-            tf_env,
-            tf_port,
-        )
+        tf_up, tf_port, tf_detail = self._spawn("teamflow", "apps.teamflow.main:app", tf_env_for)
+        tf_base = f"http://127.0.0.1:{tf_port}"
+        self.result.teamflow_url = tf_base
         self.check(
             "teamflow-isolated-up",
             tf_up and teamflow_db.exists(),
-            f"url={tf_base} db={_rel(teamflow_db)} exists={teamflow_db.exists()}",
+            f"url={tf_base} db={_rel(teamflow_db)} exists={teamflow_db.exists()} "
+            f"{'' if tf_up else tf_detail}",
         )
         if not tf_up:
             self.skip("platform-up", "TeamFlow failed to start")
             return self._finish(prod_fingerprint, prod_db)
 
+        def api_env_for(port: int) -> dict[str, str]:
+            return common | {
+                "TEAMFLOW_PORT": str(tf_port),
+                "DATABASE_URL": f"sqlite:///{platform_db.as_posix()}",
+                "TRACEGUARD_DATABASE_URL": f"sqlite:///{platform_db.as_posix()}",
+                "CASE_DIR": str(dirs["cases"]),
+                "CHAIN_DATA_DIR": str(dirs["chains"]),
+                "BLOB_DIR": str(dirs["blobs"]),
+                "CANDIDATE_DATA_DIR": str(dirs["candidates"]),
+                "EXPLORATION_DATA_DIR": str(dirs["explorations"]),
+                "BENCHMARK_DATA_DIR": str(dirs["benchmark"]),
+            }
+
         self.begin()
-        api_up = self._spawn(
-            "platform",
-            [
-                PY,
-                "-m",
-                "uvicorn",
-                "apps.api.main:app",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                str(api_port),
-                "--log-level",
-                "warning",
-            ],
-            api_env,
-            api_port,
-        )
+        api_up, api_port, api_detail = self._spawn("platform", "apps.api.main:app", api_env_for)
+        base = f"http://127.0.0.1:{api_port}"
+        self.result.base_url = base
         self.check(
             "platform-up",
             api_up,
-            f"url={base} db={_rel(platform_db)} store_dirs=6 cases_dir={_rel(dirs['cases'])}",
+            f"url={base} db={_rel(platform_db)} store_dirs=6 cases_dir={_rel(dirs['cases'])} "
+            f"{'' if api_up else api_detail}",
         )
         if not api_up:
             self.skip("frontend-served", "platform API failed to start")
@@ -1157,6 +1202,32 @@ def _healthy(url: str) -> bool:
     except httpx.HTTPError:
         return False
     return response.status_code == 200
+
+
+def _log_tail(path: Path, limit: int = _LOG_TAIL_CHARS) -> str:
+    """Tail of a child's combined log, so a failure carries its own evidence."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    return text[-limit:].strip()
+
+
+def _log_shows_port_conflict(text: str) -> bool:
+    """True only on real bind-conflict evidence (POSIX errno 98 / Windows 10048)."""
+    lowered = text.lower()
+    return any(marker in lowered for marker in _PORT_CONFLICT_MARKERS)
+
+
+def _terminate(proc: subprocess.Popen[Any]) -> None:
+    """Stop a failed attempt without letting it linger past the retry."""
+    if proc.poll() is None:
+        proc.terminate()
+    try:
+        proc.wait(timeout=20)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=5)
 
 
 def _rel(path: Path) -> str:

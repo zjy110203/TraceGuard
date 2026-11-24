@@ -29,12 +29,12 @@ from packages.agents.exploration import (
 from packages.agents.explorer import Explorer
 from packages.core.errors import ForbiddenError, ValidationError
 from packages.execution.models import TestCaseVersion
-from tests.netutil import free_port
+from tests.netutil import release_reserved, reserve_port, take_reserved
 
 for _m in (ExplorationTrace, CandidateTestCase, TestCaseVersion):
     _m.__test__ = False
 
-TF_PORT = free_port()
+TF_PORT = reserve_port()
 TF_BASE = f"http://127.0.0.1:{TF_PORT}"
 
 
@@ -44,19 +44,23 @@ def teamflow_server() -> None:
         "apps.teamflow.main:app", host="127.0.0.1", port=TF_PORT, log_level="warning"
     )
     server = uvicorn.Server(config)
-    t = threading.Thread(target=server.run, daemon=True)
+    t = threading.Thread(target=server.run, kwargs={"sockets": take_reserved(TF_PORT)}, daemon=True)
     t.start()
-    for _ in range(50):
-        try:
-            if httpx.get(f"{TF_BASE}/health", timeout=1, trust_env=False).status_code == 200:
-                break
-        except httpx.HTTPError:
-            time.sleep(0.2)
-    else:
-        pytest.fail("TeamFlow server did not become healthy")
-    yield
-    server.should_exit = True
-    t.join(timeout=10)
+    try:
+        for _ in range(50):
+            try:
+                if httpx.get(f"{TF_BASE}/health", timeout=1, trust_env=False).status_code == 200:
+                    break
+            except httpx.HTTPError:
+                time.sleep(0.2)
+        else:
+            pytest.fail("TeamFlow server did not become healthy")
+        yield
+    finally:
+        server.should_exit = True
+        t.join(timeout=15)
+        assert not t.is_alive(), "server thread did not stop"
+        release_reserved(TF_PORT)
 
 
 def test_tool_gateway_domain_whitelist_and_no_shell() -> None:

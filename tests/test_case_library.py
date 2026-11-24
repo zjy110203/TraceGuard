@@ -24,12 +24,12 @@ import uvicorn
 from packages.execution.locators import LocatorRegistry
 from packages.execution.models import TestCaseVersion, load_cases_dir
 from packages.execution.runner import LocalRunner
-from tests.netutil import free_port
+from tests.netutil import release_reserved, reserve_port, take_reserved
 
 for _model in (TestCaseVersion,):
     _model.__test__ = False
 
-TF_PORT = free_port()
+TF_PORT = reserve_port()
 BASE = f"http://127.0.0.1:{TF_PORT}"
 EVAL_H = {"X-Eval-Token": "local-dev-eval-token-change-me"}
 CASES_DIR = Path("benchmark/cases")
@@ -55,19 +55,25 @@ def teamflow_server() -> Generator[None, None, None]:
         "apps.teamflow.main:app", host="127.0.0.1", port=TF_PORT, log_level="warning"
     )
     server = uvicorn.Server(config)
-    thread = threading.Thread(target=server.run, daemon=True)
+    thread = threading.Thread(
+        target=server.run, kwargs={"sockets": take_reserved(TF_PORT)}, daemon=True
+    )
     thread.start()
-    for _ in range(50):
-        try:
-            if httpx.get(f"{BASE}/health", timeout=1, trust_env=False).status_code == 200:
-                break
-        except httpx.HTTPError:
-            time.sleep(0.2)
-    else:
-        pytest.fail("TeamFlow server did not become healthy")
-    yield
-    server.should_exit = True
-    thread.join(timeout=10)
+    try:
+        for _ in range(50):
+            try:
+                if httpx.get(f"{BASE}/health", timeout=1, trust_env=False).status_code == 200:
+                    break
+            except httpx.HTTPError:
+                time.sleep(0.2)
+        else:
+            pytest.fail("TeamFlow server did not become healthy")
+        yield
+    finally:
+        server.should_exit = True
+        thread.join(timeout=15)
+        assert not thread.is_alive(), "server thread did not stop"
+        release_reserved(TF_PORT)
 
 
 def _reset(client: httpx.Client) -> None:

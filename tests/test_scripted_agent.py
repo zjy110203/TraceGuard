@@ -30,9 +30,9 @@ from packages.agents.scripted_agent import (
     ScriptedAgentPolicy,
     teamflow_login_agent_steps,
 )
-from tests.netutil import free_port
+from tests.netutil import release_reserved, reserve_port, take_reserved
 
-TF_PORT = free_port()
+TF_PORT = reserve_port()
 TF_BASE = f"http://127.0.0.1:{TF_PORT}"
 EVAL = {"X-Eval-Token": "local-dev-eval-token-change-me"}
 
@@ -43,19 +43,25 @@ def teamflow_server() -> Iterator[None]:
         "apps.teamflow.main:app", host="127.0.0.1", port=TF_PORT, log_level="warning"
     )
     server = uvicorn.Server(config)
-    thread = threading.Thread(target=server.run, daemon=True)
+    thread = threading.Thread(
+        target=server.run, kwargs={"sockets": take_reserved(TF_PORT)}, daemon=True
+    )
     thread.start()
-    for _ in range(60):
-        try:
-            if httpx.get(f"{TF_BASE}/health", timeout=1, trust_env=False).status_code == 200:
-                break
-        except httpx.HTTPError:
-            time.sleep(0.2)
-    else:  # pragma: no cover
-        pytest.fail("TeamFlow did not become healthy")
-    yield
-    server.should_exit = True
-    thread.join(timeout=10)
+    try:
+        for _ in range(60):
+            try:
+                if httpx.get(f"{TF_BASE}/health", timeout=1, trust_env=False).status_code == 200:
+                    break
+            except httpx.HTTPError:
+                time.sleep(0.2)
+        else:  # pragma: no cover
+            pytest.fail("TeamFlow did not become healthy")
+        yield
+    finally:
+        server.should_exit = True
+        thread.join(timeout=15)
+        assert not thread.is_alive(), "server thread did not stop"
+        release_reserved(TF_PORT)
 
 
 def _policy(goal: str = "log in and reach the project list") -> ScriptedAgentPolicy:

@@ -2,16 +2,32 @@
 
 Using a fresh engine per test guarantees repeatability (stage 1 acceptance:
 可重复初始化和清理) and prevents fault state leaking between tests.
+
+Isolation note (R5-4.9): ``apps.api.main`` builds a module-level app on import,
+and that app creates tables on whatever ``DATABASE_URL`` points at. A plain
+``pytest`` run therefore used to write to the FORMAL ``data/traceguard.db``
+whenever the developer shell / IDE run config / leftover CI var already had a
+``DATABASE_URL`` — the old ``os.environ.setdefault`` kept that value verbatim.
+The suite now *validates and overrides*: an inherited URL is reused only when it
+is provably a throwaway test DB (under this repo's ``.traceguard-tmp/``, under
+the system temp dir, or when ``TRACEGUARD_TEST_DB=1``). Anything else — the
+formal DB, a ``data/`` subdirectory, or a non-sqlite backend — is replaced with
+this session's temp DB, and both env vars are forced to agree.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
+import sys
 import tempfile
+import time
+import warnings
 from collections.abc import Iterator
+from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -22,16 +38,257 @@ if TYPE_CHECKING:
 
     from packages.core.config import Settings
 
-# Runs before any test module is imported. ``apps.api.main`` builds a
-# module-level app on import, and that app creates the task tables on whatever
-# DATABASE_URL points at — so a plain ``pytest`` run (without verify_all's
-# isolated URL) used to write to the FORMAL ``data/traceguard.db``. That is a
-# data-isolation breach found by the R5-4.9 audit; the suite now points at a
-# throwaway DB. An explicit DATABASE_URL (verify_all, CI) still wins.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
 _SUITE_DB_DIR = Path(tempfile.mkdtemp(prefix="traceguard-pytest-"))
 _SUITE_DB_URL = f"sqlite:///{(_SUITE_DB_DIR / 'suite.db').as_posix()}"
-os.environ.setdefault("DATABASE_URL", _SUITE_DB_URL)
-os.environ.setdefault("TRACEGUARD_DATABASE_URL", _SUITE_DB_URL)
+
+# Diagnostics and cleanup-failure records live together (gitignored, outside
+# ``data/``). The directory may not exist yet; writers create it on demand.
+_DIAG_DIR = _REPO_ROOT / ".traceguard-tmp" / "pytest-cleanup-failures"
+
+_SQLITE_PREFIX = "sqlite:///"
+
+
+def _sqlite_file_path(url: str) -> Path | None:
+    """Return the file a ``sqlite:///`` URL points at, or None.
+
+    None means "no file": non-sqlite URLs and ``:memory:``. Relative paths
+    resolve against the repo root, the only cwd the suite supports.
+    """
+    if not url.startswith(_SQLITE_PREFIX):
+        return None
+    raw = url[len(_SQLITE_PREFIX) :]
+    if not raw or raw == ":memory:":
+        return None
+    path = Path(raw)
+    if not path.is_absolute():
+        path = _REPO_ROOT / path
+    return path
+
+
+def _is_under(path: Path, root: Path) -> bool:
+    resolved = path.resolve()
+    root_resolved = root.resolve()
+    return resolved == root_resolved or root_resolved in resolved.parents
+
+
+def is_safe_test_db_url(url: str, *, repo_root: Path) -> tuple[bool, str]:
+    """Decide whether ``url`` is a safe database for the test suite.
+
+    Safe means: sqlite-backed, resolvable to a file that is NOT the formal
+    database and NOT anywhere under ``<repo_root>/data/``, and whose parent
+    directory exists or can be created and is writable (verified by an actual
+    create-then-remove probe). Returns ``(ok, reason)``; ``reason`` always
+    explains the verdict, so a rejected inherited URL can be logged verbatim.
+    """
+    if not url or not url.strip():
+        return False, "empty database URL"
+
+    if url in ("sqlite://", "sqlite:///"):
+        return False, f"sqlite URL without a file path: {url!r}"
+
+    if url == "sqlite:///:memory:":
+        return True, "in-memory sqlite database"
+
+    if not url.startswith(_SQLITE_PREFIX):
+        scheme = url.split(":", 1)[0] or url
+        return False, f"unsupported database backend {scheme!r}; only sqlite:/// is allowed"
+
+    raw = url[len(_SQLITE_PREFIX) :]
+    db_path = Path(raw)
+    if not db_path.is_absolute():
+        db_path = repo_root / db_path
+    resolved = db_path.resolve()
+
+    data_root = (repo_root / "data").resolve()
+    formal_db = (data_root / "traceguard.db").resolve()
+    if resolved == formal_db:
+        return False, f"points at the formal database {formal_db}"
+    if resolved == data_root or data_root in resolved.parents:
+        return False, f"lives under the formal data directory {data_root}"
+
+    parent = resolved.parent
+    try:
+        parent.mkdir(parents=True, exist_ok=True)
+        fd, probe = tempfile.mkstemp(prefix=".tg-write-probe-", dir=parent)
+        os.close(fd)
+        os.unlink(probe)
+    except OSError as exc:
+        return False, (f"parent directory {parent} is not usable ({type(exc).__name__}: {exc})")
+    return True, f"safe sqlite test database at {resolved}"
+
+
+def _is_marked_test_db(url: str) -> bool:
+    """True when the location is explicitly recognisable as a throwaway test DB.
+
+    Markers: ``TRACEGUARD_TEST_DB=1``, in-memory sqlite, a path under this
+    repo's ``.traceguard-tmp/`` (verify_all's out_dir lives there), or a path
+    under the system temp dir.
+    """
+    if os.environ.get("TRACEGUARD_TEST_DB") == "1":
+        return True
+    if url == "sqlite:///:memory:":
+        return True
+    path = _sqlite_file_path(url)
+    if path is None:
+        return False
+    if _is_under(path, _REPO_ROOT / ".traceguard-tmp"):
+        return True
+    return _is_under(path, Path(tempfile.gettempdir()))
+
+
+def _redact_db_url(url: str | None) -> str | None:
+    """Keep sqlite paths; reduce any other backend to ``scheme://<redacted>``.
+
+    Non-sqlite URLs can embed a username/password, and diagnostics are written
+    to disk — never copy a credential into a log just to explain a rejection.
+    """
+    if not url:
+        return url
+    if url.startswith(_SQLITE_PREFIX) or url == "sqlite://":
+        return url
+    scheme = url.split(":", 1)[0]
+    return f"{scheme or 'unknown'}://<redacted>"
+
+
+def _decide_db_url() -> tuple[str, dict[str, Any]]:
+    """Pick the session DB URL, validate/override the inherited one, record why."""
+    inherited_db = os.environ.get("DATABASE_URL")
+    inherited_tg = os.environ.get("TRACEGUARD_DATABASE_URL")
+    candidate = inherited_db or inherited_tg
+
+    diag: dict[str, Any] = {
+        "event": "pytest_session_db",
+        "pid": os.getpid(),
+        "timestamp": datetime.now().isoformat(),
+        "inherited": {
+            "DATABASE_URL": _redact_db_url(inherited_db),
+            "TRACEGUARD_DATABASE_URL": _redact_db_url(inherited_tg),
+        },
+        "suite_db_url": _SUITE_DB_URL,
+    }
+
+    keep = False
+    reason = "no inherited DATABASE_URL/TRACEGUARD_DATABASE_URL"
+    if candidate:
+        safe, reason = is_safe_test_db_url(candidate, repo_root=_REPO_ROOT)
+        if safe and _is_marked_test_db(candidate):
+            keep = True
+            reason = f"kept inherited test DB: {reason}"
+        elif safe:
+            reason = f"safe but not marked as a test database location: {reason}"
+
+    chosen = _SUITE_DB_URL
+    if keep and candidate is not None:
+        chosen = candidate
+    diag["overridden"] = not keep
+    diag["chosen_url"] = chosen
+    diag["reason"] = reason
+
+    # Settings reads DATABASE_URL; alembic env.py reads TRACEGUARD_DATABASE_URL.
+    # Force both so no code path can fall back to a different database.
+    os.environ["DATABASE_URL"] = chosen
+    os.environ["TRACEGUARD_DATABASE_URL"] = chosen
+    diag["DATABASE_URL"] = chosen
+    diag["TRACEGUARD_DATABASE_URL"] = chosen
+    return chosen, diag
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _record_cleanup_failure(target: Path, exc: BaseException) -> Path:
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    record = _DIAG_DIR / f"{stamp}-{os.getpid()}.json"
+    _write_json(
+        record,
+        {
+            "event": "pytest_suite_db_cleanup_failure",
+            "pid": os.getpid(),
+            "timestamp": datetime.now().isoformat(),
+            "directory": str(target),
+            "exception_type": type(exc).__name__,
+            "message": str(exc),
+        },
+    )
+    return record
+
+
+def _dispose_imported_engines() -> list[str]:
+    """Dispose engines that module-level apps still hold open on the suite DB.
+
+    Importing ``apps.api.main`` builds an app — and an engine — at import time.
+    That app's lifespan disposes it, but a test session never runs the lifespan,
+    so on Windows the sqlite file stays locked and the temp directory cannot be
+    removed (``WinError 32``). Disposing here is real cleanup, not a way to hide
+    a failure: if removal still fails afterwards, it is recorded as before.
+    """
+    disposed: list[str] = []
+    for module_name in ("apps.api.main", "apps.teamflow.main"):
+        module = sys.modules.get(module_name)
+        if module is None:
+            continue
+        engine = getattr(getattr(getattr(module, "app", None), "state", None), "engine", None)
+        if engine is None:
+            continue
+        try:
+            engine.dispose()
+            disposed.append(module_name)
+        except Exception:  # noqa: BLE001 - the remaining names still get a chance
+            continue
+    return disposed
+
+
+def _cleanup_suite_db_dir(target: Path) -> None:
+    """Remove the session DB dir; never raise, but never fail silently either."""
+    # Windows releases a sqlite handle asynchronously after dispose(), so a
+    # single attempt can fail spuriously. Three bounded attempts keep the
+    # common case clean without turning a real leak into a silent pass.
+    _dispose_imported_engines()
+    last_error: BaseException | None = None
+    for attempt in range(3):
+        try:
+            shutil.rmtree(target)
+            return
+        except FileNotFoundError:
+            return
+        except Exception as exc:  # noqa: BLE001 - cleanup must not abort the session
+            last_error = exc
+            if attempt < 2:
+                time.sleep(0.1 * (attempt + 1))
+    assert last_error is not None
+    record: Path | None = None
+    try:
+        record = _record_cleanup_failure(target, last_error)
+    except OSError as write_exc:
+        warnings.warn(
+            f"could not record pytest cleanup failure for {target}: "
+            f"{type(write_exc).__name__}: {write_exc}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    detail = f"; record: {record}" if record is not None else ""
+    warnings.warn(
+        f"pytest suite DB cleanup failed for {target} "
+        f"({type(last_error).__name__}: {last_error}){detail}",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+
+
+_ACTIVE_DB_URL, _SESSION_DIAG = _decide_db_url()
+try:
+    _write_json(_DIAG_DIR / f"session-{os.getpid()}.json", _SESSION_DIAG)
+except OSError as _diag_exc:  # diagnostics must never break collection
+    warnings.warn(
+        f"could not write pytest session DB diagnostics: {type(_diag_exc).__name__}: {_diag_exc}",
+        RuntimeWarning,
+        stacklevel=1,
+    )
 
 EVAL_TOKEN = "test-eval-token"
 
@@ -40,15 +297,15 @@ EVAL_TOKEN = "test-eval-token"
 def _drop_suite_db() -> Iterator[None]:
     """Remove the throwaway suite DB directory once the session ends."""
     yield
-    shutil.rmtree(_SUITE_DB_DIR, ignore_errors=True)
+    _cleanup_suite_db_dir(_SUITE_DB_DIR)
 
 
 @pytest.fixture()
 def settings() -> Settings:
-    from packages.core.config import Settings
+    from packages.core.config import AppEnv, Settings
 
     return Settings(
-        app_env="test",
+        app_env=AppEnv.TEST,
         database_url="sqlite:///:memory:",
         eval_control_token=EVAL_TOKEN,
         teamflow_test_user="tester",
@@ -77,7 +334,7 @@ def eval_headers() -> dict[str, str]:
 
 
 @pytest.fixture()
-def engine(settings: Settings) -> Engine:
+def engine(settings: Settings) -> Iterator[Engine]:
     from sqlalchemy import create_engine
 
     from apps.teamflow.eval_models import Base as EvalBase

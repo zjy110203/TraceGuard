@@ -18,7 +18,7 @@ import uvicorn
 from packages.core.config import Settings
 from packages.core.errors import ValidationError
 from packages.core.url_guard import GuardPolicy, UrlGuard
-from tests.netutil import free_port
+from tests.netutil import release_reserved, reserve_port, take_reserved
 
 # --------------------------------------------------------------------- SSRF
 
@@ -143,23 +143,25 @@ def redirect_server() -> str:
     def loop() -> Response:
         return Response(status_code=302, headers={"Location": "/loop"})
 
-    port = free_port()
+    port = reserve_port()
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     server = uvicorn.Server(config)
-    t = threading.Thread(target=server.run, daemon=True)
+    t = threading.Thread(target=server.run, kwargs={"sockets": take_reserved(port)}, daemon=True)
     t.start()
-    for _ in range(50):
-        try:
-            if (
-                httpx.get(f"http://127.0.0.1:{port}/health", timeout=1, trust_env=False).status_code
-                != 404
-            ):
-                break
-        except httpx.HTTPError:
-            time.sleep(0.2)
-    yield f"http://127.0.0.1:{port}"
-    server.should_exit = True
-    t.join(timeout=10)
+    try:
+        for _ in range(50):
+            try:
+                url = f"http://127.0.0.1:{port}/health"
+                if httpx.get(url, timeout=1, trust_env=False).status_code != 404:
+                    break
+            except httpx.HTTPError:
+                time.sleep(0.2)
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        server.should_exit = True
+        t.join(timeout=15)
+        assert not t.is_alive(), "server thread did not stop"
+        release_reserved(port)
 
 
 def test_httpx_does_not_follow_redirects_by_default(redirect_server: str) -> None:
