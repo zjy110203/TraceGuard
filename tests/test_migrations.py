@@ -63,12 +63,21 @@ def _schema(path: Path) -> tuple[dict[str, tuple[Any, ...]], dict[str, list[str]
 
 
 def test_declared_tables_are_all_registered() -> None:
-    assert len(PLATFORM_TABLES) == 10
+    # R5-5.1 added the two durable-stream tables, so the owned set is 12.
+    assert len(PLATFORM_TABLES) == 12
     assert set(PLATFORM_TABLES) <= registered_table_names()
 
 
 def test_teamflow_tables_are_not_owned_by_the_platform_migration() -> None:
-    """TeamFlow deploys separately; its tables must never enter this migration."""
+    """TeamFlow deploys separately; its tables must never enter this migration.
+
+    TeamFlow's models are imported on purpose: without them ``foreign_tables()``
+    is empty and the assertion below would be vacuous (it previously passed only
+    because an unrelated table happened to be registered).
+    """
+    import apps.teamflow.eval_models  # noqa: F401 - registers eval_* tables
+    import apps.teamflow.models  # noqa: F401 - registers tf_* tables
+
     foreign = foreign_tables()
     assert foreign, "expected TeamFlow tables to be registered on the shared base"
     assert all(name.startswith(("tf_", "eval_")) for name in foreign)

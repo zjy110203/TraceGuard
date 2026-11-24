@@ -5,7 +5,7 @@ Event/Evidence 证据链 + 多假设诊断 + 证据图 + Oracle 保护的自愈�
 UI-FaultBench 评测 + 产品级 Vue3 工作台。
 
 > 设计依据：`docs/design/`（11 篇规格）+ `docs/roadmap/`（十四阶段实施路线）。
-> 当前状态：第五轮（R5）进行中 —— R5-4.10 源码复审与稳定性补强完成，**530 项测试全绿 / 0 skipped**（本机 2026-11-24 门禁留档）；
+> 当前状态：第五轮（R5）进行中 —— R5-4.11 工程收口 + R5-5.1 事件持久化 + R5-5.2 场景化 Agent 完成，**601 passed / 1 skipped / 2 项仅因宿主批量删除守卫失败**（本机 2026-11-24 `python-final4` 留档）；
 > 产品 E2E 24/24、浏览器验收 150/150、前端门禁全绿。阶段状态与诚实边界见下方"状态纪律"。
 > 完整文档导航见 [`docs/00-DOCUMENTATION-INDEX.md`](docs/00-DOCUMENTATION-INDEX.md)。
 
@@ -58,7 +58,7 @@ Linux/macOS 将 `.\.venv\Scripts\python.exe` 换成 `.venv/bin/python` 即可。
 ## 测试与质量
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests/    # 530 passed, 0 skipped（R5-4.10）
+.\.venv\Scripts\python.exe -m pytest tests/    # 601 passed / 1 skipped / 2 failed（宿主删除守卫；R5-4.11~R5-5.2）
 .\.venv\Scripts\python.exe -m ruff check .
 .\.venv\Scripts\python.exe -m mypy packages apps benchmark
 cd apps/web; npm run build; npx vue-tsc --noEmit
@@ -67,7 +67,7 @@ cd apps/web; npm run build; npx vue-tsc --noEmit
 .\.venv\Scripts\python.exe scripts\verify_all.py --mode all
 ```
 
-- 全量测试：**530 passed / 0 skipped**（R5-4.10 门禁留档；484 为 R5-4.9 历史快照）
+- 全量测试：**601 passed / 1 skipped / 2 failed（宿主删除守卫）**（R5-4.11~R5-5.2；484/530 为更早历史快照）
 - 统一门禁：`scripts/verify_all.py`（每轮唯一输出目录 + 独立测试库；PASS/FAIL/SKIP/BLOCKED/EMPTY/NOT_RUN 六态，只有 PASS 才算通过）
 - 产品级 E2E：**24/24**（`scripts/e2e_product_flow.py`，真实浏览器 + 隔离 SUT）
 - 真实浏览器 UI 验收：**150/150**（15 路由 ×（5 分辨率横向溢出 + 4 项逐路由检查）+ 7 项深链 + 8 项附加，`scripts/ui_acceptance.py`）

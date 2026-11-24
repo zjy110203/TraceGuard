@@ -223,6 +223,8 @@ def event_stream(request: Request) -> StreamingResponse:
             target = orch.bus.latest_sequence()
             while True:
                 batch, position = orch.bus.replay_page(last_seq, _SSE_REPLAY_BATCH)
+                if not batch:
+                    break  # nothing left to replay; continue with live events
                 if position <= last_seq:
                     # Defensive: a page that does not advance the cursor would
                     # spin here and block the event loop (this happened when an

@@ -40,6 +40,9 @@ PLATFORM_TABLES: tuple[str, ...] = (
     "ev_event",
     "ev_inbox",
     "ev_audit",
+    # R5-5.1: durable ordering + retention watermark for the run-event stream.
+    "ev_stream_cursor",
+    "ev_stream_state",
     "evd_record",
     "gr_node",
     "gr_edge",

@@ -453,28 +453,23 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
     # The TestIntent is assembled ONCE here, embedded into the trace before
     # finalize (so the v2 hash covers it), and is the exact input the compiler
     # and the reviewer see later.
-    templates = dict(scenario.intent_templates)
     test_intent: dict[str, Any] = {
         "intent_id": body.intent_ref or f"i-{explorer.trace.exploration_id}",
         "description": body.goal or body.intent_ref or scenario.description,
         "source_ref": body.intent_ref,
         "scenario": body.scenario,
-        "goal": body.goal or str(templates.get("goal") or ""),
-        "expected_outcomes": [
-            str(o)
-            for o in (body.expected_outcomes or templates.get("expected_outcomes") or [])
-            if str(o).strip()
-        ],
+        # R5-4.6 semantics preserved: the scenario's intent *template* is a
+        # suggestion the caller can read from /explorations/policies and send
+        # explicitly. It must NOT be injected here, or a goal-less request would
+        # silently acquire a goal and "NOT_EVALUATED" could never happen again.
+        "goal": body.goal,
+        "expected_outcomes": [str(o) for o in body.expected_outcomes if str(o).strip()],
         # No silent fallback to base_url: an undeclared target stays undeclared,
         # so a goal-less exploration evaluates to NOT_EVALUATED instead of being
         # "verified" against the entry page it started on. A scenario may
         # *declare* a target; that is registered data, not an inference.
-        "target": str(body.target or templates.get("target") or "").strip(),
-        "required_assertions": [
-            str(a)
-            for a in (body.required_assertions or templates.get("required_assertions") or [])
-            if str(a).strip()
-        ],
+        "target": str(body.target or "").strip(),
+        "required_assertions": [str(a) for a in body.required_assertions if str(a).strip()],
         "constraints": [
             str(c) for c in (body.constraints or scenario.constraints) if str(c).strip()
         ],
