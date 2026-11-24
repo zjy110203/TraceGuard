@@ -138,7 +138,13 @@ class PlaywrightAdapter:
                         return {
                             tag: tag,
                             testid: e.getAttribute('data-testid') || '',
-                            name: label.trim().slice(0, 60)
+                            name: label.trim().slice(0, 60),
+                            // R5-5.2: visibility / disabled are OBSERVATIONS used
+                            // to decide element_visible and form_state. They grant
+                            // nothing and never carry a value.
+                            visible: !!(e.offsetWidth || e.offsetHeight
+                                       || e.getClientRects().length),
+                            disabled: !!e.disabled
                         };
                     })""",
                 )

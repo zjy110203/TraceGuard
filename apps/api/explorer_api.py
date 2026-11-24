@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -38,7 +39,9 @@ from packages.agents.exploration import (
     verify_trace_record,
 )
 from packages.agents.explorer import Explorer
-from packages.agents.scripted_agent import ScriptedAgentPolicy, teamflow_login_agent_steps
+from packages.agents.goal_assertions import evaluate_assertions
+from packages.agents.scenarios import Scenario, default_registry
+from packages.agents.scripted_agent import AgentStep, ScriptedAgentPolicy
 from packages.core.errors import ConflictError, NotFoundError, ValidationError
 from packages.core.logging import get_logger
 from packages.execution.dataref import REDACTED_MARKER
@@ -103,35 +106,107 @@ POLICIES: list[dict[str, Any]] = [
     },
 ]
 
-# The honest scenario registry (R5-4.6 §3.1.1): the Explorer implements exactly
-# ONE business scenario. Anything else is refused as UNSUPPORTED_SCENARIO
-# instead of silently replaying the login script and claiming success.
-SUPPORTED_SCENARIOS: dict[str, str] = {
-    "teamflow-login": "登录 TeamFlow 并进入项目列表（已实现；动作仍经安全网关校验）",
-}
+# Scenario registry (R5-5.2 §14). The Explorer core never branches on a
+# scenario id: it loads a definition, validates it, and runs its declared steps.
+# Unimplemented scenarios stay registered (with a reason) so the API can answer
+# "what would this take?" instead of pretending the capability exists.
+SCENARIOS = default_registry()
+SUPPORTED_SCENARIOS: dict[str, str] = SCENARIOS.public_view()
 
 
-def build_policy(policy_id: str, settings: Any, base_url: str) -> tuple[Any, str]:
+def _substitute(value: Any, mapping: dict[str, str]) -> Any:
+    """Fill ``{base_url}`` / ``{username}`` / ``{password}`` in a scenario step."""
+    if isinstance(value, str):
+        for key, replacement in mapping.items():
+            value = value.replace("{" + key + "}", replacement)
+        return value
+    if isinstance(value, dict):
+        return {k: _substitute(v, mapping) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_substitute(v, mapping) for v in value]
+    return value
+
+
+def scenario_steps(
+    scenario: Scenario, *, base_url: str, username: str, password: str
+) -> list[AgentStep]:
+    """Turn a scenario's declared decisions into provider steps.
+
+    The password is substituted here (from trusted settings) and redacted as it
+    enters the trace, exactly as before; a scenario file never contains a
+    credential.
+    """
+    import json
+
+    mapping = {
+        "base_url": base_url,
+        "username": username,
+        "password": password,
+        # A scenario may create data; a per-run suffix keeps it re-runnable
+        # instead of failing on the second attempt with a duplicate name.
+        "unique_suffix": uuid.uuid4().hex[:8],
+    }
+    steps: list[AgentStep] = []
+    for step in scenario.steps:
+        args = _substitute(dict(step.get("args") or {}), mapping)
+        decision = json.dumps(
+            {
+                "action": step["tool"],
+                "args": args,
+                "rationale": str(step.get("rationale") or ""),
+            }
+        )
+        expect = dict(step.get("expect") or {})
+        steps.append(
+            AgentStep(
+                decision=decision,
+                expect_url_path=str(expect.get("url_path") or ""),
+                expect_title_contains=str(expect.get("title_contains") or ""),
+                expect_testid_visible=str(expect.get("testid_visible") or ""),
+            )
+        )
+    return steps
+
+
+def build_policy(
+    policy_id: str, settings: Any, base_url: str, scenario: Scenario
+) -> tuple[Any, str]:
     """Build the named policy. Returns (policy, agent_version).
 
     ``scripted``      — fixed ToolCall script, decisions never read the page.
     ``scripted-agent``— Observation→LLMPolicy→ScriptedProvider loop; every
     decision is a structured JSON answer guarded by an expectation on the
     CURRENT page, so a drifted page stops the loop loudly.
+
+    Both take their actions from the scenario, not from a login-only constant.
     """
     if policy_id == "scripted":
-        return ScriptedPolicy(_login_script(settings, base_url)), ("scripted-policy-1.0.0-NOT-LLM")
+        script = tuple(
+            ToolCall(
+                str(step["tool"]),
+                _substitute(
+                    dict(step.get("args") or {}),
+                    {
+                        "base_url": base_url,
+                        "username": str(settings.teamflow_test_user),
+                        "password": str(settings.teamflow_test_password),
+                        "unique_suffix": uuid.uuid4().hex[:8],
+                    },
+                ),
+                str(step.get("rationale") or ""),
+            )
+            for step in scenario.steps
+        )
+        return ScriptedPolicy(script), "scripted-policy-1.0.0-NOT-LLM"
     if policy_id == "scripted-agent":
-        steps = teamflow_login_agent_steps(
+        steps = scenario_steps(
+            scenario,
             base_url=base_url,
             username=str(settings.teamflow_test_user),
             password=str(settings.teamflow_test_password),
         )
         return (
-            ScriptedAgentPolicy(
-                steps,
-                goal=SUPPORTED_SCENARIOS["teamflow-login"],
-            ),
+            ScriptedAgentPolicy(steps, goal=scenario.description),
             "scripted-agent-1.0.0-NOT-REAL-INFERENCE",
         )
     raise ConflictError(
@@ -299,6 +374,16 @@ def get_exploration(request: Request, exploration_id: str) -> dict[str, Any]:
     # Integrity is re-checked on every read: a trace whose hash no longer
     # matches its own content is reported, not silently served as evidence.
     record["trace_integrity_verified"] = verify_trace_record(record)
+    # Assertions are derived (intent + observations, both hashed), so they are
+    # re-derived on every read instead of being taken on trust.
+    scenario_for_record = SCENARIOS.get(str(record.get("scenario") or ""))
+    if scenario_for_record and scenario_for_record.goal_definition:
+        recomputed = evaluate_assertions(
+            list(scenario_for_record.goal_definition),
+            dict((record.get("observations") or [{}])[-1] or {}),
+        )
+        record["goal_assertions_recomputed"] = recomputed.to_dict()
+        record["goal_assertions_verified"] = recomputed.to_dict() == record.get("goal_assertions")
     return record
 
 
@@ -318,17 +403,21 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
                 "available": ["scripted", "scripted-agent"],
             },
         )
-    if body.scenario not in SUPPORTED_SCENARIOS:
+    scenario = SCENARIOS.get(body.scenario)
+    if scenario is None or not scenario.implemented:
         # §3.1.1: unsupported goals must be REJECTED, never silently executed
-        # as the login script while claiming to satisfy the user's business
-        # goal.
+        # as some other scenario's script while claiming to satisfy the user's
+        # business goal. A registered-but-unimplemented scenario says why.
         raise ValidationError(
             f"UNSUPPORTED_SCENARIO: scenario {body.scenario!r} is not implemented; "
-            "the Explorer will not replay the login script as a stand-in",
+            "the Explorer will not replay another scenario's script as a stand-in",
             details={
                 "code": "UNSUPPORTED_SCENARIO",
                 "requested_scenario": body.scenario,
-                "supported_scenarios": SUPPORTED_SCENARIOS,
+                "supported_scenarios": {
+                    s.scenario_id: s.description for s in SCENARIOS.implemented()
+                },
+                "blocked_reason": scenario.blocked_reason if scenario else "",
             },
         )
 
@@ -345,7 +434,9 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
     title = next((p["label"] for p in POLICIES if p["id"] == body.policy), body.policy)
     started = datetime.now(UTC).isoformat()
 
-    policy, agent_version = build_policy(body.policy, request.app.state.settings, body.base_url)
+    policy, agent_version = build_policy(
+        body.policy, request.app.state.settings, body.base_url, scenario
+    )
     explorer = Explorer(
         policy=policy,
         budget=Budget(
@@ -362,19 +453,31 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
     # The TestIntent is assembled ONCE here, embedded into the trace before
     # finalize (so the v2 hash covers it), and is the exact input the compiler
     # and the reviewer see later.
+    templates = dict(scenario.intent_templates)
     test_intent: dict[str, Any] = {
         "intent_id": body.intent_ref or f"i-{explorer.trace.exploration_id}",
-        "description": body.goal or body.intent_ref or SUPPORTED_SCENARIOS[body.scenario],
+        "description": body.goal or body.intent_ref or scenario.description,
         "source_ref": body.intent_ref,
         "scenario": body.scenario,
-        "goal": body.goal,
-        "expected_outcomes": [str(o) for o in body.expected_outcomes if str(o).strip()],
-        # No silent fallback: an undeclared target stays undeclared, so a
-        # goal-less exploration evaluates to NOT_EVALUATED instead of being
-        # "verified" against the entry page it started on.
-        "target": str(body.target or "").strip(),
-        "required_assertions": [str(a) for a in body.required_assertions if str(a).strip()],
-        "constraints": [str(c) for c in body.constraints if str(c).strip()],
+        "goal": body.goal or str(templates.get("goal") or ""),
+        "expected_outcomes": [
+            str(o)
+            for o in (body.expected_outcomes or templates.get("expected_outcomes") or [])
+            if str(o).strip()
+        ],
+        # No silent fallback to base_url: an undeclared target stays undeclared,
+        # so a goal-less exploration evaluates to NOT_EVALUATED instead of being
+        # "verified" against the entry page it started on. A scenario may
+        # *declare* a target; that is registered data, not an inference.
+        "target": str(body.target or templates.get("target") or "").strip(),
+        "required_assertions": [
+            str(a)
+            for a in (body.required_assertions or templates.get("required_assertions") or [])
+            if str(a).strip()
+        ],
+        "constraints": [
+            str(c) for c in (body.constraints or scenario.constraints) if str(c).strip()
+        ],
     }
 
     status = "COMPLETED"
@@ -389,6 +492,22 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
         explorer.trace.stop_reason = explorer.trace.stop_reason or "ERROR"
         explorer.trace.finalize()
         payload = explorer.trace.to_dict()
+
+    # R5-5.2 §15: structured goal assertions, evaluated against the LAST
+    # observed page only. Every assertion gets its own verdict + evidence, and an
+    # unobservable assertion is INCONCLUSIVE rather than a silent failure.
+    final_observation = dict((payload.get("observations") or [{}])[-1] or {})
+    assertion_report = evaluate_assertions(list(scenario.goal_definition), final_observation)
+    payload["goal_assertions"] = assertion_report.to_dict()
+    if assertion_report.verdict != "VERIFIED" and payload.get("goal_status") == "VERIFIED":
+        # Tighten, never loosen: a goal cannot stay VERIFIED on the strength of a
+        # text match when a declared assertion failed or could not be observed.
+        payload["goal_status"] = (
+            "NOT_VERIFIED" if assertion_report.verdict == "NOT_VERIFIED" else "INCONCLUSIVE"
+        )
+        payload["goal_reason"] = (
+            f"{payload.get('goal_reason') or ''} | scenario assertions: {assertion_report.reason}"
+        ).strip(" |")
 
     record: dict[str, Any] = {
         **payload,
