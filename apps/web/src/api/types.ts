@@ -205,7 +205,14 @@ export interface RunDetail extends RunRow {
 export interface EventRow {
   event_id: string
   event_type: string
-  sequence?: number
+  // Durable stream position. `null` (not 0, not a guess) when the event could
+  // not be persisted — the server never invents a number for a row that does
+  // not exist. 0 is unused, so `sequence ?? '—'` is the only correct render.
+  sequence?: number | null
+  // Wire ordinal: ordering/gap detection for the live stream. 0 means the frame
+  // was rebuilt from the durable log during replay.
+  delivery_seq?: number
+  durable?: boolean
   run_id?: string
   step_id?: string | null
   producer_id?: string

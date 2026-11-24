@@ -200,7 +200,15 @@ def event_stream(request: Request) -> StreamingResponse:
         # eager subscribe() would leak a queue per aborted connection (proved by
         # test_disconnect_unsubscribes_and_leaks_nothing).
         q = orch.bus.subscribe(maxsize=_SSE_QUEUE_MAXSIZE)
-        last_seq = after_seq
+        # Two positions, deliberately not the same variable (R5-5.1 defect):
+        #   replayed_through — durable stream position already sent by replay;
+        #                      only ever advances on a persisted event.
+        #   live_floor       — wire ordinal the live loop has accounted for;
+        #                      advances on every frame, persisted or not.
+        # Mixing them is what let a degraded write make the client skip the
+        # real event the database stored later under the same number.
+        replayed_through = after_seq
+        live_floor = orch.bus.delivery_tip()
         try:
             # Only a *doubtful* cursor is announced. A normal resume must not add
             # frames: an unchanged client would otherwise see noise on every
@@ -222,32 +230,33 @@ def event_stream(request: Request) -> StreamingResponse:
             # into memory in one query, and other clients must not wait for it.
             target = orch.bus.latest_sequence()
             while True:
-                batch, position = orch.bus.replay_page(last_seq, _SSE_REPLAY_BATCH)
+                batch, position = orch.bus.replay_page(replayed_through, _SSE_REPLAY_BATCH)
                 if not batch:
                     break  # nothing left to replay; continue with live events
-                if position <= last_seq:
+                if position <= replayed_through:
                     # Defensive: a page that does not advance the cursor would
                     # spin here and block the event loop (this happened when an
                     # event's own sequence was used instead of its position).
                     logger.error(
                         "sse_replay_no_progress: after=%d position=%d batch=%d",
-                        last_seq,
+                        replayed_through,
                         position,
                         len(batch),
                     )
                     break
                 for event in batch:
                     yield _sse(event, orch.bus.cursor_token(event))
-                last_seq = position
-                if last_seq >= target:
+                replayed_through = position
+                if replayed_through >= target:
                     break
 
             last_emit = time.monotonic()
-            # Highest sequence already announced as missing. Kept separate from
-            # `last_seq` (highest sequence actually delivered): a sequence may be
-            # legitimately absent without ever being delivered.
-            announced_seq = last_seq
+            # Highest wire ordinal already announced as missing. Kept separate
+            # from `live_floor` (highest ordinal actually delivered): an ordinal
+            # may be legitimately absent without ever being delivered.
+            announced_seq = live_floor
             announced_epoch = -1
+            announced_recovered = False
             while True:
                 if await request.is_disconnected():
                     break
@@ -255,17 +264,23 @@ def event_stream(request: Request) -> StreamingResponse:
                 if durability["mode"] == "degraded" and durability["epoch"] != announced_epoch:
                     announced_epoch = int(durability["epoch"])
                     yield _sse_notice("persist-degraded", durability)
+                elif durability["mode"] == "durable" and durability.get("recovered"):
+                    if not announced_recovered:
+                        # Durability came back. Say so explicitly, with the hole
+                        # it came back from: "fine again" must not erase the gap.
+                        announced_recovered = True
+                        yield _sse_notice("persist-recovered", durability)
                 try:
                     event = q.get_nowait()
                 except queue.Empty:
-                    known = _contiguous_drop_gap(q, last_seq, announced_seq)
+                    known = _contiguous_drop_gap(q, live_floor, announced_seq)
                     if known is not None:
                         gap_start, gap_end = known
                         covered = count_dropped_in_range(q.dropped_ranges, gap_start, gap_end)
                         announced_seq = gap_end
                         last_emit = time.monotonic()
                         logger.warning(
-                            "sse_sequence_gap: reason=queue_overflow from=%d to=%d "
+                            "sse_delivery_gap: reason=queue_overflow from=%d to=%d "
                             "missing=%d queue_dropped=%d covered_by_queue_drops=%d "
                             "bus_dropped_total=%d",
                             gap_start,
@@ -285,6 +300,7 @@ def event_stream(request: Request) -> StreamingResponse:
                                 "queue_dropped": q.dropped,
                                 "covered_by_queue_drops": covered,
                                 "reason": "queue_overflow",
+                                "measured_in": "delivery",
                                 "recoverable": True,
                             },
                         )
@@ -296,23 +312,23 @@ def event_stream(request: Request) -> StreamingResponse:
                     # the event loop free for other clients and for disconnects.
                     await asyncio.sleep(_SSE_POLL_S)
                     continue
-                if event.sequence <= last_seq:
-                    # Published between subscribe() and the replay above: it is
-                    # already on the wire, so delivering it twice would break
-                    # "unique ids per connection" for Last-Event-ID consumers.
+                # Already sent by the replay loop: published between subscribe()
+                # and the replay read, so it is both queued and on disk. The
+                # durable domain decides this — a wire ordinal cannot.
+                if event.sequence is not None and event.sequence <= replayed_through:
                     continue
-                if event.sequence > last_seq + 1:
-                    gap_start = max(last_seq + 1, announced_seq + 1)
-                    gap_end = event.sequence - 1
+                if event.delivery_seq > live_floor + 1:
+                    gap_start = max(live_floor + 1, announced_seq + 1)
+                    gap_end = event.delivery_seq - 1
                     if gap_start <= gap_end:
                         covered = count_dropped_in_range(q.dropped_ranges, gap_start, gap_end)
                         announced_seq = gap_end
                         logger.warning(
-                            "sse_sequence_gap: reason=sequence_jump expected=%d got=%d "
+                            "sse_delivery_gap: reason=ordinal_jump expected=%d got=%d "
                             "missing=%d queue_dropped=%d covered_by_queue_drops=%d "
                             "bus_dropped_total=%d",
                             gap_start,
-                            event.sequence,
+                            event.delivery_seq,
                             gap_end - gap_start + 1,
                             q.dropped,
                             covered,
@@ -327,11 +343,13 @@ def event_stream(request: Request) -> StreamingResponse:
                                 "missing": gap_end - gap_start + 1,
                                 "queue_dropped": q.dropped,
                                 "covered_by_queue_drops": covered,
-                                "reason": "sequence_jump",
+                                "reason": "ordinal_jump",
+                                "measured_in": "delivery",
                                 "recoverable": True,
                             },
                         )
-                last_seq = event.sequence
+                if event.delivery_seq > live_floor:
+                    live_floor = event.delivery_seq
                 last_emit = time.monotonic()
                 yield _sse(event, orch.bus.cursor_token(event))
         finally:
@@ -341,10 +359,16 @@ def event_stream(request: Request) -> StreamingResponse:
 
 
 def _sse(event: RunEvent, cursor: str | None = None) -> str:
+    """One SSE frame. No ``id:`` line at all when there is no honest cursor.
+
+    Omitting ``id`` makes the browser keep the previous value, so a client that
+    received an event the server could not persist resumes from the last durable
+    point it can prove — nothing durable is skipped, and no fabricated number is
+    ever handed out.
+    """
     payload = json.dumps(event.to_dict(), ensure_ascii=False)
-    # The cursor is opaque to clients; it is what they hand back in
-    # Last-Event-ID. Falling back to the event_id keeps memory-mode identical.
-    return f"id: {cursor or event.event_id}\nevent: {event.event_type}\ndata: {payload}\n\n"
+    id_line = f"id: {cursor}\n" if cursor else ""
+    return f"{id_line}event: {event.event_type}\ndata: {payload}\n\n"
 
 
 def _sse_notice(code: str, data: dict[str, Any]) -> str:

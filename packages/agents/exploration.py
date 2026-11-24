@@ -95,6 +95,31 @@ def _normalize_path(raw: str) -> str:
     return path.rstrip("/") or "/"
 
 
+def _path_matches(expected: str, observed: str) -> bool:
+    """Exact path equality, except that ``*`` matches one whole segment.
+
+    R5-5.2 needed this for routes whose identity is data, not structure: the
+    ``project-query`` goal lands on ``/projects/<id>`` and the id cannot be known
+    before the run. Writing the target as ``/projects/*`` states the *shape* the
+    goal requires; it is not a regex, and ``*`` never matches a partial segment,
+    an empty segment, or more than one segment — ``/projects/*`` matches neither
+    ``/projects`` nor ``/projects/a/b``.
+    """
+    if "*" not in expected:
+        return expected == observed
+    expected_parts = expected.strip("/").split("/")
+    observed_parts = observed.strip("/").split("/")
+    if len(expected_parts) != len(observed_parts):
+        return False
+    for want, got in zip(expected_parts, observed_parts, strict=True):
+        if want == "*":
+            if not got:
+                return False
+        elif want != got:
+            return False
+    return True
+
+
 def intent_of(raw: Any) -> dict[str, Any]:
     """Canonical intent dict from a ``TestIntent`` or a persisted mapping.
 
@@ -213,7 +238,7 @@ def evaluate_goal(intent: Any, observations: Any) -> GoalEvaluation:
                 name="target_path",
                 expected=expected_path,
                 observed=final_path,
-                ok=expected_path == final_path,
+                ok=_path_matches(expected_path, final_path),
                 evidence=f"observations[{len(usable) - 1}].url_path",
             )
         )

@@ -178,6 +178,12 @@ class _SSEReader(threading.Thread):
         self.read_timeout = read_timeout
 
         self.frames: list[dict[str, Any]] = []
+        # The ``id:`` line in effect for each data frame, ``None`` when the frame
+        # carried no id at all. Added for the R5-5.1 cursor-protocol tests: a
+        # frame without an id is a *deliberate* signal (the browser keeps the
+        # previous cursor), so a reader that only keeps payloads cannot tell it
+        # apart from a cursor that was silently reused.
+        self.frame_ids: list[str | None] = []
         self.raw_comments: list[str] = []
         self.status: int | None = None
         self.content_type: str = ""
@@ -191,6 +197,8 @@ class _SSEReader(threading.Thread):
         self.close_errors: list[str] = []
         self.ready = threading.Event()
         self.done = threading.Event()
+
+        self._pending_id: str | None = None
 
         self._client: httpx.Client | None = None
         self._response: httpx.Response | None = None
@@ -308,8 +316,14 @@ class _SSEReader(threading.Thread):
 
     def _consume(self, line: str) -> bool:
         """Handle one SSE line; return True when the reader should stop."""
+        if line.startswith("id:"):
+            self._pending_id = line[3:].strip()
+            return False
         if line.startswith("data:"):
             self.frames.append(json.loads(line[5:].strip()))
+            self.frame_ids.append(self._pending_id)
+            # Reset per frame: the question is "did THIS frame carry an id".
+            self._pending_id = None
             return self.stop_when(self.frames)
         if line.startswith(":"):
             self.raw_comments.append(line)

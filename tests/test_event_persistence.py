@@ -145,12 +145,14 @@ def test_v2_cursor_resolves_and_out_of_range_is_unknown(db: dict[str, Any]) -> N
     _, position = _append(recorder, 0)
 
     ok = recorder.resolve(recorder.cursor_token(position))
-    beyond = recorder.resolve(f"{CURSOR_PREFIX}9999:bus-elsewhere")
+    # A *registered* instance with a position this store never reached: the
+    # stream was reset or the token came from another database.
+    beyond = recorder.resolve(f"{CURSOR_PREFIX}9999:{recorder.producer_instance_id}")
 
     assert ok.kind == "ok" and ok.after == position
     assert beyond.kind == "unknown"
     assert beyond.after == 1, "an unknown cursor must not replay from zero"
-    assert "beyond" in beyond.detail
+    assert beyond.reason == "beyond-latest"
 
 
 def test_malformed_cursor_is_unknown_not_crash(db: dict[str, Any]) -> None:
@@ -161,6 +163,7 @@ def test_malformed_cursor_is_unknown_not_crash(db: dict[str, Any]) -> None:
 
     assert resolution.kind == "unknown"
     assert resolution.after == 1
+    assert resolution.reason == "malformed"
 
 
 def test_retention_prunes_events_and_expires_old_cursors(db: dict[str, Any]) -> None:
@@ -252,7 +255,14 @@ def test_failed_write_degrades_and_is_never_reported_as_durable(
     assert state["mode"] == "degraded"
     assert state["failures"] == 1
     assert "disk full" in state["last_error"]
-    assert state["first_undurable_sequence"] == event.sequence
+    # R5-5.1 fix: no durable number is invented for a row that does not exist.
+    # The old code handed out a counter value that the database later reused for
+    # a *different* event, and the client dropped the real one as "already seen".
+    assert event.sequence is None
+    assert event.durable is False
+    assert event.delivery_seq == 1, "the wire ordinal still advances"
+    assert state["first_undurable_sequence"] == event.delivery_seq
+    assert state["undurable_count"] == 1
     # The event still reaches live clients (execution must not stop)...
     assert [e.event_id for e in bus.history()] == [event.event_id]
     # ...but nothing was written, so nothing can be replayed later.

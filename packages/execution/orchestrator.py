@@ -61,18 +61,44 @@ def _now() -> str:
 
 @dataclass(frozen=True)
 class RunEvent:
-    """C05-shaped event pushed to SSE subscribers (at-least-once)."""
+    """C05-shaped event pushed to SSE subscribers (at-least-once).
+
+    Two positions, deliberately separate (R5-5.1 defect: they were the same
+    variable, so a degraded write consumed a durable number and the event the
+    database later stored under that number could not be told apart from it):
+
+    ``sequence``
+        The **durable position** (``stream_seq``) assigned by the store. ``None``
+        means "this event was never persisted", and is the honest answer: a
+        number exists only when a row exists. A busy process counter must never
+        stand in for it, because that number belongs to a future row.
+
+    ``delivery_seq``
+        The **wire ordinal**: a per-process counter bumped for every published
+        event, durable or not. It drives SSE ordering, gap detection and
+        subscriber drop accounting. ``0`` means "not on this process's wire"
+        (a frame rebuilt from the durable log during replay), because live
+        ordinals start at 1.
+    """
 
     event_id: str
     event_type: str
     run_id: str
     task_id: str
-    sequence: int
+    sequence: int | None
     occurred_at: str
     payload: dict[str, Any]
+    delivery_seq: int = 0
+
+    @property
+    def durable(self) -> bool:
+        """Whether this event has a position that can be resumed from later."""
+        return self.sequence is not None
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        data = asdict(self)
+        data["durable"] = self.durable
+        return data
 
 
 class SubscriberQueue(queue.Queue[RunEvent]):
@@ -147,7 +173,14 @@ class EventBus:
     ) -> None:
         self._lock = threading.Lock()
         self._subscribers: list[SubscriberQueue] = []
+        # Durable high-water mark: the last *confirmed* stream position. It only
+        # advances on a successful write, so it is safe to publish as a resume
+        # cursor at any time.
         self._sequence = 0
+        # Wire ordinal: advances on every publish, persisted or not. Never
+        # written back into ``_sequence`` — that is precisely the bug this
+        # counter exists to prevent.
+        self._delivery_seq = 0
         self._history: list[RunEvent] = []
         # Aggregate loss across every subscriber ever served by this bus.
         self.dropped_total = 0
@@ -162,10 +195,17 @@ class EventBus:
         )
         self.persistence_failures = 0
         self.persistence_last_error = ""
-        self.first_undurable_sequence: int | None = None
+        # Durability hole accounting, in the WIRE domain (delivery ordinals).
+        self.first_undurable_delivery: int | None = None
+        self.last_undurable_delivery: int | None = None
+        self.undurable_count = 0
+        self.last_durable_delivery: int | None = None
         # Bumped on every new failure epoch so a stream can tell "already
         # announced" from "degraded again just now".
         self.persistence_epoch = 0
+        # Epoch in which a write succeeded again, i.e. durability was restored.
+        self.recovered_epoch: int | None = None
+        self.recovered_at_delivery: int | None = None
         self.startup_report: dict[str, Any] = {}
         if recorder is not None:
             self.startup_report = recorder.start()
@@ -198,7 +238,14 @@ class EventBus:
             event_id = f"runevt_{uuid.uuid4().hex[:12]}"
             occurred_at = _now()
             blob = dict(payload)
-            sequence = self._next_sequence(event_id, event_type, run_id, task_id, blob, occurred_at)
+            # The ordinal is computed but only committed once the event is
+            # actually delivered: a strict-mode rejection must not burn a
+            # number and open a phantom gap in every live stream.
+            delivery_seq = self._delivery_seq + 1
+            sequence = self._durable_position(
+                event_id, event_type, run_id, task_id, blob, occurred_at, delivery_seq
+            )
+            self._delivery_seq = delivery_seq
             event = RunEvent(
                 event_id=event_id,
                 event_type=event_type,
@@ -207,6 +254,7 @@ class EventBus:
                 sequence=sequence,
                 occurred_at=occurred_at,
                 payload=blob,
+                delivery_seq=delivery_seq,
             )
             self._history.append(event)
             if len(self._history) > _MAX_MEMORY_HISTORY:
@@ -214,15 +262,16 @@ class EventBus:
             dropped = self._fan_out(event)
         if dropped:
             logger.warning(
-                "event_dropped_for_slow_subscriber: event_id=%s sequence=%d "
-                "subscribers_affected=%d",
+                "event_dropped_for_slow_subscriber: event_id=%s delivery_seq=%d "
+                "durable=%s subscribers_affected=%d",
                 event_id,
-                event.sequence,
+                event.delivery_seq,
+                event.durable,
                 dropped,
             )
         return event
 
-    def _next_sequence(
+    def _durable_position(
         self,
         event_id: str,
         event_type: str,
@@ -230,14 +279,22 @@ class EventBus:
         task_id: str,
         payload: dict[str, Any],
         occurred_at: str,
-    ) -> int:
-        """Durable position when persisted, process counter otherwise.
+        delivery_seq: int,
+    ) -> int | None:
+        """Durable position when persisted, ``None`` when it could not be stored.
 
-        A failed write must not look like a success: the counter still advances
-        (so the wire stays ordered) but the event is recorded as undurable and
-        ``strict_persistence`` re-raises instead of pretending.
+        R5-5.1 fix: a failed write must not consume a number from the durable
+        space. The old code bumped the same counter the store allocates from, so
+        after recovery the database handed out a number that had already gone
+        out on the wire with different content — the client's ``<= last_seq``
+        dedupe then discarded the real, persisted event as "seen".
+
+        Returning ``None`` keeps the two spaces disjoint by construction: no
+        row → no position → no cursor. ``strict_persistence`` re-raises instead
+        of reporting a degraded delivery.
         """
         if self._recorder is None:
+            # Memory mode: the process counter *is* the only position there is.
             self._sequence += 1
             return self._sequence
         try:
@@ -254,19 +311,37 @@ class EventBus:
             self.persistence_last_error = f"{type(exc).__name__}: {exc}"[:300]
             self.persistence_epoch += 1
             logger.error(
-                "event_persist_failed: event_id=%s event_type=%s run_id=%s error=%s",
+                "event_persist_failed: event_id=%s event_type=%s run_id=%s "
+                "delivery_seq=%s durable_high_water=%s error=%s",
                 event_id,
                 event_type,
                 run_id,
+                delivery_seq,
+                self._sequence,
                 self.persistence_last_error,
             )
             if self.strict_persistence:
                 raise
-            self._sequence += 1
-            if self.first_undurable_sequence is None:
-                self.first_undurable_sequence = self._sequence
-            return self._sequence
+            if self.first_undurable_delivery is None:
+                self.first_undurable_delivery = delivery_seq
+            self.last_undurable_delivery = delivery_seq
+            self.undurable_count += 1
+            return None
         self._sequence = max(self._sequence, position)
+        if self.persistence_failures and self.recovered_epoch != self.persistence_epoch:
+            self.recovered_epoch = self.persistence_epoch
+            self.recovered_at_delivery = delivery_seq
+            logger.warning(
+                "event_persist_recovered: epoch=%d after_failures=%d "
+                "undurable_range=%s..%s durable_resumes_at=%d delivery_seq=%d",
+                self.persistence_epoch,
+                self.persistence_failures,
+                self.first_undurable_delivery,
+                self.last_undurable_delivery,
+                position,
+                delivery_seq,
+            )
+        self.last_durable_delivery = delivery_seq
         return position
 
     def _fan_out(self, event: RunEvent) -> int:
@@ -278,14 +353,22 @@ class EventBus:
                 # Slow consumer: drop for this subscriber only, but make the
                 # loss observable so the SSE stream can emit a gap frame and
                 # an operator can see it in dropped_total / subscriber_stats.
-                q.note_drop(event.sequence)
+                # Recorded against the WIRE ordinal: a gap is a delivery fact,
+                # not a durability fact.
+                q.note_drop(event.delivery_seq)
                 self.dropped_total += 1
                 affected += 1
         return affected
 
-    def history(self, after_sequence: int = 0) -> list[RunEvent]:
+    def history(self, after_delivery: int = 0) -> list[RunEvent]:
+        """In-process frames after a wire ordinal.
+
+        Memory mode is unchanged (ordinal == position there). In persisted mode
+        this is a fast cache, not the system of record: callers that need the
+        durable log use :meth:`replay_page`.
+        """
         with self._lock:
-            return [e for e in self._history if e.sequence > after_sequence]
+            return [e for e in self._history if e.delivery_seq > after_delivery]
 
     def replay_after(self, after_sequence: int, limit: int = 500) -> list[RunEvent]:
         """History that survives a restart.
@@ -302,12 +385,18 @@ class EventBus:
         """One page of durable history plus the position it advanced to."""
         if self._recorder is None:
             events = self.history(after_sequence)[:limit]
-            return events, (events[-1].sequence if events else after_sequence)
+            return events, (events[-1].delivery_seq if events else after_sequence)
         rows, position = self._recorder.replay_page(after_sequence, limit)
         return [self._row_to_event(row) for row in rows], position
 
     @staticmethod
     def _row_to_event(row: dict[str, Any]) -> RunEvent:
+        """Rebuild a frame from the durable log.
+
+        ``delivery_seq`` stays 0: the ordinal a previous process used for this
+        event is gone with that process, and inventing one would let a replayed
+        frame collide with a live ordinal. 0 reads as "not on this wire".
+        """
         refs = row.get("context_refs") or {}
         return RunEvent(
             event_id=str(row["event_id"]),
@@ -317,6 +406,7 @@ class EventBus:
             sequence=int(row["sequence"]),
             occurred_at=str(row["occurred_at"]),
             payload=dict(row.get("payload") or {}),
+            delivery_seq=0,
         )
 
     def resolve_cursor(self, token: str) -> CursorResolution:
@@ -341,7 +431,8 @@ class EventBus:
             latest = self._sequence
             for event in self._history:
                 if event.event_id == token:
-                    return CursorResolution("ok", event.sequence, latest, None, 0)
+                    # Memory mode always has a position (the process counter).
+                    return CursorResolution("ok", int(event.sequence or 0), latest, None, 0)
         return CursorResolution(
             "unknown",
             latest,
@@ -351,10 +442,21 @@ class EventBus:
             detail="event id not in this process's memory history (restarted?)",
         )
 
-    def cursor_token(self, event: RunEvent) -> str:
-        """Cursor to put in ``id:``. Persisted mode encodes the position."""
+    def cursor_token(self, event: RunEvent) -> str | None:
+        """Cursor to put in ``id:``, or ``None`` to emit no id at all.
+
+        ``None`` is only returned for an event that was *not* persisted while a
+        recorder is attached. Emitting a cursor for it would hand the client a
+        resume point that either does not exist yet (so the real event stored
+        under that number later would be skipped as "already seen") or never
+        will. Omitting the ``id:`` line makes the browser keep the last durable
+        cursor, so reconnecting resumes from the last point the server can
+        actually prove it has.
+        """
         if self._recorder is None:
             return event.event_id
+        if event.sequence is None:
+            return None
         return self._recorder.cursor_token(event.sequence)
 
     def durability_state(self) -> dict[str, Any]:
@@ -366,10 +468,16 @@ class EventBus:
         return state
 
     def persistence_snapshot(self) -> dict[str, Any]:
-        """Cheap (no DB) durability view for a per-poll SSE check."""
+        """Cheap (no DB) durability view for a per-poll SSE check.
+
+        ``mode`` is *current* capability, not history: a successful write after
+        a failure flips it back to ``durable`` while ``failures`` and the
+        ``undurable_*`` range keep the hole visible. Reporting "degraded"
+        forever would be as dishonest as reporting it never happened.
+        """
         if self._recorder is None:
             mode = "memory"
-        elif self.persistence_failures:
+        elif self.persistence_failures and self.recovered_epoch != self.persistence_epoch:
             mode = "degraded"
         else:
             mode = "durable"
@@ -377,10 +485,21 @@ class EventBus:
             "mode": mode,
             "producer_instance_id": self.producer_instance_id,
             "sequence": self._sequence,
+            "last_durable_sequence": self._sequence,
+            "delivery_seq": self._delivery_seq,
             "failures": self.persistence_failures,
             "last_error": self.persistence_last_error,
-            "first_undurable_sequence": self.first_undurable_sequence,
+            "undurable_count": self.undurable_count,
+            "undurable_first_delivery": self.first_undurable_delivery,
+            "undurable_last_delivery": self.last_undurable_delivery,
+            # Deprecated alias kept for consumers written against R5-5.1: it is
+            # now the WIRE ordinal, never a durable position.
+            "first_undurable_sequence": self.first_undurable_delivery,
+            "last_durable_delivery": self.last_durable_delivery,
             "epoch": self.persistence_epoch,
+            "recovered": self.recovered_epoch == self.persistence_epoch
+            and bool(self.persistence_failures),
+            "recovered_at_delivery": self.recovered_at_delivery,
         }
 
     def prune_events(self, keep_last: int) -> dict[str, Any]:
@@ -390,8 +509,14 @@ class EventBus:
         return self._recorder.store.prune_stream(keep_last)
 
     def latest_sequence(self) -> int:
+        """Last confirmed durable position (replay target), NOT the wire tip."""
         with self._lock:
             return self._sequence
+
+    def delivery_tip(self) -> int:
+        """Highest wire ordinal handed out so far (gap accounting baseline)."""
+        with self._lock:
+            return self._delivery_seq
 
     def subscriber_stats(self) -> list[dict[str, Any]]:
         """Per-subscriber queue depth and drop accounting (diagnostics only)."""

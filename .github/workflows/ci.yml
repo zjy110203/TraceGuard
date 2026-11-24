@@ -2,8 +2,12 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    # R5-5.1: the development branch must be able to trigger CI on its own
+    # push. Without it a push to the branch under review produced no run at
+    # all, so "CI is green" could only ever be claimed for main/develop.
+    branches: [main, develop, r5-5-product-completion]
   pull_request:
+  workflow_dispatch:
 
 # Least privilege: CI only reads the repo. No secrets are required by any job.
 permissions:
@@ -91,7 +95,8 @@ jobs:
           if-no-files-found: warn
 
   web:
-    name: Web type-check + build    runs-on: ubuntu-latest
+    name: Web type-check + build
+    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: apps/web

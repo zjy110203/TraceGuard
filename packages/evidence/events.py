@@ -405,6 +405,28 @@ class EventStore:
             )
             return None if value is None else int(value)
 
+    def knows_producer_instance(self, producer_instance_id: str) -> bool:
+        """Whether this database ever registered that producer instance.
+
+        R5-5.1 cursor validation: an instance id is minted per process *and per
+        database* (``register_producer`` writes it here). A cursor quoting an
+        instance this store never saw cannot have been issued for this stream —
+        even if the number it carries happens to be a valid position here, which
+        is exactly what two databases both counting from 1 look like.
+        """
+        with self._sessions() as s:
+            return s.get(ProducerInstance, producer_instance_id) is not None
+
+    def position_owner(self, stream_seq: int) -> tuple[str, str] | None:
+        """``(event_id, producer_instance_id)`` stored at a stream position."""
+        with self._sessions() as s:
+            row = s.execute(
+                select(EventRow.event_id, EventRow.producer_instance_id)
+                .join(StreamCursorRow, StreamCursorRow.event_id == EventRow.event_id)
+                .where(StreamCursorRow.stream_seq == stream_seq)
+            ).first()
+            return None if row is None else (str(row[0]), str(row[1]))
+
     def pruned_through(self) -> int:
         with self._sessions() as s:
             state = s.get(StreamStateRow, 1)

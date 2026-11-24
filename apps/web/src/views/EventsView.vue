@@ -32,6 +32,8 @@ function noticeText(notice: StreamNotice): string {
       return `历史缺口 ${notice.from ?? '?'}→${notice.to ?? '?'}（缺 ${notice.missing ?? '?'} 条，队列溢出）`
     case 'persist-degraded':
       return `事件写入失败，当前流不可回溯：${notice.last_error ?? notice.detail ?? '未知原因'}`
+    case 'persist-recovered':
+      return `事件写入已恢复（失败 ${notice.failures ?? '?'} 次，未持久化区间 ${notice.undurable_first_delivery ?? '?'}→${notice.undurable_last_delivery ?? '?'}）；该区间不可回放`
     default:
       return notice.code + (notice.detail ? `：${notice.detail}` : '')
   }
@@ -137,6 +139,7 @@ function refresh(): void {
       <ul v-else class="plain mono small">
         <li v-for="(e, i) in liveRows" :key="`${e.event_id}-${i}`">
           {{ e.event_type }} · {{ e.run_id || '—' }} · seq {{ e.sequence ?? '—' }}
+          <span v-if="e.durable === false" class="error-text">· 未持久化（不可回放）</span>
         </li>
       </ul>
     </div>

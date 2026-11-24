@@ -233,8 +233,15 @@ export const api = {
 // SSE: real orchestration events, replayed from Last-Event-ID by the server.
 //
 // R5-5.1: the server also sends transport-level ``stream.notice`` frames
-// (cursor-unknown / cursor-expired / gap / persist-degraded). They are NOT
-// run events, so they get their own handler and never enter the event list.
+// (cursor-unknown / cursor-expired / gap / persist-degraded / persist-recovered).
+// They are NOT run events, so they get their own handler and never enter the
+// event list.
+//
+// Cursor protocol (matches packages/evidence/run_events.py, the single source of
+// truth): the server sets ``id: v2:<stream_seq>:<producer_instance_id>`` for
+// persisted events and **no id at all** for events it could not persist, so the
+// browser keeps the last durable cursor and a reconnect never resumes from a
+// position that does not exist.
 
 export type StreamState = 'connecting' | 'live' | 'reconnecting' | 'closed'
 
@@ -256,10 +263,18 @@ export interface StreamHandlers {
   onNotice?: (notice: StreamNotice) => void
 }
 
+// Replay after a reconnect legitimately re-delivers frames the client already
+// has (at-least-once). Identity is ``event_id``, never the sequence: since
+// R5-5.1 an event may carry no sequence at all, and two different events must
+// never be collapsed because a number looked familiar.
+const SEEN_LIMIT = 2000
+
 export function subscribeEventStream(handlers: StreamHandlers): () => void {
   let reconnects = 0
   let opened = false
   let closed = false
+  const seen = new Set<string>()
+  const order: string[] = []
   const source = new EventSource(`${BASE}/events/stream`)
   handlers.onState?.('connecting', { reconnects })
 
@@ -276,7 +291,17 @@ export function subscribeEventStream(handlers: StreamHandlers): () => void {
   }
   source.onmessage = (ev: MessageEvent) => {
     try {
-      handlers.onEvent(JSON.parse(ev.data) as EventRow)
+      const row = JSON.parse(ev.data) as EventRow
+      if (row.event_id) {
+        if (seen.has(row.event_id)) return
+        seen.add(row.event_id)
+        order.push(row.event_id)
+        if (order.length > SEEN_LIMIT) {
+          const evicted = order.shift()
+          if (evicted) seen.delete(evicted)
+        }
+      }
+      handlers.onEvent(row)
     } catch {
       /* ignore malformed frame */
     }

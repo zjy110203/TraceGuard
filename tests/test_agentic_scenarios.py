@@ -16,9 +16,12 @@ slogan, so it deliberately drives a real TeamFlow over HTTP with Playwright.
 
 from __future__ import annotations
 
+import contextlib
+import re
 import threading
 import time
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -42,8 +45,9 @@ from packages.agents.goal_assertions import (
     validate_assertion,
 )
 from packages.agents.scenarios import Scenario, ScenarioRegistry, default_registry
+from packages.core.config import Settings
 from packages.core.errors import ValidationError
-from tests.netutil import release_reserved, reserve_port, take_reserved
+from tests.netutil import release_reserved, reserve_port, serve_uvicorn, take_reserved
 
 TF_PORT = reserve_port()
 TF_BASE = f"http://127.0.0.1:{TF_PORT}"
@@ -332,28 +336,35 @@ def _intent_from_scenario(scenario: Scenario) -> dict[str, Any]:
     }
 
 
-def _run_scenario(scenario: Scenario):  # noqa: ANN202 - ExplorationTrace
+def _run_scenario(
+    scenario: Scenario,
+    *,
+    base_url: str = TF_BASE,
+    steps: list[Any] | None = None,
+    max_tool_calls: int | None = None,
+):  # noqa: ANN202 - ExplorationTrace
     from packages.agents.scripted_agent import ScriptedAgentPolicy
 
-    steps = scenario_steps(
-        scenario,
-        base_url=TF_BASE,
-        username="tester",
-        password="test-pass-123",
-    )
+    if steps is None:
+        steps = scenario_steps(
+            scenario,
+            base_url=base_url,
+            username="tester",
+            password="test-pass-123",
+        )
     explorer = Explorer(
         policy=ScriptedAgentPolicy(steps, goal=scenario.description),
         budget=Budget(
             max_steps=scenario.max_steps,
-            max_tool_calls=scenario.max_steps * 2 + 4,
+            max_tool_calls=max_tool_calls or scenario.max_steps * 2 + 4,
             max_duration_s=scenario.timeout_budget_s,
             allowed_domains=("127.0.0.1",),
-            allowed_origins=(TF_BASE,),
+            allowed_origins=(base_url,),
         ),
         application_version=f"teamflow-0.1.0 ({scenario.scenario_id})",
     )
     return explorer.explore(
-        f"i-{scenario.scenario_id}", TF_BASE, intent=_intent_from_scenario(scenario)
+        f"i-{scenario.scenario_id}", base_url, intent=_intent_from_scenario(scenario)
     )
 
 
@@ -421,3 +432,185 @@ def test_wrong_password_scenario_is_not_verified(teamflow_server: None) -> None:
     assert trace.goal_status == "NOT_VERIFIED", trace.goal_reason
     with pytest.raises(ValidationError):
         TestCaseCompiler().compile(trace, case_id="TC-WRONG", title="wrong password")
+
+
+# --------------------------------------------------------------------------- #
+# 3. project-query and page-navigation against a real, isolated SUT
+# --------------------------------------------------------------------------- #
+#
+# These two scenarios used to be registry-only: ``scenario_steps`` produced
+# steps for them, but no test ever proved the steps complete a real browser
+# journey. They now run against their own TeamFlow instance with its own SQLite
+# file, so "the list has projects" is data this test created, not whatever the
+# developer's data directory happened to contain.
+
+
+@contextlib.contextmanager
+def _isolated_teamflow(tmp_path: Path) -> Iterator[str]:
+    """A fresh TeamFlow on its own database (empty project list)."""
+    from apps.teamflow.main import build_app as build_teamflow_app
+
+    settings = Settings(
+        app_env="test",
+        database_url=f"sqlite:///{(tmp_path / 'teamflow.db').as_posix()}",
+    )
+    with serve_uvicorn(build_teamflow_app(settings)) as base:
+        assert httpx.get(f"{base}/health", timeout=5, trust_env=False).status_code == 200
+        yield base
+
+
+def _create_project(base_url: str, name: str, description: str = "") -> str:
+    """Create a project through the real form, then read its id off the list."""
+    with httpx.Client(
+        base_url=base_url, timeout=10, trust_env=False, follow_redirects=True
+    ) as client:
+        response = client.post("/projects/new", data={"name": name, "description": description})
+        assert response.status_code == 200, response.text
+        html = client.get("/projects").text
+    match = re.search(r'data-project-id="([^"]+)"[^>]*>\s*<a[^>]*>' + re.escape(name), html)
+    assert match, f"project {name!r} is not on the list page"
+    return match.group(1)
+
+
+def test_project_query_opens_a_real_project_detail(tmp_path: Path) -> None:
+    """Login -> list -> click a real row -> detail page, judged by the goal."""
+    scenario = default_registry().require("project-query")
+    with _isolated_teamflow(tmp_path) as base:
+        first_id = _create_project(base, "Alpha项目", "第一个项目")
+        # A second project proves the selector picks the FIRST row deterministically:
+        # two matches used to be a strict-mode failure, not a click.
+        _create_project(base, "Beta项目", "第二个项目")
+
+        trace = _run_scenario(scenario, base_url=base)
+
+        assert trace.goal_status == VERIFIED, trace.goal_reason
+        # The journey is in the trace, not just the verdict.
+        assert trace.observations[0]["url_path"] in ("/", "")
+        detail = trace.observations[-1]
+        assert detail["url_path"] == f"/projects/{first_id}"
+        assert "Alpha项目" in str(detail["title"] or "")
+        assert "project-title" in set(detail["visible_testids"])
+        assert "project-status" in set(detail["visible_testids"])
+        assert any(
+            entry.get("tool") == "click"
+            and "project-item" in str(entry.get("args", {}).get("selector", ""))
+            for entry in trace.action_sequence
+        )
+
+        report = evaluate_assertions(list(scenario.goal_definition), detail)
+        assert report.verdict == VERIFIED, report.reason
+
+        candidate = TestCaseCompiler().compile(
+            trace, case_id="TC-SCENARIO-QUERY", title="scenario project-query"
+        )
+        assert candidate.goal_status == VERIFIED
+        assert candidate.steps and candidate.assertions and candidate.oracle_bindings
+
+
+def test_project_query_without_projects_cannot_verify(tmp_path: Path) -> None:
+    """An empty list is a legitimate outcome: not verified, and no candidate."""
+    scenario = default_registry().require("project-query")
+    with _isolated_teamflow(tmp_path) as base:
+        trace = _run_scenario(scenario, base_url=base, max_tool_calls=20)
+
+        assert trace.goal_status in (NOT_VERIFIED, INCONCLUSIVE), trace.goal_reason
+        assert trace.goal_status != VERIFIED
+        # It must not have wandered onto a detail page that does not exist.
+        assert all(
+            not observation["url_path"]
+            or not re.fullmatch(r"/projects/[^/]+", str(observation["url_path"]))
+            for observation in trace.observations
+        )
+        # The click that had nothing to click is recorded as an error, not as a
+        # silent success.
+        assert any(
+            entry.get("result") == "ERROR" and entry.get("action") == "click"
+            for entry in trace.agent_decisions
+        )
+        with pytest.raises(ValidationError):
+            TestCaseCompiler().compile(trace, case_id="TC-QUERY-EMPTY", title="empty list")
+
+
+def test_page_navigation_reaches_the_create_form(tmp_path: Path) -> None:
+    """Login -> click the real nav link -> /projects/new, then compile."""
+    scenario = default_registry().require("page-navigation")
+    with _isolated_teamflow(tmp_path) as base:
+        _create_project(base, "导航起点项目")
+
+        trace = _run_scenario(scenario, base_url=base)
+
+        assert trace.goal_status == VERIFIED, trace.goal_reason
+        final = trace.observations[-1]
+        assert final["url_path"] == "/projects/new"
+        assert "新建项目" in str(final["title"] or "")
+        assert "project-name" in set(final["visible_testids"])
+        assert "create-submit" in set(final["visible_testids"])
+        # Navigated by a real page element, not by typing the URL.
+        click = [
+            entry
+            for entry in trace.action_sequence
+            if entry.get("tool") == "click"
+            and "new-project-link" in str(entry.get("args", {}).get("selector", ""))
+        ]
+        assert click, trace.action_sequence
+
+        candidate = TestCaseCompiler().compile(
+            trace, case_id="TC-SCENARIO-NAV", title="scenario page-navigation"
+        )
+        assert candidate.goal_status == VERIFIED
+        assert candidate.steps and candidate.assertions and candidate.oracle_bindings
+
+
+def test_unexpected_page_stops_the_plan_instead_of_verifying(tmp_path: Path) -> None:
+    """Dynamic deviation: the page moves somewhere the plan did not predict.
+
+    The inserted decision logs out, so the page becomes ``/login`` while the next
+    pre-scripted decision was written for ``/projects``. The Explorer must stop
+    there — not click blindly on a page it never saw, and above all not produce a
+    VERIFIED candidate out of a journey that never reached its goal.
+    """
+    import json
+
+    from packages.agents.scripted_agent import AgentStep
+
+    scenario = default_registry().require("page-navigation")
+
+    with _isolated_teamflow(tmp_path) as base:
+        _create_project(base, "偏离测试项目")
+        planned = scenario_steps(
+            scenario, base_url=base, username="tester", password="test-pass-123"
+        )
+        logout = AgentStep(
+            decision=json.dumps(
+                {
+                    "action": "click",
+                    # The nav's last link is 退出; attribute selectors carrying a
+                    # "/" are refused by the selector policy, and this form says
+                    # the same thing without needing one.
+                    "args": {"selector": "nav a:last-child"},
+                    "rationale": "leave the page on purpose, deviating from the plan",
+                }
+            ),
+            expect_url_path="/projects",
+        )
+        deviated = planned[:5] + [logout] + planned[5:]
+
+        trace = _run_scenario(scenario, base_url=base, steps=deviated, max_tool_calls=20)
+
+        assert trace.goal_status != VERIFIED, trace.goal_reason
+        assert trace.goal_status == NOT_VERIFIED, trace.goal_reason
+        # Stopped by the policy, not by running out of plan.
+        assert trace.stop_reason == "POLICY_STOP", trace.stop_reason
+        errors = [d for d in trace.agent_decisions if d.get("result") == "ERROR"]
+        assert errors and "drift" in str(errors[-1].get("error", "")).lower()
+        # The pre-scripted tail (click new-project-link, snapshot) never ran.
+        assert trace.action_sequence, "the login journey should have executed"
+        last = trace.action_sequence[-1]
+        assert last.get("tool") == "click"
+        assert last.get("args", {}).get("selector") == "nav a:last-child"
+        assert not any(
+            "new-project-link" in str(entry.get("args", {}).get("selector", ""))
+            for entry in trace.action_sequence
+        )
+        with pytest.raises(ValidationError):
+            TestCaseCompiler().compile(trace, case_id="TC-DRIFT", title="deviated")

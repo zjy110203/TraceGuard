@@ -348,8 +348,17 @@ def build_default_registry() -> ScenarioRegistry:
             initial_url="/",
             intent_templates={
                 "goal": "登录后查看项目列表中的第一个项目详情",
-                "target": "/projects",
-                "expected_outcomes": ["项目详情"],
+                # The detail route embeds a database id, so the anchor states the
+                # route *shape*. `*` matches exactly one segment (see
+                # `_path_matches`); the id itself is proven by the goal
+                # assertions below, not by the path.
+                "target": "/projects/*",
+                # No text outcome: the detail page's only heading is the project
+                # name (data), so a fixed phrase would either be satisfied by the
+                # surrounding chrome or not at all. The structured assertions
+                # below assert strictly more than a substring would.
+                "expected_outcomes": [],
+                "required_assertions": ["state.project_exists = <本次查询的项目>"],
             },
             goal_definition=_goal(
                 {
@@ -381,7 +390,13 @@ def build_default_registry() -> ScenarioRegistry:
             + (
                 {
                     "tool": "click",
-                    "args": {"selector": "[data-testid=project-item] a"},
+                    # The description says "the FIRST project", so the selector
+                    # has to say it too. A bare ``[data-testid=project-item] a``
+                    # matches every row, and Playwright's strict mode then
+                    # refuses the click as soon as the list has two projects —
+                    # a scenario that only works on a single-row database is not
+                    # a scenario, it is a lucky fixture.
+                    "args": {"selector": "[data-testid=project-item]:first-child a"},
                     "rationale": "open the first project from the list",
                     "expect": {"url_path": "/projects"},
                 },

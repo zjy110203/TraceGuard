@@ -49,6 +49,7 @@ from urllib.parse import urlparse
 from packages.agents.exploration import (
     ExplorationTrace,
     GoalStatus,
+    _path_matches,
     evaluate_goal,
     intent_of,
 )
@@ -244,7 +245,11 @@ class TestCaseCompiler:
             # "wrong password stays on /login" therefore cannot compile a
             # success candidate, and "budget ran out on /login" cannot either.
             observed_normalized = final_path.rstrip("/") or "/"
-            if observed_normalized != expected_path:
+            # Same rule the goal evaluator applies (one implementation, so the
+            # verdict and the admission decision cannot disagree): a literal
+            # target must match exactly, and ``*`` matches one whole segment for
+            # routes whose identity is data (``/projects/<id>``).
+            if not _path_matches(expected_path, observed_normalized):
                 raise ValidationError(
                     "exploration did not reach the declared target page; refusing to compile",
                     details={
