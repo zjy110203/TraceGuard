@@ -9,16 +9,25 @@ and that app creates tables on whatever ``DATABASE_URL`` points at. A plain
 whenever the developer shell / IDE run config / leftover CI var already had a
 ``DATABASE_URL`` — the old ``os.environ.setdefault`` kept that value verbatim.
 The suite now *validates and overrides*: an inherited URL is reused only when it
-is provably a throwaway test DB (under this repo's ``.traceguard-tmp/``, under
-the system temp dir, or when ``TRACEGUARD_TEST_DB=1``). Anything else — the
-formal DB, a ``data/`` subdirectory, or a non-sqlite backend — is replaced with
-this session's temp DB, and both env vars are forced to agree.
+is provably a throwaway test DB (under the system temp dir or under this repo's
+``.traceguard-tmp/``). Anything else — the formal DB, a ``data/`` subdirectory,
+a business file somewhere else on disk, a drive-relative path or a non-sqlite
+backend — is replaced with this session's temp DB, and both env vars are forced
+to agree.
+
+R5-4.11: ``TRACEGUARD_TEST_DB=1`` no longer widens the location check. The flag
+used to make *any* writable sqlite file acceptable, which meant one inherited
+variable could point the suite at a real business database. A marker can only
+confirm a location that is already provably disposable; it can never replace the
+path check. The flag is still read and reported in diagnostics so an operator
+can see it was set, and the override explains that it was not enough.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -47,6 +56,11 @@ _SUITE_DB_URL = f"sqlite:///{(_SUITE_DB_DIR / 'suite.db').as_posix()}"
 _DIAG_DIR = _REPO_ROOT / ".traceguard-tmp" / "pytest-cleanup-failures"
 
 _SQLITE_PREFIX = "sqlite:///"
+
+# ``C:foo.db`` is drive-*relative* on Windows: it means "the current directory
+# on drive C", not "C:\foo.db". Resolving it against the repo silently invents a
+# location, so it is rejected outright instead of being guessed at.
+_DRIVE_RELATIVE_RE = re.compile(r"^[A-Za-z]:(?![\\/])")
 
 
 def _sqlite_file_path(url: str) -> Path | None:
@@ -95,6 +109,8 @@ def is_safe_test_db_url(url: str, *, repo_root: Path) -> tuple[bool, str]:
         return False, f"unsupported database backend {scheme!r}; only sqlite:/// is allowed"
 
     raw = url[len(_SQLITE_PREFIX) :]
+    if _DRIVE_RELATIVE_RE.match(raw):
+        return False, f"drive-relative sqlite path has no real location: {raw!r}"
     db_path = Path(raw)
     if not db_path.is_absolute():
         db_path = repo_root / db_path
@@ -106,6 +122,15 @@ def is_safe_test_db_url(url: str, *, repo_root: Path) -> tuple[bool, str]:
         return False, f"points at the formal database {formal_db}"
     if resolved == data_root or data_root in resolved.parents:
         return False, f"lives under the formal data directory {data_root}"
+    if resolved.exists() and formal_db.exists():
+        # A hard link looks like an unrelated path but shares the formal DB's
+        # bytes: writing through it corrupts real data, so compare identity
+        # rather than trusting the location.
+        try:
+            if os.path.samefile(resolved, formal_db):
+                return False, f"is the same file as the formal database {formal_db}"
+        except OSError:  # pragma: no cover - racing deletion
+            pass
 
     parent = resolved.parent
     try:
@@ -118,23 +143,30 @@ def is_safe_test_db_url(url: str, *, repo_root: Path) -> tuple[bool, str]:
     return True, f"safe sqlite test database at {resolved}"
 
 
-def _is_marked_test_db(url: str) -> bool:
-    """True when the location is explicitly recognisable as a throwaway test DB.
+def _test_db_location(url: str) -> tuple[bool, str]:
+    """Can a throwaway test DB live here at all?
 
-    Markers: ``TRACEGUARD_TEST_DB=1``, in-memory sqlite, a path under this
-    repo's ``.traceguard-tmp/`` (verify_all's out_dir lives there), or a path
-    under the system temp dir.
+    Only two locations qualify: the system temp directory and this repo's
+    ``.traceguard-tmp/``. That is a *location* fact, independent of any flag —
+    ``TRACEGUARD_TEST_DB=1`` describes intent, not where the bytes are, so it
+    must never widen this check. ``resolve()`` is used so a symlink pointing at
+    ``data/`` cannot smuggle a formal database through an innocent-looking path.
     """
-    if os.environ.get("TRACEGUARD_TEST_DB") == "1":
-        return True
     if url == "sqlite:///:memory:":
-        return True
+        return True, "in-memory sqlite database"
     path = _sqlite_file_path(url)
     if path is None:
-        return False
-    if _is_under(path, _REPO_ROOT / ".traceguard-tmp"):
-        return True
-    return _is_under(path, Path(tempfile.gettempdir()))
+        return False, "not a file-backed sqlite URL"
+    temp_root = Path(tempfile.gettempdir())
+    if _is_under(path, temp_root):
+        return True, f"under the system temp directory {temp_root}"
+    scratch = _REPO_ROOT / ".traceguard-tmp"
+    if _is_under(path, scratch):
+        return True, f"under the project scratch directory {scratch}"
+    return False, (
+        f"{path.resolve()} is outside both the system temp directory {temp_root} "
+        f"and {scratch}; only those are accepted as test database locations"
+    )
 
 
 def _redact_db_url(url: str | None) -> str | None:
@@ -153,10 +185,14 @@ def _redact_db_url(url: str | None) -> str | None:
 
 def _decide_db_url() -> tuple[str, dict[str, Any]]:
     """Pick the session DB URL, validate/override the inherited one, record why."""
-    inherited_db = os.environ.get("DATABASE_URL")
-    inherited_tg = os.environ.get("TRACEGUARD_DATABASE_URL")
+    inherited_db = (os.environ.get("DATABASE_URL") or "").strip() or None
+    inherited_tg = (os.environ.get("TRACEGUARD_DATABASE_URL") or "").strip() or None
+    marker = os.environ.get("TRACEGUARD_TEST_DB")
     candidate = inherited_db or inherited_tg
 
+    mismatch = (
+        inherited_db is not None and inherited_tg is not None and inherited_db != inherited_tg
+    )
     diag: dict[str, Any] = {
         "event": "pytest_session_db",
         "pid": os.getpid(),
@@ -165,18 +201,44 @@ def _decide_db_url() -> tuple[str, dict[str, Any]]:
             "DATABASE_URL": _redact_db_url(inherited_db),
             "TRACEGUARD_DATABASE_URL": _redact_db_url(inherited_tg),
         },
+        # Reported, never trusted: the flag expresses intent, not location.
+        "test_db_marker": marker,
+        "mismatch": mismatch,
         "suite_db_url": _SUITE_DB_URL,
     }
 
     keep = False
     reason = "no inherited DATABASE_URL/TRACEGUARD_DATABASE_URL"
-    if candidate:
-        safe, reason = is_safe_test_db_url(candidate, repo_root=_REPO_ROOT)
-        if safe and _is_marked_test_db(candidate):
+    if mismatch:
+        # Two different databases mean the environment is polluted or one of the
+        # two is stale. Picking either would be a guess about real data, so both
+        # are dropped and the mismatch is recorded verbatim.
+        reason = (
+            "DATABASE_URL and TRACEGUARD_DATABASE_URL point at different databases; "
+            "neither is reused"
+        )
+        warnings.warn(
+            f"pytest DB isolation: {reason} (DATABASE_URL="
+            f"{_redact_db_url(inherited_db)}, TRACEGUARD_DATABASE_URL="
+            f"{_redact_db_url(inherited_tg)}); using {_SUITE_DB_URL}",
+            RuntimeWarning,
+            stacklevel=1,
+        )
+    elif candidate:
+        safe, safety_reason = is_safe_test_db_url(candidate, repo_root=_REPO_ROOT)
+        located, location_reason = _test_db_location(candidate)
+        if safe and located:
             keep = True
-            reason = f"kept inherited test DB: {reason}"
+            reason = f"kept inherited test DB: {location_reason}"
+        elif safe and marker == "1":
+            reason = (
+                f"TRACEGUARD_TEST_DB=1 was set but cannot stand in for the location "
+                f"check: {location_reason}"
+            )
         elif safe:
-            reason = f"safe but not marked as a test database location: {reason}"
+            reason = f"safe but not in a disposable location: {location_reason}"
+        else:
+            reason = safety_reason
 
     chosen = _SUITE_DB_URL
     if keep and candidate is not None:
@@ -184,6 +246,7 @@ def _decide_db_url() -> tuple[str, dict[str, Any]]:
     diag["overridden"] = not keep
     diag["chosen_url"] = chosen
     diag["reason"] = reason
+    diag["location_reason"] = _test_db_location(candidate)[1] if candidate else "no inherited URL"
 
     # Settings reads DATABASE_URL; alembic env.py reads TRACEGUARD_DATABASE_URL.
     # Force both so no code path can fall back to a different database.

@@ -61,9 +61,37 @@ jobs:
           name: pytest-output
           path: pytest-output.txt
 
-  web:
-    name: Web type-check + build
+  security:
+    name: Security regression
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+      - name: Install Chromium (repair sandbox drives a real browser)
+        run: python -m playwright install --with-deps chromium
+      - name: Security gate (9 files, same runner as local)
+        # R5-4.11: the gate previously existed only locally. It runs the exact
+        # same 9 files the reports cite, so the documented scope and the executed
+        # scope cannot drift apart again.
+        env:
+          TRACEGUARD_BROWSER_CHANNEL: ""
+        run: python scripts/verify_all.py --mode security
+      - name: Upload security report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-report
+          path: .traceguard-tmp/r5/verify
+          if-no-files-found: warn
+
+  web:
+    name: Web type-check + build    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: apps/web

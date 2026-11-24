@@ -51,6 +51,15 @@ three can never disagree.
   port already in use); the matched line is kept as evidence.
 * ``FAIL``     — non-zero exit with no blocking evidence: a real failure.
 
+Timeouts are ``FAIL`` by default (R5-4.11). A hang is a defect until proven
+otherwise: a deadlock, a stuck browser or an infinitely waiting test are exactly
+the failures the gate exists to surface. ``subprocess.TimeoutExpired`` therefore
+never becomes ``BLOCKED`` on its own — a step may opt in to a *narrow* pattern
+(``Step.timeout_block_re``, matched against the output produced before the kill)
+when a hang genuinely proves an external block. The timeout length, the pid, the
+kill result and the log path are all recorded, and the remaining gates still
+appear as ``NOT_RUN`` so a truncated run can never look complete.
+
 Anything that is not ``PASS`` makes the run exit non-zero.
 """
 
@@ -61,6 +70,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -106,6 +116,9 @@ NOT_RUN = "NOT_RUN"
 TIMEOUT_EXIT_CODE = 124
 # A step that never launched has no exit code at all.
 UNLAUNCHED_EXIT_CODE = -1
+# The browser sweep runs 15 routes x 5 viewports; 30 minutes is a generous
+# ceiling that still guarantees a stuck Chrome cannot block the gate forever.
+BROWSER_TIMEOUT_S = 1800.0
 
 
 def _is_windows() -> bool:
@@ -164,6 +177,9 @@ class Step:
     timeout_s: float | None = None
     kind: str = "command"
     block_re: tuple[str, ...] = DEFAULT_BLOCK_RE
+    # Narrow evidence that a *hang* is an external block (empty by default).
+    # A timeout without a match is a defect, not an environment problem.
+    timeout_block_re: tuple[str, ...] = ()
     # Exit codes that mean "nothing ran" rather than "something broke".
     empty_exit_codes: tuple[int, ...] = ()
 
@@ -191,12 +207,21 @@ class StepResult:
     # Evidence for EMPTY/SKIP (e.g. pytest's "no tests ran").
     evidence: str = ""
     empty_exit_codes: tuple[int, ...] = ()
+    # A gate that hit its own deadline. Recorded, never assumed to be BLOCKED.
+    timed_out: bool = False
+    timeout_s: float | None = None
+    # Output produced before the deadline (kept for the failure tail).
+    output_tail: str = ""
 
     @property
     def status(self) -> str:
         """The single source of truth for every report and console line."""
         if not self.ran:
             return NOT_RUN
+        if self.timed_out and self.exit_code in self.empty_exit_codes:
+            # A deadline is never "nothing ran": an empty-exit code can only be
+            # trusted when the gate actually returned.
+            return "FAIL"
         if self.exit_code in self.empty_exit_codes:
             return "EMPTY"
         if self.exit_code == 0:
@@ -237,6 +262,8 @@ class StepResult:
             "ok": self.ok,
             "blocked_evidence": self.blocked_evidence,
             "evidence": self.evidence,
+            "timed_out": self.timed_out,
+            "timeout_s": self.timeout_s,
             "log": self.log,
             "note": self.note,
             "checks": self.checks,
@@ -290,9 +317,10 @@ def _log_path(out_dir: Path, name: str) -> Path:
 
 def summary_line(result: StepResult) -> str:
     """The one console line printed when a gate finishes."""
+    timeout = f" timeout={result.timeout_s:g}s" if result.timed_out else ""
     return (
         f"  {result.status:<8} {result.name:<22} exit={result.exit_code:<4} "
-        f"{result.duration_s}s passed={result.passed} skipped={result.skipped}"
+        f"{result.duration_s}s passed={result.passed} skipped={result.skipped}{timeout}"
     )
 
 
@@ -325,13 +353,14 @@ def write_report(
     lines = [f"# Verify report — mode={mode} @ {stamp}", ""]
     lines.append(f"Output directory: `{_rel(out_dir)}`")
     lines.append("")
-    lines.append("| step | status | exit | duration | passed | skipped | log |")
-    lines.append("|------|--------|------|----------|--------|---------|-----|")
+    lines.append("| step | status | exit | duration | passed | skipped | timeout | log |")
+    lines.append("|------|--------|------|----------|--------|---------|---------|-----|")
     for r in results:
         passed = r.passed if r.passed is not None else "-"
+        timeout = f"{r.timeout_s:g}s" if r.timed_out and r.timeout_s else "-"
         lines.append(
             f"| {r.name} | {r.status} | {r.exit_code} | {r.duration_s}s | "
-            f"{passed} | {r.skipped} | `{r.log}` |"
+            f"{passed} | {r.skipped} | {timeout} | `{r.log}` |"
         )
     lines.append("")
     for r in results:
@@ -383,7 +412,69 @@ def not_run_result(step: Step, reason: str = "an earlier gate stopped the run") 
     )
 
 
-def _exception_result(
+def _as_text(value: object) -> str:
+    """Normalise captured output (``None``/bytes/str) to text."""
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
+def _tail(text: str, limit: int = 4000) -> str:
+    """The last ``limit`` characters of captured output."""
+    return text if len(text) <= limit else text[-limit:]
+
+
+def _kill_process_tree(proc: subprocess.Popen[str]) -> bool:
+    """Kill the child *and its descendants*. Returns True when a kill was issued.
+
+    A hung gate usually hangs *inside* a subprocess (pytest -> uvicorn, vite ->
+    esbuild): killing only the direct child leaves the pipe open and the next
+    ``communicate()`` blocks forever, which would hang the runner itself.
+    """
+    if proc.poll() is not None:
+        return True
+    killed = False
+    try:
+        if _is_windows():
+            subprocess.run(  # noqa: S603 - fixed argv, no shell
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                capture_output=True,
+                timeout=20,
+                check=False,
+            )
+            killed = True
+        else:
+            # POSIX: the child was started in its own session, so killing the
+            # group takes the whole tree. Resolved via getattr because the
+            # Windows signal module has no killpg/SIGKILL.
+            killpg = getattr(os, "killpg", None)
+            getpgid = getattr(os, "getpgid", None)
+            sigkill = getattr(signal, "SIGKILL", None)
+            if killpg is None or getpgid is None or sigkill is None:  # pragma: no cover
+                proc.kill()
+            else:
+                killpg(getpgid(proc.pid), sigkill)
+            killed = True
+    except (OSError, subprocess.SubprocessError):
+        killed = False
+    if proc.poll() is None:
+        try:
+            proc.kill()
+            killed = True
+        except OSError:  # pragma: no cover - already gone
+            pass
+    return killed
+
+
+def _write_failure_log(step: Step, out_dir: Path, printable: str, body: str) -> str:
+    log_file = _log_path(out_dir, step.name)
+    log_file.write_text(body, encoding="utf-8")
+    return _rel(log_file)
+
+
+def _launch_failure_result(
     step: Step,
     printable: str,
     *,
@@ -393,8 +484,10 @@ def _exception_result(
     evidence: str,
     exit_code: int,
 ) -> StepResult:
-    log_file = _log_path(out_dir, step.name)
-    log_file.write_text(f"# {printable}\n{BLOCKED}: {evidence}\n", encoding="utf-8")
+    """The command could not be launched at all (missing tool, bad cwd)."""
+    log = _write_failure_log(
+        step, out_dir, printable, f"# {printable}\nBLOCKED (launch): {evidence}\n"
+    )
     result = StepResult(
         name=step.name,
         command=printable,
@@ -403,12 +496,77 @@ def _exception_result(
         started=started.isoformat(timespec="seconds"),
         finished=datetime.now().isoformat(timespec="seconds"),
         passed=None,
-        log=_rel(log_file),
+        log=log,
         kind=step.kind,
         blocked_evidence=evidence,
         note="environment blocked before the gate could produce a verdict",
     )
     print(summary_line(result), flush=True)
+    return result
+
+
+def _timeout_result(
+    step: Step,
+    printable: str,
+    *,
+    started: datetime,
+    duration: float,
+    out_dir: Path,
+    output: str,
+    pid: int,
+    killed: bool,
+) -> StepResult:
+    """A deadline was hit. This is FAIL unless the step declared narrow proof.
+
+    The old behaviour marked *every* timeout BLOCKED, which let a deadlock, a
+    stuck browser or a test that waits forever be reported as "environment",
+    i.e. the gate could never fail for the one reason it exists. A timeout now
+    only becomes BLOCKED when the output produced before the kill matches a
+    signature the step explicitly declared (``Step.timeout_block_re``).
+    """
+    blocked_evidence = _find_line(output, step.timeout_block_re) if step.timeout_block_re else ""
+    killed_note = "killed" if killed else "kill failed (process may still be alive)"
+    if blocked_evidence:
+        evidence = (
+            f"timeout after {step.timeout_s:g}s (pid {pid}, {killed_note}); "
+            f"declared block signature matched: {blocked_evidence}"
+        )
+        note = "deadline hit and a declared narrow signature proves an environment block"
+    else:
+        evidence = (
+            f"timeout after {step.timeout_s:g}s (pid {pid}, {killed_note}); "
+            "no declared block signature — a hang is a defect, not an environment block"
+        )
+        note = "deadline hit; remaining gates are NOT_RUN when --keep-going is off"
+    log = _write_failure_log(
+        step,
+        out_dir,
+        printable,
+        f"# {printable}\nTIMEOUT after {step.timeout_s:g}s pid={pid} {killed_note}\n"
+        f"exit={TIMEOUT_EXIT_CODE}\n\n{_tail(output)}\n",
+    )
+    result = StepResult(
+        name=step.name,
+        command=printable,
+        exit_code=TIMEOUT_EXIT_CODE,
+        duration_s=round(duration, 1),
+        started=started.isoformat(timespec="seconds"),
+        finished=datetime.now().isoformat(timespec="seconds"),
+        passed=None,
+        log=log,
+        kind=step.kind,
+        blocked_evidence=blocked_evidence,
+        evidence=evidence,
+        note=note,
+        timed_out=True,
+        timeout_s=step.timeout_s,
+        output_tail=_tail(output, 2000),
+    )
+    print(summary_line(result), flush=True)
+    if blocked_evidence:
+        print(f"    blocked: {blocked_evidence}", flush=True)
+    for line in output.strip().splitlines()[-15:]:
+        print(f"    {line}", flush=True)
     return result
 
 
@@ -420,31 +578,24 @@ def _run(step: Step, out_dir: Path, extra_env: dict[str, str]) -> StepResult:
     clock = time.monotonic()
     printable = " ".join([Path(step.argv[0]).name, *step.argv[1:]])
     print(f"\n$ ({step.cwd.name}) {printable}", flush=True)
+    # Popen (not run) so the pid survives a deadline: the timeout branch has to
+    # report which process hung and kill its descendants. On POSIX a dedicated
+    # session makes the whole tree killable; Windows uses ``taskkill /T``.
     try:
-        proc = subprocess.run(  # noqa: S603 - argv is internal, no shell
+        proc = subprocess.Popen(  # noqa: S603 - argv is internal, no shell
             step.argv,
             cwd=str(step.cwd),
             env=env,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=step.timeout_s,
-        )
-    except subprocess.TimeoutExpired:
-        # A hang is an environment block, not proof that the code is wrong.
-        return _exception_result(
-            step,
-            printable,
-            started=started,
-            duration=time.monotonic() - clock,
-            out_dir=out_dir,
-            evidence=f"timeout after {step.timeout_s}s",
-            exit_code=TIMEOUT_EXIT_CODE,
+            start_new_session=not _is_windows(),
         )
     except OSError as exc:
         # Missing executable, permission problem, bad cwd: never a traceback.
-        return _exception_result(
+        return _launch_failure_result(
             step,
             printable,
             started=started,
@@ -453,9 +604,41 @@ def _run(step: Step, out_dir: Path, extra_env: dict[str, str]) -> StepResult:
             evidence=f"{type(exc).__name__}: {exc}",
             exit_code=1,
         )
+
+    timed_out = False
+    killed = False
+    partial = ""
+    try:
+        stdout, stderr = proc.communicate(timeout=step.timeout_s)
+    except subprocess.TimeoutExpired as exc:
+        timed_out = True
+        partial = _as_text(exc.output) + _as_text(exc.stderr)
+        killed = _kill_process_tree(proc)
+        try:
+            # Bounded: after the tree is dead this returns immediately; if not,
+            # the runner must still not hang waiting for it.
+            stdout, stderr = proc.communicate(timeout=30)
+        except subprocess.TimeoutExpired:
+            stdout, stderr = "", ""
+
     duration = time.monotonic() - clock
+    log_text = (stdout or "") + (stderr or "")
+    if not log_text.strip():
+        log_text = partial
+
+    if timed_out:
+        return _timeout_result(
+            step,
+            printable,
+            started=started,
+            duration=duration,
+            out_dir=out_dir,
+            output=log_text,
+            pid=proc.pid,
+            killed=killed,
+        )
+
     finished = datetime.now()
-    log_text = (proc.stdout or "") + (proc.stderr or "")
     log_file = _log_path(out_dir, step.name)
     log_file.write_text(
         f"# {printable}\nexit={proc.returncode} duration={duration:.1f}s\n\n{log_text}",
@@ -735,17 +918,28 @@ def run_browser(
             "TRACEGUARD_E2E_SUMMARY": str(summary_path),
         }
         print(f"\n$ ui_acceptance.py @ {base}", flush=True)
-        proc = subprocess.run(  # noqa: S603
-            [PY, str(ROOT / "scripts" / "ui_acceptance.py")],
-            cwd=str(ROOT),
-            env=run_env,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
+        timed_out = False
+        try:
+            proc = subprocess.run(  # noqa: S603
+                [PY, str(ROOT / "scripts" / "ui_acceptance.py")],
+                cwd=str(ROOT),
+                env=run_env,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=BROWSER_TIMEOUT_S,
+            )
+            exit_code = proc.returncode
+            text = (proc.stdout or "") + (proc.stderr or "")
+        except subprocess.TimeoutExpired as exc:
+            # A browser sweep that never returns is a failure to investigate,
+            # not an environment block: the timeout is reported with the output
+            # captured so far and the gate fails.
+            timed_out = True
+            exit_code = TIMEOUT_EXIT_CODE
+            text = _as_text(exc.output) + _as_text(exc.stderr)
         duration = time.monotonic() - clock
-        text = (proc.stdout or "") + (proc.stderr or "")
         log_path.write_text(text, encoding="utf-8")
         failures = None
         match = re.search(r"failures=(\d+)", text)
@@ -773,7 +967,7 @@ def run_browser(
         result = StepResult(
             name="browser",
             command=f"ui_acceptance.py @ {base}",
-            exit_code=proc.returncode,
+            exit_code=exit_code,
             duration_s=round(duration, 1),
             started=started.isoformat(timespec="seconds"),
             finished=datetime.now().isoformat(timespec="seconds"),
@@ -783,6 +977,13 @@ def run_browser(
             checks=checks,
             note=seed_note,
             kind="test",
+            timed_out=timed_out,
+            timeout_s=BROWSER_TIMEOUT_S if timed_out else None,
+            evidence=(
+                f"timeout after {BROWSER_TIMEOUT_S:g}s while running the browser sweep"
+                if timed_out
+                else ""
+            ),
         )
         print(summary_line(result), flush=True)
         if result.status != "PASS":
@@ -883,6 +1084,52 @@ def toolchain_blocked(mode: str, exc: RuntimeError) -> StepResult:
     )
 
 
+def run_queue(
+    queue: Sequence[Step | None | StepResult],
+    *,
+    out_dir: Path,
+    extra_env: dict[str, str],
+    keep_going: bool,
+    seed: Path | None = None,
+) -> list[StepResult]:
+    """Execute a queued run and return every verdict (including NOT_RUN).
+
+    Extracted from ``main`` so the "a timeout must not swallow the rest of the
+    run" contract is testable without launching the real gates.
+    """
+    results: list[StepResult] = []
+    stopped = False
+    for item in queue:
+        if stopped:
+            # Everything still queued is recorded as NOT_RUN: an aborted run must
+            # not look like a complete one, and NOT_RUN still fails the run.
+            if isinstance(item, Step):
+                results.append(not_run_result(item))
+            elif isinstance(item, StepResult):
+                results.append(item)
+            else:
+                results.append(not_run_result(Step("browser", [])))
+            continue
+        if isinstance(item, StepResult):
+            result = item
+        elif item is None:
+            # Prefer an explicitly requested dataset, else the one this very run
+            # just produced — never a leftover from an earlier run.
+            chosen = seed if seed is not None else _product_work_dir(out_dir)
+            result = run_browser(out_dir, extra_env, seed=chosen)
+        else:
+            result = _run(item, out_dir, extra_env)
+        results.append(result)
+        if not result.ok and not keep_going:
+            stopped = True
+            print(
+                f"\n[!] gate '{result.name}' is {result.status} — stopping "
+                "(use --keep-going to continue)",
+                flush=True,
+            )
+    return results
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="TraceGuard verification runner")
     parser.add_argument("--mode", default="quick", choices=MODES)
@@ -953,36 +1200,13 @@ def main() -> int:
     print("=" * 70)
 
     explicit_seed = Path(args.browser_seed) if args.browser_seed else None
-    results: list[StepResult] = []
-    stopped = False
-    for item in queue:
-        if stopped:
-            # Everything still queued is recorded as NOT_RUN: an aborted run must
-            # not look like a complete one, and NOT_RUN still fails the run.
-            if isinstance(item, Step):
-                results.append(not_run_result(item))
-            elif isinstance(item, StepResult):
-                results.append(item)
-            else:
-                results.append(not_run_result(Step("browser", [])))
-            continue
-        if isinstance(item, StepResult):
-            result = item
-        elif item is None:
-            # Prefer an explicitly requested dataset, else the one this very run
-            # just produced — never a leftover from an earlier run.
-            seed = explicit_seed if explicit_seed is not None else _product_work_dir(out_dir)
-            result = run_browser(out_dir, extra_env, seed=seed)
-        else:
-            result = _run(item, out_dir, extra_env)
-        results.append(result)
-        if not result.ok and not args.keep_going:
-            stopped = True
-            print(
-                f"\n[!] gate '{result.name}' is {result.status} — stopping "
-                "(use --keep-going to continue)",
-                flush=True,
-            )
+    results = run_queue(
+        queue,
+        out_dir=out_dir,
+        extra_env=extra_env,
+        keep_going=args.keep_going,
+        seed=explicit_seed,
+    )
 
     for result in results:
         if result.ran:

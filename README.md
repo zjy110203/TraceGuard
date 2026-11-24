@@ -71,7 +71,7 @@ cd apps/web; npm run build; npx vue-tsc --noEmit
 - 统一门禁：`scripts/verify_all.py`（每轮唯一输出目录 + 独立测试库；PASS/FAIL/SKIP/BLOCKED/EMPTY/NOT_RUN 六态，只有 PASS 才算通过）
 - 产品级 E2E：**24/24**（`scripts/e2e_product_flow.py`，真实浏览器 + 隔离 SUT）
 - 真实浏览器 UI 验收：**150/150**（15 路由 ×（5 分辨率横向溢出 + 4 项逐路由检查）+ 7 项深链 + 8 项附加，`scripts/ui_acceptance.py`）
-- 安全专项：9 个文件 / 92 passed + 1 failed（`verify_all --mode security`）。该失败用例在宿主批量删除守卫下被拦截，属环境原因，但门禁**如实记 FAIL**，不记 BLOCKED、更不记 PASS（详见 R5-4.10 报告）
+- 安全专项：9 个文件 / **92 passed + 1 skipped**（`verify_all --mode security`，R5-4.10 `verify/security-final2/report.json`）。该用例在宿主批量删除守卫拦截时走 `pytest.skip` 并附证据，**不判 PASS**；更早的 `security-final`（92 passed + 1 failed）保留为历史记录，两者差异来自测试断言拆分，不是口径选择（详见 R5-4.11 报告 §4）
 - 阶段报告：`docs/r5/`（R5-4.9 稳定性收口、R5-7 系统验收复核等）
 
 ## 状态纪律（不冒充完成）

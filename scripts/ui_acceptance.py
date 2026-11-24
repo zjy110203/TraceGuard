@@ -316,15 +316,21 @@ def main() -> int:
 
         # ---- interaction: overview metric card navigation ----
         page.goto(BASE + "/#/overview")
-        page.wait_for_timeout(700)
-        cards = page.locator("button.stat, .stat.clickable, button.metric, .metric")
-        if cards.count() >= 1:
+        # A fixed sleep is not a synchronisation primitive (R5-4.9): the KPI
+        # cards appear only after their data request resolves, and a larger
+        # seeded dataset can legitimately take longer than 700 ms. Wait for the
+        # element with a bound, then still fail if it never shows up.
+        card_selector = "button.stat, .stat.clickable, button.metric, .metric"
+        try:
+            page.wait_for_selector(card_selector, timeout=20000)
+        except Exception:  # noqa: BLE001 - timeout is the failure being recorded
+            record("overview", "metric cards present", False, "no metric button within 20s")
+        else:
+            cards = page.locator(card_selector)
             before = page.url
             cards.nth(0).click()
             page.wait_for_timeout(600)
             record("overview", "metric card navigates", page.url != before or "#/" in page.url)
-        else:
-            record("overview", "metric cards present", False, "no metric button found")
 
         # ---- interaction: breadcrumb back ----
         page.goto(BASE + "/#/cases")
