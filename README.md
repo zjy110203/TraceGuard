@@ -5,10 +5,13 @@ Event/Evidence 证据链 + 多假设诊断 + 证据图 + Oracle 保护的自愈�
 UI-FaultBench 评测 + 产品级 Vue3 工作台。
 
 > 设计依据：`docs/design/`（11 篇规格）+ `docs/roadmap/`（十四阶段实施路线）。
-> 当前状态：第五轮（R5）—— R5-4.11 工程基线收口 + R5-5.1 事件持久化 + **R5-5.1-R 长稳与事件流最终验收 PASS** + **R5-5.2 场景化 Agentic Testing 基础能力完成**。
+> 当前状态：第五轮（R5）—— R5-4.11 工程基线收口 + R5-5.1 事件持久化 + **R5-5.1-R 长稳与事件流最终验收 PASS** + **R5-5.2 场景化 Agentic Testing 基础能力完成** + **R5-5.3 设计评审整改完成（DR1）**。
 > Python 全量 **626 passed / 1 skipped**、Product E2E 24/24、Browser E2E 150/150、安全回归 93 passed、前端门禁全绿（R5-5.1-R 最终验收，2026-11-25）。
-> 当前 HEAD `6a21f47` 的 GitHub Actions 已完成：run `45441655349`，5/5 Job success（**注意**：R5-5.1-R 文档验收的门禁证据基于 `60d89e7`，HEAD CI 为独立证据源，两者不混用）。
-> 下一步：R5-5.3 Agent 决策与场景能力升级——本轮仅完成设计与开发准入（见 `docs/r5/R5-5.3-*`），等待评审，未启动 M1～M5 开发。
+> **CI 证据（两套独立）**：
+> 1. R5-5.1-R 文档验收基线 `6a21f47`：run `45441655349`，5/5 Job success（R5-5.1-R 验收证据源）；
+> 2. 当前 HEAD `8819694`：run `45446643591`，5/5 Job success（R5-5.3 设计文档提交触发）。
+> **注意**：R5-5.1-R 文档验收的门禁证据基于 `60d89e7`（run `45439716584`），HEAD CI 为独立证据源，两者不混用。
+> 下一步：R5-5.3 Agent 决策与场景能力升级——设计评审整改（DR1）已完成，等待独立架构评审，未启动 M1～M5 开发。
 > 完整文档导航见 [`docs/00-DOCUMENTATION-INDEX.md`](docs/00-DOCUMENTATION-INDEX.md)。
 
 ## 快速启动
@@ -77,9 +80,12 @@ cd apps/web; npm run build; npx vue-tsc --noEmit
 - 真实浏览器 UI 验收：**150/150**（15 路由 ×（5 分辨率横向溢出 + 4 项逐路由检查）+ 7 项深链 + 8 项附加，`scripts/ui_acceptance.py`）
 - 场景化 Agentic Testing：`tests/test_agentic_scenarios.py` **34 项**（含 8 项真实 Chrome 执行层；6 场景中 4 个有真实浏览器证据）
 - 安全专项：**93 passed**（`verify_all --mode security`，R5-5.1-R `gates/security2`）。历史记录 92 passed + 1 skipped / 92 passed + 1 failed 保留，差异来自宿主批量删除守卫是否触发，不是口径选择
-- GitHub Actions：五 Job（Python / Web / Security / Product E2E / Browser E2E）。**两套证据源分开陈述**：
+- GitHub Actions：五 Job（Python / Web / Security / Product E2E / Browser E2E）。**三套证据源分开陈述**：
   1. R5-5.1-R 文档验收：提交 `60d89e7`，run `45439716584`，5/5 success（验收证据 `.traceguard-tmp/r5/r55r-final/`）；
-  2. 最新 HEAD `6a21f47`：run `45441655349`，**已完成**，5/5 success（文档提交触发，独立查询确认）。
+  2. R5-5.1-R 报告收口 HEAD `6a21f47`：run `45441655349`，**已完成**，5/5 success；
+  3. 当前 HEAD `8819694`：run `45446643591`，**已完成**，5/5 success（R5-5.3 设计文档提交触发）。
+- 当前代码功能基线：R5-5.2 收口（6 场景注册表、10 类断言、ScriptedAgentPolicy、Trace Hash v2）；
+  R5-5.3 设计文档版本：DR1 整改后（含统一目标语义、版本化 API、数据生命周期、权威关系、Observation v2 契约、Hash v3）。
 - 阶段报告：`docs/r5/`（R5-5.1-R 长稳验收、R5-5.1-R5-5.2 源码整改、R5-5.3 设计文档等）
 
 ## 阶段状态冻结（R5-5.2 收口，2026-11-25）
