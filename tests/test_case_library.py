@@ -24,11 +24,13 @@ import uvicorn
 from packages.execution.locators import LocatorRegistry
 from packages.execution.models import TestCaseVersion, load_cases_dir
 from packages.execution.runner import LocalRunner
+from tests.netutil import free_port
 
 for _model in (TestCaseVersion,):
     _model.__test__ = False
 
-BASE = "http://127.0.0.1:8032"
+TF_PORT = free_port()
+BASE = f"http://127.0.0.1:{TF_PORT}"
 EVAL_H = {"X-Eval-Token": "local-dev-eval-token-change-me"}
 CASES_DIR = Path("benchmark/cases")
 LOCATORS_FILE = CASES_DIR / "locators.json"
@@ -50,7 +52,7 @@ def locators() -> LocatorRegistry:
 @pytest.fixture(scope="module")
 def teamflow_server() -> Generator[None, None, None]:
     config = uvicorn.Config(
-        "apps.teamflow.main:app", host="127.0.0.1", port=8032, log_level="warning"
+        "apps.teamflow.main:app", host="127.0.0.1", port=TF_PORT, log_level="warning"
     )
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True)

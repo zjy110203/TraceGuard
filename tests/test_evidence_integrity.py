@@ -54,11 +54,12 @@ from packages.execution.models import (
     TestStep,
 )
 from packages.execution.runner import LocalRunner
+from tests.netutil import free_port
 
 for _m in (TestCaseVersion, TestStep, TestIntent):
     _m.__test__ = False
 
-TF_PORT = 8043
+TF_PORT = free_port()
 TF_BASE = f"http://127.0.0.1:{TF_PORT}"
 
 

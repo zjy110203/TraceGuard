@@ -130,7 +130,22 @@ class StepResult:
 
     @property
     def ok(self) -> bool:
-        return self.exit_code == 0
+        if self.exit_code != 0:
+            return False
+        # A gate where every test was skipped verified nothing. pytest exits 0
+        # in that case, and calling it PASS is exactly the dishonesty the
+        # acceptance rules forbid (SKIP is reported, never counted as PASS).
+        return not (self.passed == 0 and self.skipped > 0)
+
+    @property
+    def status(self) -> str:
+        if self.exit_code != 0:
+            return "FAIL"
+        if self.passed == 0 and self.skipped > 0:
+            return "SKIP"
+        if self.passed == 0:
+            return "EMPTY"
+        return "PASS"
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -143,6 +158,7 @@ class StepResult:
             "passed": self.passed,
             "skipped": self.skipped,
             "ok": self.ok,
+            "status": self.status,
             "log": self.log,
             "note": self.note,
             "checks": self.checks,
@@ -252,6 +268,10 @@ def frontend_steps() -> list[Step]:
 
 
 def security_steps() -> list[Step]:
+    # The gate must match what the R5-7 report claims it covers. It previously
+    # ran only three files while the report listed the Explorer boundary,
+    # network gateway, data-reference injection, goal semantics and trace hash
+    # v2 as well — i.e. the report described a wider gate than the code ran.
     return [
         _pytest(
             [
@@ -259,6 +279,12 @@ def security_steps() -> list[Step]:
                 "tests/test_security_r4.py",
                 "tests/test_sandbox_paths.py",
                 "tests/test_repair_sandbox.py",
+                "tests/test_explorer_security.py",
+                "tests/test_network_gateway.py",
+                "tests/test_dataref_security.py",
+                "tests/test_explorer_api.py",
+                "tests/test_goal_semantics.py",
+                "tests/test_trace_integrity_v2.py",
             ]
         )
     ]
@@ -614,12 +640,13 @@ def main() -> int:
     lines = [f"# Verify report — mode={args.mode} @ {stamp}", ""]
     lines.append(f"Output directory: `{_rel(out_dir)}`")
     lines.append("")
-    lines.append("| step | exit | duration | passed | skipped | log |")
-    lines.append("|------|------|----------|--------|---------|-----|")
+    lines.append("| step | status | exit | duration | passed | skipped | log |")
+    lines.append("|------|--------|------|----------|--------|---------|-----|")
     for r in results:
         passed = r.passed if r.passed is not None else "-"
         lines.append(
-            f"| {r.name} | {r.exit_code} | {r.duration_s}s | {passed} | {r.skipped} | `{r.log}` |"
+            f"| {r.name} | {r.status} | {r.exit_code} | {r.duration_s}s | "
+            f"{passed} | {r.skipped} | `{r.log}` |"
         )
     lines.append("")
     for r in results:
@@ -644,7 +671,7 @@ def main() -> int:
     print("\n" + "=" * 70)
     for r in results:
         print(
-            f"  {'PASS' if r.ok else 'FAIL':4} {r.name:22} exit={r.exit_code:<3} "
+            f"  {r.status:4} {r.name:22} exit={r.exit_code:<3} "
             f"{r.duration_s}s passed={r.passed} skipped={r.skipped}"
         )
     print("=" * 70)

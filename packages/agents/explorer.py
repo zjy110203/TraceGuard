@@ -31,7 +31,7 @@ from packages.agents.exploration import (
 )
 from packages.core.errors import ForbiddenError
 from packages.core.logging import get_logger
-from packages.execution.browser import browser_channel
+from packages.execution.browser import browser_channel, launch_args
 from packages.execution.netpolicy import OriginPolicy
 
 logger = get_logger(__name__)
@@ -85,7 +85,9 @@ class PlaywrightAdapter:
     def __enter__(self) -> PlaywrightAdapter:
         self._pw = sync_playwright()
         pw = self._pw.__enter__()
-        self._browser = pw.chromium.launch(channel=browser_channel(), headless=True)
+        self._browser = pw.chromium.launch(
+            channel=browser_channel(), headless=True, args=launch_args()
+        )
         context = self._browser.new_context(viewport={"width": 1280, "height": 800})
         # Every request the page makes is checked, not just the navigation:
         # an <img src="https://evil/..."> would otherwise be a silent egress.

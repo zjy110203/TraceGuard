@@ -18,6 +18,7 @@ import uvicorn
 from packages.core.config import Settings
 from packages.core.errors import ValidationError
 from packages.core.url_guard import GuardPolicy, UrlGuard
+from tests.netutil import free_port
 
 # --------------------------------------------------------------------- SSRF
 
@@ -142,20 +143,21 @@ def redirect_server() -> str:
     def loop() -> Response:
         return Response(status_code=302, headers={"Location": "/loop"})
 
-    config = uvicorn.Config(app, host="127.0.0.1", port=8077, log_level="warning")
+    port = free_port()
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     server = uvicorn.Server(config)
     t = threading.Thread(target=server.run, daemon=True)
     t.start()
     for _ in range(50):
         try:
             if (
-                httpx.get("http://127.0.0.1:8077/health", timeout=1, trust_env=False).status_code
+                httpx.get(f"http://127.0.0.1:{port}/health", timeout=1, trust_env=False).status_code
                 != 404
             ):
                 break
         except httpx.HTTPError:
             time.sleep(0.2)
-    yield "http://127.0.0.1:8077"
+    yield f"http://127.0.0.1:{port}"
     server.should_exit = True
     t.join(timeout=10)
 

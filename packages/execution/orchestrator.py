@@ -84,6 +84,12 @@ class EventBus:
             if q in self._subscribers:
                 self._subscribers.remove(q)
 
+    @property
+    def subscriber_count(self) -> int:
+        """Live SSE subscribers — used to prove disconnect cleanup leaks nothing."""
+        with self._lock:
+            return len(self._subscribers)
+
     def publish(self, event_type: str, run_id: str, task_id: str, **payload: Any) -> RunEvent:
         with self._lock:
             self._sequence += 1

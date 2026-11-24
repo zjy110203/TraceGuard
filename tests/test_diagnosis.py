@@ -33,8 +33,9 @@ from packages.agents.diagnosis import (
 from packages.core.errors import ValidationError
 from packages.execution.models import load_case
 from packages.execution.runner import LocalRunner
+from tests.netutil import free_port
 
-TF_PORT = 8035
+TF_PORT = free_port()
 TF_BASE = f"http://127.0.0.1:{TF_PORT}"
 EVAL_H = {"X-Eval-Token": "local-dev-eval-token-change-me"}
 

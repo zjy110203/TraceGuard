@@ -16,12 +16,15 @@ The matrix from the spec, plus live browser proof:
 
 The "attacker" origin is a second local HTTP server: requests to it must be
 aborted by the gateway BEFORE it ever sees a hit (asserted via its hit log).
+
+R5-4.9: every server binds an OS-assigned port and is fully closed
+(``shutdown`` + ``server_close`` + join). The old fixed ports 8710/8711 caused
+the CI failure ``OSError: [Errno 98] Address already in use``.
 """
 
 from __future__ import annotations
 
 import http.server
-import threading
 from collections.abc import Iterator
 
 import pytest
@@ -30,11 +33,12 @@ from packages.core.errors import ForbiddenError
 from packages.execution.browser import BrowserManager
 from packages.execution.events import EventCollector
 from packages.execution.netpolicy import OriginPolicy
+from tests.netutil import free_port, serve_http
 
-ATTACKER_PORT = 8711
-ATTACKER = f"http://127.0.0.1:{ATTACKER_PORT}"
-TARGET_PORT = 8710
-TARGET = f"http://127.0.0.1:{TARGET_PORT}"
+# URL-only matrix: nothing is bound to these ports, they just differ.
+POLICY_TARGET_PORT = free_port()
+POLICY_TARGET = f"http://127.0.0.1:{POLICY_TARGET_PORT}"
+POLICY_OTHER = f"http://127.0.0.1:{free_port()}"
 
 
 class _CountingHandler(http.server.BaseHTTPRequestHandler):
@@ -59,38 +63,55 @@ class _CountingHandler(http.server.BaseHTTPRequestHandler):
 
 
 @pytest.fixture(scope="module")
-def attacker_server() -> Iterator[None]:
+def attacker() -> Iterator[str]:
+    """The unapproved origin; returns its base URL on an ephemeral port."""
     _CountingHandler.hits = []
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", ATTACKER_PORT), _CountingHandler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    yield
-    server.shutdown()
+    with serve_http(_CountingHandler) as base:
+        yield base
+
+
+class _HomeHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self) -> None:  # noqa: N802
+        body = b"<html><body>home</body></html>"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args: object) -> None:
+        pass
+
+
+def _attacker_port(attacker: str) -> str:
+    return attacker.rsplit(":", 1)[1]
 
 
 # ------------------------------------------------------- origin policy matrix
 
 
 def test_origin_policy_matrix() -> None:
-    policy = OriginPolicy.for_base_url(f"{TARGET}/")
-    assert policy.allows(f"{TARGET}/login")  # 1. normal
-    assert not policy.allows("http://127.0.0.1:8711/x")  # 2. different port
-    assert not policy.allows(f"https://127.0.0.1:{TARGET_PORT}/x")  # 3. different scheme
-    assert not policy.allows("http://localhost:8710/x")  # 4. localhost != 127.0.0.1
+    policy = OriginPolicy.for_base_url(f"{POLICY_TARGET}/")
+    assert policy.allows(f"{POLICY_TARGET}/login")  # 1. normal
+    assert not policy.allows(f"{POLICY_OTHER}/x")  # 2. different port
+    assert not policy.allows(f"https://127.0.0.1:{POLICY_TARGET_PORT}/x")  # 3. different scheme
+    assert not policy.allows(
+        f"http://localhost:{POLICY_TARGET_PORT}/x"
+    )  # 4. localhost != 127.0.0.1
     assert not policy.allows("http://evil.test/x")
     assert policy.allows("about:blank")  # in-page, no egress
     assert policy.allows("data:image/png;base64,AAAA")  # in-page, no egress
-    assert not policy.allows("http://user:secret@127.0.0.1:8710/x")  # userinfo
-    assert policy.refusal_reason("http://127.0.0.1:8711/x").startswith("origin not approved")
+    assert not policy.allows(f"http://user:secret@127.0.0.1:{POLICY_TARGET_PORT}/x")  # userinfo
+    assert policy.refusal_reason(f"{POLICY_OTHER}/x").startswith("origin not approved")
 
 
-def test_toolgateway_and_originpolicy_agree() -> None:
+def test_toolgateway_and_originpolicy_agree(attacker: str) -> None:
     """The gateway's URL rule and the route guard's rule must never diverge."""
     from packages.agents.exploration import Budget, ToolCall, ToolGateway
 
     budget = Budget(
         allowed_domains=("127.0.0.1",),
-        allowed_origins=(f"{TARGET}/",),
+        allowed_origins=(f"{POLICY_TARGET}/",),
     )
     policy = OriginPolicy(
         allowed_domains=budget.allowed_domains,
@@ -99,12 +120,12 @@ def test_toolgateway_and_originpolicy_agree() -> None:
     )
     gw = ToolGateway(budget)
     urls = [
-        f"{TARGET}/login",
-        "http://127.0.0.1:8711/x",
-        f"https://127.0.0.1:{TARGET_PORT}/x",
-        "http://localhost:8710/x",
+        f"{POLICY_TARGET}/login",
+        f"{attacker}/x",
+        f"https://127.0.0.1:{POLICY_TARGET_PORT}/x",
+        f"http://localhost:{POLICY_TARGET_PORT}/x",
         "http://evil.test/x",
-        "http://user:secret@127.0.0.1:8710/x",
+        f"http://user:secret@127.0.0.1:{POLICY_TARGET_PORT}/x",
     ]
     for url in urls:
         gw_allowed = True
@@ -126,24 +147,22 @@ def _browser(target: str) -> BrowserManager:
     )
 
 
-def test_page_initiated_egress_is_aborted(attacker_server: None) -> None:
+def test_page_initiated_egress_is_aborted(attacker: str) -> None:
     """A legal page on the approved origin trying to call home gets blocked."""
     html = f"""<html><body>
-      <img src="{ATTACKER}/evil.png" />
-      <script src="{ATTACKER}/evil.js"></script>
-      <iframe src="{ATTACKER}/evil-page"></iframe>
+      <img src="{attacker}/evil.png" />
+      <script src="{attacker}/evil.js"></script>
+      <iframe src="{attacker}/evil-page"></iframe>
       <script>
-        fetch("{ATTACKER}/evil-fetch").catch(() => {{}});
-        const ws = new WebSocket("ws://127.0.0.1:{ATTACKER_PORT}/ws");
-        setTimeout(() => window.open("{ATTACKER}/evil-page"), 50);
+        fetch("{attacker}/evil-fetch").catch(() => {{}});
+        const ws = new WebSocket("ws://127.0.0.1:{_attacker_port(attacker)}/ws");
+        setTimeout(() => window.open("{attacker}/evil-page"), 50);
       </script>
     </body></html>"""
-    served: dict[str, bytes] = {}
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
             body = html.encode() if self.path == "/" else b"ok"
-            served[self.path] = body
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
             self.send_header("Content-Length", str(len(body)))
@@ -153,24 +172,21 @@ def test_page_initiated_egress_is_aborted(attacker_server: None) -> None:
         def log_message(self, *args: object) -> None:
             pass
 
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", TARGET_PORT), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
+    with serve_http(Handler) as target:
         from packages.execution.models import TestStep
 
-        with _browser(f"{TARGET}/") as browser:
+        with _browser(f"{target}/") as browser:
             assert browser.page is not None
-            result = browser.execute_step(TestStep("s1", "navigate", f"{TARGET}/"), "run_net")
+            result = browser.execute_step(TestStep("s1", "navigate", f"{target}/"), "run_net")
             assert result.ok, result.detail
             # give the page time to fire its egress attempts
             browser.page.wait_for_timeout(1200)
 
         blocked_urls = " ".join(b["url"] for b in browser.blocked_requests)
-        assert f"{ATTACKER}/evil.png" in blocked_urls  # 6. image
-        assert f"{ATTACKER}/evil.js" in blocked_urls  # 7. script
-        assert f"{ATTACKER}/evil-page" in blocked_urls  # 8. iframe (+ popup)
-        assert f"{ATTACKER}/evil-fetch" in blocked_urls  # 12. fetch
+        assert f"{attacker}/evil.png" in blocked_urls  # 6. image
+        assert f"{attacker}/evil.js" in blocked_urls  # 7. script
+        assert f"{attacker}/evil-page" in blocked_urls  # 8. iframe (+ popup)
+        assert f"{attacker}/evil-fetch" in blocked_urls  # 12. fetch
         # the attacker server must have seen NONE of these requests
         attacker_hits = [h for h in _CountingHandler.hits if h != "/evil-page"]
         assert not any("evil" in h for h in attacker_hits), _CountingHandler.hits
@@ -180,27 +196,28 @@ def test_page_initiated_egress_is_aborted(attacker_server: None) -> None:
         # the blocked attempts are part of the evidence record
         ev = browser.security_evidence("run_net")
         assert ev is not None and ev.evidence_type == "network_blocked"
-    finally:
-        server.shutdown()
 
 
-def test_navigation_to_off_origin_is_refused(attacker_server: None) -> None:
+def test_navigation_to_off_origin_is_refused(attacker: str) -> None:
     from packages.execution.models import TestStep
 
-    with _browser(f"{TARGET}/") as browser:
-        result = browser.execute_step(TestStep("s1", "navigate", f"{ATTACKER}/evil-page"), "run")
-        assert not result.ok
-        assert "not approved" in result.detail or "origin" in result.detail
+    with serve_http(_HomeHandler) as target:
+        with _browser(f"{target}/") as browser:
+            result = browser.execute_step(
+                TestStep("s1", "navigate", f"{attacker}/evil-page"), "run"
+            )
+            assert not result.ok
+            assert "not approved" in result.detail or "origin" in result.detail
 
 
-def test_cross_origin_redirect_is_abandoned(attacker_server: None) -> None:
+def test_cross_origin_redirect_is_abandoned(attacker: str) -> None:
     """A redirect that lands off-origin fails the step and leaves the page."""
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
             if self.path == "/redirect":
                 self.send_response(302)
-                self.send_header("Location", f"{ATTACKER}/evil-page")
+                self.send_header("Location", f"{attacker}/evil-page")
                 self.end_headers()
             else:
                 body = b"<html><body>home</body></html>"
@@ -212,14 +229,11 @@ def test_cross_origin_redirect_is_abandoned(attacker_server: None) -> None:
         def log_message(self, *args: object) -> None:
             pass
 
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", TARGET_PORT), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
+    with serve_http(Handler) as target:
         from packages.execution.models import TestStep
 
-        with _browser(f"{TARGET}/") as browser:
-            result = browser.execute_step(TestStep("s1", "navigate", f"{TARGET}/redirect"), "run")
+        with _browser(f"{target}/") as browser:
+            result = browser.execute_step(TestStep("s1", "navigate", f"{target}/redirect"), "run")
             # The redirect target answers with a download content-type, so
             # Chrome turns it into a download — which our gateway cancels.
             # Either way the step must fail and the page must NOT land on the
@@ -229,12 +243,10 @@ def test_cross_origin_redirect_is_abandoned(attacker_server: None) -> None:
             # the page was abandoned instead of sitting on the attacker origin
             assert browser.page is not None
             final_url = browser.page.url
-            assert final_url == "about:blank" or f"127.0.0.1:{TARGET_PORT}" in final_url
-    finally:
-        server.shutdown()
+            assert final_url == "about:blank" or final_url.startswith(target), final_url
 
 
-def test_download_is_cancelled(attacker_server: None) -> None:
+def test_download_is_cancelled(attacker: str) -> None:
     """A page-initiated download is an egress channel: cancelled + audited."""
     from packages.execution.models import TestStep
 
@@ -242,7 +254,7 @@ def test_download_is_cancelled(attacker_server: None) -> None:
         def do_GET(self) -> None:  # noqa: N802
             if self.path == "/":
                 body = (
-                    f'<html><body><a id="dl" href="{ATTACKER}/evil.png">dl</a></body></html>'
+                    f'<html><body><a id="dl" href="{attacker}/evil.png">dl</a></body></html>'
                 ).encode()
                 ctype = "text/html"
             else:
@@ -257,13 +269,10 @@ def test_download_is_cancelled(attacker_server: None) -> None:
         def log_message(self, *args: object) -> None:
             pass
 
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", TARGET_PORT), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        with _browser(f"{TARGET}/") as browser:
+    with serve_http(Handler) as target:
+        with _browser(f"{target}/") as browser:
             assert browser.page is not None
-            browser.execute_step(TestStep("s1", "navigate", f"{TARGET}/"), "run")
+            browser.execute_step(TestStep("s1", "navigate", f"{target}/"), "run")
             # Clicking the link targets the ATTACKER origin: the route guard
             # aborts the request, so no download ever starts (and if one
             # somehow starts, the download handler cancels it).
@@ -271,7 +280,5 @@ def test_download_is_cancelled(attacker_server: None) -> None:
             browser.page.wait_for_timeout(500)
             blocked = " ".join(b["url"] for b in browser.blocked_requests)
             cancelled = any(b["reason"] == "download cancelled" for b in browser.blocked_requests)
-            assert f"{ATTACKER}/evil.png" in blocked or cancelled, browser.blocked_requests
+            assert f"{attacker}/evil.png" in blocked or cancelled, browser.blocked_requests
             assert result.ok or "download" in result.detail.lower()
-    finally:
-        server.shutdown()

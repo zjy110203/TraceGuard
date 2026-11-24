@@ -30,8 +30,9 @@ from packages.agents.scripted_agent import (
     ScriptedAgentPolicy,
     teamflow_login_agent_steps,
 )
+from tests.netutil import free_port
 
-TF_PORT = 8043
+TF_PORT = free_port()
 TF_BASE = f"http://127.0.0.1:{TF_PORT}"
 EVAL = {"X-Eval-Token": "local-dev-eval-token-change-me"}
 

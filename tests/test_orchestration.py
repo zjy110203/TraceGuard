@@ -26,8 +26,9 @@ from apps.api.main import build_app
 from packages.core.config import Settings
 from packages.core.errors import ConflictError
 from packages.execution.tasks import RunStatus
+from tests.netutil import free_port
 
-TF_PORT = 8033
+TF_PORT = free_port()
 TF_BASE = f"http://127.0.0.1:{TF_PORT}"
 CASE_DIR = Path("benchmark/cases")
 EVAL_TOKEN = "local-dev-eval-token-change-me"

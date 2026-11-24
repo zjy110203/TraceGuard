@@ -29,11 +29,12 @@ from packages.agents.exploration import (
 from packages.agents.explorer import Explorer
 from packages.core.errors import ForbiddenError, ValidationError
 from packages.execution.models import TestCaseVersion
+from tests.netutil import free_port
 
 for _m in (ExplorationTrace, CandidateTestCase, TestCaseVersion):
     _m.__test__ = False
 
-TF_PORT = 8034
+TF_PORT = free_port()
 TF_BASE = f"http://127.0.0.1:{TF_PORT}"
 
 

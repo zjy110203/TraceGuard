@@ -34,11 +34,12 @@ from packages.agents.llm_policy import LLMPolicy
 from packages.evidence.graph import make_in_memory_graph
 from packages.execution.models import TestCaseVersion, TestIntent
 from packages.execution.pipeline import FullChain
+from tests.netutil import free_port
 
 TestCaseVersion.__test__ = False  # type: ignore[attr-defined] - pytest tries to collect it
 TestIntent.__test__ = False
 
-TF_PORT = 8029
+TF_PORT = free_port()
 TF_BASE = f"http://127.0.0.1:{TF_PORT}"
 EVAL = {"X-Eval-Token": "local-dev-eval-token-change-me"}
 CASES = Path(__file__).resolve().parents[1] / "benchmark" / "cases"

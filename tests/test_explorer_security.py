@@ -37,8 +37,9 @@ from packages.agents.llm import ModelConfig, ScriptedProvider, TracedClient
 from packages.agents.llm_policy import DECISION_SCHEMA, TOOL_ENUM, LLMPolicy
 from packages.core.config import Settings
 from packages.core.errors import ForbiddenError
+from tests.netutil import free_port
 
-TF_PORT = 8042
+TF_PORT = free_port()
 TF_BASE = f"http://127.0.0.1:{TF_PORT}"
 ORIGIN = f"http://127.0.0.1:{TF_PORT}"
 

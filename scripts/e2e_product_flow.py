@@ -58,6 +58,11 @@ ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "apps" / "web"
 PY = sys.executable
 
+# The script is run as ``python scripts/e2e_product_flow.py``, so the repo root
+# is not on sys.path. Importing product helpers (e.g. launch_args) needs it —
+# same convention as scripts/ui_acceptance.py.
+sys.path.insert(0, str(ROOT))
+
 TERMINAL_RUN_STATES = frozenset({"COMPLETED", "FAILED", "TIMED_OUT", "CANCELLED"})
 PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
 
@@ -866,13 +871,17 @@ class ProductFlow:
             with sync_playwright() as pw:
                 chromium = pw.chromium
                 browser = None
+                from packages.execution.browser import launch_args
+
                 if self.browser_channel:
                     try:
-                        browser = chromium.launch(channel=self.browser_channel, headless=True)
+                        browser = chromium.launch(
+                            channel=self.browser_channel, headless=True, args=launch_args()
+                        )
                     except Exception as exc:  # noqa: BLE001 - channel may be absent
                         print(f"[i] channel '{self.browser_channel}' unavailable ({exc})")
                 if browser is None:
-                    browser = chromium.launch(headless=True)
+                    browser = chromium.launch(headless=True, args=launch_args())
                 page = browser.new_page(viewport={"width": 1440, "height": 900})
                 page.on(
                     "console",

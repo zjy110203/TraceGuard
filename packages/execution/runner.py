@@ -282,11 +282,23 @@ class LocalRunner:
                         report.aborted_reason = exc.reason
                         break
                 result: StepExecution = browser.execute_step(step, run_id)
+                # StepReport is a generated-contract shape (C05), so a blocked
+                # step is marked in ``detail`` rather than a new field — but it
+                # is still never turned into a business observation below.
                 report.steps.append(
                     StepReport(
-                        step.step_id, step.action, result.ok, result.detail, result.evidence_ids
+                        step.step_id,
+                        step.action,
+                        result.ok,
+                        f"BLOCKED: {result.blocked}" if result.blocked else result.detail,
+                        result.evidence_ids,
                     )
                 )
+                if result.blocked:
+                    # The page was gone before this step could run: publish no
+                    # observation at all. Writing False here would let a browser
+                    # crash masquerade as a confirmed business failure.
+                    continue
                 # Every step publishes its own outcome, not just assertions.
                 #
                 # The TestCase Compiler binds a compiled candidate's Oracle to
@@ -324,6 +336,14 @@ class LocalRunner:
         # into a clean PASSED even if earlier assertions already evaluated.
         if report.aborted_reason:
             completed = False
+        if browser.page_crashed:
+            # A vanished page is an environment/execution failure, never a
+            # silently "completed" run.
+            completed = False
+            collector.emit(
+                "run.browser_crashed",
+                payload={"detail": browser.crash_detail},
+            )
         report.execution_status = ExecutionStatus.COMPLETED if completed else ExecutionStatus.FAILED
 
         oracle = OracleEvaluator(self._build_source_reader(ui_observations))

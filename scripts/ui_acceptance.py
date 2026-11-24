@@ -38,12 +38,16 @@ SUMMARY_PATH = Path(os.environ.get("TRACEGUARD_E2E_SUMMARY", ".traceguard-tmp/r5
 def _launch(pw: object) -> object:
     """Prefer the requested channel, fall back to bundled Chromium."""
     chromium = pw.chromium  # type: ignore[attr-defined]
+    # Same container-safe flag the product launcher uses (small /dev/shm on CI
+    # runners kills the renderer mid-screenshot).
+    from packages.execution.browser import launch_args
+
     if BROWSER_CHANNEL:
         try:
-            return chromium.launch(channel=BROWSER_CHANNEL, headless=True)
+            return chromium.launch(channel=BROWSER_CHANNEL, headless=True, args=launch_args())
         except Exception as exc:  # noqa: BLE001 - channel may be absent
             print(f"[i] channel '{BROWSER_CHANNEL}' unavailable ({exc}); using bundled Chromium")
-    return chromium.launch(headless=True)
+    return chromium.launch(headless=True, args=launch_args())
 
 
 # Five required viewports. Widths 1024/768/390 are the contract; heights are
@@ -168,6 +172,20 @@ def _sample_run(max_probes: int = 12) -> tuple[str, bool] | None:
     return (fallback, False) if fallback else None
 
 
+def _rendered(page: object, selector: str, timeout_ms: int = 20000) -> bool:
+    """Wait for a selector instead of guessing with a fixed sleep.
+
+    Diagnosis is computed on demand from the evidence bundle; with 15 evidence
+    records it takes ~2 s, so the previous ``wait_for_timeout(900)`` made the
+    deep-link checks fail deterministically even though the page rendered fine.
+    """
+    try:
+        page.wait_for_selector(selector, timeout=timeout_ms, state="attached")  # type: ignore[attr-defined]
+        return True
+    except Exception:  # noqa: BLE001 - absent selector is a recorded failure
+        return False
+
+
 def _deep_links(page: object) -> None:
     """Run -> diagnosis -> evidence -> run must be walkable without retyping ids."""
     sample = _sample_run()
@@ -188,8 +206,8 @@ def _deep_links(page: object) -> None:
         tab.first.click()
         page.wait_for_timeout(900)  # type: ignore[attr-defined]
         record("deep-link", "run detail -> diagnosis tab", f"/runs/{run_id}/diagnosis" in page.url)  # type: ignore[attr-defined]
-        has_meta = page.locator(".meta").count() >= 1  # type: ignore[attr-defined]
-        record("deep-link", "diagnosis page renders verdict", has_meta)
+        has_meta = _rendered(page, ".meta")
+        record("deep-link", "diagnosis page renders verdict", has_meta, "no .meta within 20s")
     else:
         record("deep-link", "run detail -> diagnosis tab", False, "no 诊断 tab")
 
@@ -201,7 +219,7 @@ def _deep_links(page: object) -> None:
         skip("deep-link", "evidence -> run detail", "sampled run has no evidence")
     else:
         ev_link = page.locator('.xlinks a:has-text("证据")')  # type: ignore[attr-defined]
-        if ev_link.count() >= 1:
+        if ev_link.count() >= 1 or _rendered(page, '.xlinks a:has-text("证据")'):
             ev_link.first.click()
             page.wait_for_timeout(1000)  # type: ignore[attr-defined]
             run_cells = page.evaluate(  # type: ignore[attr-defined]
@@ -229,7 +247,7 @@ def _deep_links(page: object) -> None:
 
     # 5. the query-param entry point must prefill and auto-load
     page.goto(f"{BASE}/#/diagnosis?run={run_id}")  # type: ignore[attr-defined]
-    page.wait_for_timeout(1000)  # type: ignore[attr-defined]
+    page.wait_for_timeout(300)  # type: ignore[attr-defined]
     prefilled = page.eval_on_selector("#diag-run", "el => el.value")  # type: ignore[attr-defined]
     record(
         "deep-link",
@@ -240,7 +258,8 @@ def _deep_links(page: object) -> None:
     record(
         "deep-link",
         "diagnosis?run= auto-loads",
-        page.locator(".meta").count() >= 1,  # type: ignore[attr-defined]
+        _rendered(page, ".meta"),
+        "no .meta within 20s",
     )
 
 

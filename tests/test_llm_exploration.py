@@ -22,11 +22,12 @@ from packages.agents.explorer import Explorer
 from packages.agents.llm import ModelConfig, ScriptedProvider, TracedClient
 from packages.agents.llm_policy import LLMPolicy
 from packages.execution.models import TestIntent
+from tests.netutil import free_port
 
 # A dataclass named Test* is not a pytest test class.
 TestIntent.__test__ = False
 
-TF_PORT = 8027
+TF_PORT = free_port()
 TF_BASE = f"http://127.0.0.1:{TF_PORT}"
 
 

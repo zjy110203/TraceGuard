@@ -8,7 +8,11 @@ run every call (retry is never a PUT on the old run).
 
 from __future__ import annotations
 
+import asyncio
 import json
+import queue
+import time
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +25,11 @@ from packages.execution.models import TestCaseVersion, load_cases_dir
 from packages.execution.orchestrator import Orchestrator, RunEvent
 
 router = APIRouter(prefix="/api/v1", tags=["workbench"])
+
+# SSE pacing: poll the subscriber queue without blocking the event loop, and
+# emit a comment frame after this much silence so proxies keep the link open.
+_SSE_POLL_S = 0.2
+_SSE_KEEPALIVE_S = 15.0
 
 
 class CreateTaskBody(BaseModel):
@@ -113,7 +122,13 @@ def event_history(after_sequence: int = 0, request: Request = None) -> list[dict
 @router.get("/events/stream")
 def event_stream(request: Request) -> StreamingResponse:
     """SSE stream of real orchestration events. Consumer replays from history
-    using the ``Last-Event-ID`` header (at-least-once, idempotent by event_id)."""
+    using the ``Last-Event-ID`` header (at-least-once, idempotent by event_id).
+
+    The generator MUST be async: ``request.is_disconnected()`` is a coroutine.
+    Calling it from a sync generator returns a (always truthy) coroutine object,
+    which terminated the stream right after replay and left live events
+    undelivered (found by R5-4.9 audit; the old test only asserted headers).
+    """
 
     orch = _orchestrator(request)
     last_id = request.headers.get("last-event-id", "")
@@ -124,26 +139,41 @@ def event_stream(request: Request) -> StreamingResponse:
                 after_seq = e.sequence
                 break
 
-    q = orch.bus.subscribe()
-
-    def generate():
+    async def generate() -> AsyncIterator[str]:
+        # Subscribe INSIDE the generator: if the client is gone before the body
+        # iterator is ever entered, Starlette never runs this function, so an
+        # eager subscribe() would leak a queue per aborted connection (proved by
+        # test_disconnect_unsubscribes_and_leaks_nothing).
+        q = orch.bus.subscribe()
+        last_seq = after_seq
         try:
-            # Replay missed events first (at-least-once).
-            for event in orch.bus.history(after_seq):
+            # Replay missed events first (at-least-once), then continue live.
+            for event in orch.bus.history(last_seq):
+                last_seq = event.sequence
                 yield _sse(event)
 
-            idle = 0
+            last_emit = time.monotonic()
             while True:
-                if request.is_disconnected():
+                if await request.is_disconnected():
                     break
                 try:
-                    event = q.get(timeout=1.0)
-                    idle = 0
-                    yield _sse(event)
-                except Exception:  # queue.Empty
-                    idle += 1
-                    if idle % 15 == 0:
+                    event = q.get_nowait()
+                except queue.Empty:
+                    if time.monotonic() - last_emit >= _SSE_KEEPALIVE_S:
                         yield ": keep-alive\n\n"
+                        last_emit = time.monotonic()
+                    # Cooperative sleep instead of blocking queue.get(): keeps
+                    # the event loop free for other clients and for disconnects.
+                    await asyncio.sleep(_SSE_POLL_S)
+                    continue
+                if event.sequence <= last_seq:
+                    # Published between subscribe() and the replay above: it is
+                    # already on the wire, so delivering it twice would break
+                    # "unique ids per connection" for Last-Event-ID consumers.
+                    continue
+                last_seq = event.sequence
+                last_emit = time.monotonic()
+                yield _sse(event)
         finally:
             orch.bus.unsubscribe(q)
 
