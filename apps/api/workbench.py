@@ -20,9 +20,13 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from packages.core.logging import get_logger
+from packages.execution.eventaudit import count_dropped_in_range
 from packages.execution.locators import LocatorRegistry
 from packages.execution.models import TestCaseVersion, load_cases_dir
-from packages.execution.orchestrator import Orchestrator, RunEvent
+from packages.execution.orchestrator import Orchestrator, RunEvent, SubscriberQueue
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["workbench"])
 
@@ -30,6 +34,9 @@ router = APIRouter(prefix="/api/v1", tags=["workbench"])
 # emit a comment frame after this much silence so proxies keep the link open.
 _SSE_POLL_S = 0.2
 _SSE_KEEPALIVE_S = 15.0
+# Bounded per-connection buffer. Overflow is recorded by the bus and reported to
+# the client as a gap comment frame instead of being lost silently.
+_SSE_QUEUE_MAXSIZE = 1000
 
 
 class CreateTaskBody(BaseModel):
@@ -128,6 +135,23 @@ def event_stream(request: Request) -> StreamingResponse:
     Calling it from a sync generator returns a (always truthy) coroutine object,
     which terminated the stream right after replay and left live events
     undelivered (found by R5-4.9 audit; the old test only asserted headers).
+
+    A sequence gap (queue overflow for this subscriber, or events the server has
+    no history for) is announced with an SSE **comment** frame
+    ``: gap from=<a> to=<b> dropped=<n>``, where ``dropped`` counts the missing
+    sequences this subscriber's queue actually recorded as dropped (0 means the
+    loss did not come from this queue — e.g. history lost on restart). Comments
+    are ignored by every spec-compliant client, so no `RunEvent` field and no
+    event type is added (C05 stays intact); a debugging client can still surface
+    the loss.
+
+    Two detection paths, one signal:
+
+    * a delivered event whose sequence jumps ahead of the cursor (something was
+      lost in between);
+    * an idle poll where the subscriber queue *recorded* dropping sequences.
+      Without this, a loss that happens after the last delivered event would
+      stay invisible until — if ever — the next event is published.
     """
 
     orch = _orchestrator(request)
@@ -138,13 +162,19 @@ def event_stream(request: Request) -> StreamingResponse:
             if e.event_id == last_id:
                 after_seq = e.sequence
                 break
+        else:
+            # Unknown/expired cursor: the old behaviour was to fall back to 0 and
+            # replay the whole (in-process) history. Keep that at-least-once
+            # behaviour, but say so — silence here is what made a restart look
+            # like "the stream is fine".
+            logger.warning("sse_unknown_cursor: %s; replaying from sequence 0", last_id)
 
     async def generate() -> AsyncIterator[str]:
         # Subscribe INSIDE the generator: if the client is gone before the body
         # iterator is ever entered, Starlette never runs this function, so an
         # eager subscribe() would leak a queue per aborted connection (proved by
         # test_disconnect_unsubscribes_and_leaks_nothing).
-        q = orch.bus.subscribe()
+        q = orch.bus.subscribe(maxsize=_SSE_QUEUE_MAXSIZE)
         last_seq = after_seq
         try:
             # Replay missed events first (at-least-once), then continue live.
@@ -153,12 +183,35 @@ def event_stream(request: Request) -> StreamingResponse:
                 yield _sse(event)
 
             last_emit = time.monotonic()
+            # Highest sequence already announced as missing. Kept separate from
+            # `last_seq` (highest sequence actually delivered): a sequence may be
+            # legitimately absent without ever being delivered.
+            announced_seq = last_seq
             while True:
                 if await request.is_disconnected():
                     break
                 try:
                     event = q.get_nowait()
                 except queue.Empty:
+                    known = _contiguous_drop_gap(q, last_seq, announced_seq)
+                    if known is not None:
+                        gap_start, gap_end = known
+                        covered = count_dropped_in_range(q.dropped_ranges, gap_start, gap_end)
+                        announced_seq = gap_end
+                        last_emit = time.monotonic()
+                        logger.warning(
+                            "sse_sequence_gap: reason=queue_overflow from=%d to=%d "
+                            "missing=%d queue_dropped=%d covered_by_queue_drops=%d "
+                            "bus_dropped_total=%d",
+                            gap_start,
+                            gap_end,
+                            gap_end - gap_start + 1,
+                            q.dropped,
+                            covered,
+                            orch.bus.dropped_total,
+                        )
+                        yield _sse_gap(gap_start, gap_end, covered)
+                        continue
                     if time.monotonic() - last_emit >= _SSE_KEEPALIVE_S:
                         yield ": keep-alive\n\n"
                         last_emit = time.monotonic()
@@ -171,6 +224,24 @@ def event_stream(request: Request) -> StreamingResponse:
                     # already on the wire, so delivering it twice would break
                     # "unique ids per connection" for Last-Event-ID consumers.
                     continue
+                if event.sequence > last_seq + 1:
+                    gap_start = max(last_seq + 1, announced_seq + 1)
+                    gap_end = event.sequence - 1
+                    if gap_start <= gap_end:
+                        covered = count_dropped_in_range(q.dropped_ranges, gap_start, gap_end)
+                        announced_seq = gap_end
+                        logger.warning(
+                            "sse_sequence_gap: reason=sequence_jump expected=%d got=%d "
+                            "missing=%d queue_dropped=%d covered_by_queue_drops=%d "
+                            "bus_dropped_total=%d",
+                            gap_start,
+                            event.sequence,
+                            gap_end - gap_start + 1,
+                            q.dropped,
+                            covered,
+                            orch.bus.dropped_total,
+                        )
+                        yield _sse_gap(gap_start, gap_end, covered)
                 last_seq = event.sequence
                 last_emit = time.monotonic()
                 yield _sse(event)
@@ -183,6 +254,30 @@ def event_stream(request: Request) -> StreamingResponse:
 def _sse(event: RunEvent) -> str:
     payload = json.dumps(event.to_dict(), ensure_ascii=False)
     return f"id: {event.event_id}\nevent: {event.event_type}\ndata: {payload}\n\n"
+
+
+def _sse_gap(start: int, end: int, dropped: int) -> str:
+    """Comment frame announcing missing sequences (never a data frame)."""
+    return f": gap from={start} to={end} dropped={dropped}\n\n"
+
+
+def _contiguous_drop_gap(
+    q: SubscriberQueue, last_seq: int, announced_seq: int
+) -> tuple[int, int] | None:
+    """First recorded drop range that is contiguous with what we know.
+
+    Only a range starting exactly at the next expected sequence is announced: a
+    hole means the lower part was merely queued/in flight, and calling it lost
+    would libel an event the client is about to receive.
+    """
+    start = max(last_seq, announced_seq) + 1
+    for low, high in q.dropped_ranges:
+        if high < start:
+            continue  # already delivered or already announced
+        if low > start:
+            return None  # a hole: wait for the queued part to arrive
+        return start, high
+    return None
 
 
 def register_workbench(

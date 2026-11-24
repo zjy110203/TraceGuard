@@ -27,5 +27,6 @@
   "events": [],
   "aborted_reason": "",
   "blocked": false,
-  "blocked_reason": ""
+  "blocked_reason": "",
+  "cleanup": {}
 }

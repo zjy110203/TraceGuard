@@ -15,17 +15,20 @@ from __future__ import annotations
 
 import os
 import threading
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
 from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
 
 from packages.core.errors import ForbiddenError
+from packages.core.logging import get_logger
 from packages.execution.events import EventCollector, EvidenceRecord
 from packages.execution.locators import LocatorRegistry
 from packages.execution.models import TestStep
 from packages.execution.netpolicy import OriginPolicy
+
+logger = get_logger(__name__)
 
 
 def browser_channel() -> str | None:
@@ -69,6 +72,84 @@ class StepExecution:
     blocked: str = ""
 
 
+@dataclass
+class CleanupStatus:
+    """Structured outcome of tearing a ``BrowserManager`` down.
+
+    Cleanup is a reported dimension of its own, separate from the business
+    verdict: a browser that refuses to close must be visible in the RunReport
+    without turning a PASSED result into FAILED. Each field is filled by the
+    code path that owns that resource, so "closed" can never be confused with
+    "never opened".
+    """
+
+    browser_closed: bool = False
+    browser_close_error: str = ""
+    trace_stopped: bool = False  # trace finalized AND registered as evidence
+    trace_stop_error: str = ""
+    evidence_errors: list[str] = field(default_factory=list)
+    page_crashed: bool = False
+    page_crash_detail: str = ""
+    execution_cancelled: bool = False
+    cancellation_reason: str = ""
+    playwright_stopped: bool = False
+    playwright_stop_error: str = ""
+
+    def problems(self) -> list[str]:
+        """Every recorded problem as readable text, in a stable order."""
+        items: list[str] = []
+        if self.browser_close_error:
+            items.append(f"browser_close: {self.browser_close_error}")
+        if self.trace_stop_error:
+            items.append(f"trace_stop: {self.trace_stop_error}")
+        if self.playwright_stop_error:
+            items.append(f"playwright_stop: {self.playwright_stop_error}")
+        items.extend(f"evidence: {error}" for error in self.evidence_errors)
+        if self.page_crashed:
+            items.append(f"page_crashed: {self.page_crash_detail or 'page lost'}")
+        if self.execution_cancelled:
+            items.append(f"execution_cancelled: {self.cancellation_reason or 'cancelled'}")
+        return items
+
+    @property
+    def is_clean(self) -> bool:
+        """Did every resource get released without a lifecycle error?
+
+        Deliberately narrow. An evidence gap (a capture that failed on a
+        healthy page) and a renderer crash are execution/evidence facts,
+        reported through ``evidence_errors`` / ``page_crashed`` and the run's
+        execution_status — neither means a resource was left dangling, so
+        neither makes an otherwise clean teardown "unclean". An operator
+        cancellation is a deliberate outcome for the same reason.
+        """
+        return (
+            self.browser_closed
+            and self.trace_stopped
+            and self.playwright_stopped
+            and not self.browser_close_error
+            and not self.trace_stop_error
+            and not self.playwright_stop_error
+        )
+
+    def mark_cancelled(self, reason: str) -> None:
+        """Record why a run stopped early; the first reason wins.
+
+        Cancellation is not a cleanup defect — it explains an early stop — so
+        it is reported beside the resource flags without affecting
+        ``is_clean``.
+        """
+        if self.execution_cancelled:
+            return
+        self.execution_cancelled = True
+        self.cancellation_reason = (reason or "cancelled without a reason")[:300]
+
+    def to_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = asdict(self)
+        data["is_clean"] = self.is_clean
+        data["problems"] = self.problems()
+        return data
+
+
 class BrowserManager:
     """Manages Playwright lifecycle and executes test steps against TeamFlow."""
 
@@ -104,6 +185,8 @@ class BrowserManager:
         # built on steps that never observed anything.
         self.page_crashed = False
         self.crash_detail = ""
+        # Filled by the teardown paths below; never by the business verdict.
+        self.cleanup = CleanupStatus()
 
     def _on_crash(self, _page: Any) -> None:
         self._mark_page_lost("page crashed (renderer process gone)")
@@ -113,6 +196,8 @@ class BrowserManager:
             return
         self.page_crashed = True
         self.crash_detail = detail[:300]
+        self.cleanup.page_crashed = True
+        self.cleanup.page_crash_detail = self.crash_detail
         self.collector.emit("browser.page.crashed", payload={"detail": self.crash_detail})
 
     def _page_available(self) -> bool:
@@ -214,43 +299,115 @@ class BrowserManager:
         self.page.on("websocket", self._on_websocket)
         return self
 
+    # -- teardown steps ---------------------------------------------------
+    # Each raw call is isolated in its own method so ``__exit__`` can record a
+    # failure per step (and so tests can inject one without a real crash).
+
+    def _stop_trace(self) -> None:
+        assert self.context is not None and self._trace_path is not None
+        self.context.tracing.stop(path=str(self._trace_path))
+
+    def _close_browser(self) -> None:
+        assert self.browser is not None
+        self.browser.close()
+
+    def _stop_playwright(self, exc: tuple[object, ...]) -> None:
+        assert self._pw is not None
+        self._pw.__exit__(*exc)  # type: ignore[arg-type]
+
+    def _record_trace_evidence(self) -> None:
+        """Register the stopped trace file as C06 evidence."""
+        assert self._trace_path is not None
+        import hashlib
+
+        # Full SHA-256, not a 16-char prefix: a truncated digest cannot be
+        # verified against the bytes it claims to describe.
+        digest = hashlib.sha256(self._trace_path.read_bytes()).hexdigest()
+        self._evidence.append(
+            EvidenceRecord.create(
+                evidence_type="playwright_trace",
+                source="browser:context",
+                run_id=self.run_id,
+                step_id=None,
+                summary=f"Playwright trace ({self._trace_path.stat().st_size} bytes)",
+                attachment_ref=str(self._trace_path),
+                integrity_check=f"sha256:{digest}",
+                source_trust="observed",
+                payload={"path": str(self._trace_path), "digest": digest},
+            )
+        )
+
+    def _emit_cleanup_failure(self, event_type: str, detail: str) -> None:
+        try:
+            self.collector.emit(event_type, payload={"error": detail})
+        except Exception:  # noqa: BLE001 - reporting must not abort teardown
+            logger.exception("cleanup_event_emit_failed: %s", event_type)
+
+    def _record_evidence_error(self, detail: str) -> None:
+        """An evidence gap is recorded, never promoted to a business failure."""
+        self.cleanup.evidence_errors.append(detail[:300])
+
     def __exit__(self, *exc: object) -> None:
+        """Tear every resource down without ever raising or staying silent.
+
+        Contract:
+          * a cleanup failure is recorded in ``self.cleanup``, emitted as an
+            event and logged, so the caller can always see it;
+          * it never replaces the business outcome of the ``with`` body;
+          * every step is isolated, so a dead trace context cannot keep the
+            browser alive, and a failing ``playwright.stop()`` cannot escape
+            into the runner and destroy an otherwise valid report.
+        """
         if self.context is not None and self._trace_path is not None:
             try:
-                self.context.tracing.stop(path=str(self._trace_path))
-                import hashlib
+                self._stop_trace()
+                self._record_trace_evidence()
+            except Exception as err:  # noqa: BLE001 - trace must not break a run
+                self.cleanup.trace_stopped = False
+                self.cleanup.trace_stop_error = f"{type(err).__name__}: {err}"[:300]
+                logger.error("trace_stop_failed: %s", self.cleanup.trace_stop_error)
+                self._emit_cleanup_failure("evidence.trace.failed", self.cleanup.trace_stop_error)
+            else:
+                self.cleanup.trace_stopped = True
+        else:
+            # No trace was requested; nothing is left running.
+            self.cleanup.trace_stopped = True
 
-                # Full SHA-256, not a 16-char prefix: a truncated digest cannot
-                # be verified against the bytes it claims to describe.
-                digest = hashlib.sha256(self._trace_path.read_bytes()).hexdigest()
-                self._evidence.append(
-                    EvidenceRecord.create(
-                        evidence_type="playwright_trace",
-                        source="browser:context",
-                        run_id=self.run_id,
-                        step_id=None,
-                        summary=f"Playwright trace ({self._trace_path.stat().st_size} bytes)",
-                        attachment_ref=str(self._trace_path),
-                        integrity_check=f"sha256:{digest}",
-                        source_trust="observed",
-                        payload={"path": str(self._trace_path), "digest": digest},
-                    )
-                )
-            except Exception as exc:  # noqa: BLE001 - trace must not break a run
-                self.collector.emit(
-                    "evidence.trace.failed",
-                    payload={"error": f"{type(exc).__name__}: {exc}"[:300]},
-                )
-        if self.browser:
+        if self.browser is not None:
             try:
-                self.browser.close()
-            except Exception as exc:  # noqa: BLE001 - cleanup must not mask the result
-                self.collector.emit(
-                    "browser.close.failed",
-                    payload={"error": f"{type(exc).__name__}: {exc}"[:300]},
-                )
+                self._close_browser()
+                self.cleanup.browser_closed = True
+            except Exception as err:  # noqa: BLE001 - cleanup must not mask the result
+                self.cleanup.browser_closed = False
+                self.cleanup.browser_close_error = f"{type(err).__name__}: {err}"[:300]
+                logger.error("browser_close_failed: %s", self.cleanup.browser_close_error)
+                self._emit_cleanup_failure("browser.close.failed", self.cleanup.browser_close_error)
+            finally:
+                # Never keep a dead handle: reusing it raises "Event loop is
+                # closed" and hides the first, real failure behind a second one.
+                self.browser = None
+        else:
+            self.cleanup.browser_closed = True
+
         if self._pw is not None:
-            self._pw.__exit__(*exc)  # type: ignore[arg-type]
+            try:
+                self._stop_playwright(exc)
+                self.cleanup.playwright_stopped = True
+            except Exception as err:  # noqa: BLE001 - must never escape this frame
+                self.cleanup.playwright_stopped = False
+                self.cleanup.playwright_stop_error = f"{type(err).__name__}: {err}"[:300]
+                logger.error("playwright_stop_failed: %s", self.cleanup.playwright_stop_error)
+                self._emit_cleanup_failure(
+                    "browser.playwright.failed", self.cleanup.playwright_stop_error
+                )
+            finally:
+                self._pw = None
+        else:
+            self.cleanup.playwright_stopped = True
+
+        # The page/context belonged to the browser: they are dead now too.
+        self.page = None
+        self.context = None
 
     def _on_response(self, response: Any) -> None:
         if "/api/" in response.url:
@@ -313,13 +470,12 @@ class BrowserManager:
         except Exception as exc:  # noqa: BLE001 - evidence gap, not a step failure
             if self._is_target_gone(exc):
                 self._mark_page_lost(f"screenshot failed: {exc}")
+            error = f"{type(exc).__name__}: {str(exc)[:300]}"
+            self._record_evidence_error(f"screenshot[{step_id}]: {error}")
             self.collector.emit(
                 "evidence.screenshot.failed",
                 step_id=step_id,
-                payload={
-                    "error": f"{type(exc).__name__}: {str(exc)[:300]}",
-                    "target_gone": self.page_crashed,
-                },
+                payload={"error": error, "target_gone": self.page_crashed},
             )
             return ""
         import hashlib
@@ -361,10 +517,12 @@ class BrowserManager:
         except Exception as exc:  # noqa: BLE001 - evidence gap, not a step failure
             if self._is_target_gone(exc):
                 self._mark_page_lost(f"dom snapshot failed: {exc}")
+            error = f"{type(exc).__name__}: {str(exc)[:300]}"
+            self._record_evidence_error(f"dom_snapshot[{step_id}]: {error}")
             self.collector.emit(
                 "evidence.dom.failed",
                 step_id=step_id,
-                payload={"error": f"{type(exc).__name__}: {str(exc)[:300]}"},
+                payload={"error": error},
             )
             return ""
         ev = EvidenceRecord.create(

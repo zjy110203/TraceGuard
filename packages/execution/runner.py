@@ -93,6 +93,10 @@ class RunReport:
     # "failed for an unknown reason" and certainly not "passed".
     blocked: bool = False
     blocked_reason: str = ""
+    # Teardown outcome (browser/trace/playwright), reported separately from the
+    # business verdict: see ``CleanupStatus``. Additive field — old readers that
+    # ignore it are unaffected.
+    cleanup: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -331,6 +335,25 @@ class LocalRunner:
         # silently drop it.
         report.evidence.extend([e.to_dict() for e in browser.evidence()])
 
+        # Cleanup accounting. The browser is gone, but nothing is lost:
+        # ``collector.to_dicts()`` only runs at the end of this method, so every
+        # teardown event emitted above (and by ``__exit__``) still lands in the
+        # report. A degraded teardown is reported, never turned into a verdict:
+        # a browser that will not close cannot make a passing test fail.
+        if report.aborted_reason:
+            browser.cleanup.mark_cancelled(report.aborted_reason)
+            collector.emit(
+                "run.cancelled",
+                payload={"reason": browser.cleanup.cancellation_reason},
+            )
+        report.cleanup = browser.cleanup.to_dict()
+        cleanup_note = ""
+        if not browser.cleanup.is_clean:
+            problems = browser.cleanup.problems()
+            collector.emit("run.cleanup.degraded", payload={"problems": problems})
+            cleanup_note = "cleanup degraded: " + "; ".join(problems)
+            logger.warning("run_cleanup_degraded: %s", cleanup_note)
+
         completed = execution_completed if execution_completed is not None else True
         # An abort is an independent execution fact; it must never be masked
         # into a clean PASSED even if earlier assertions already evaluated.
@@ -381,6 +404,10 @@ class LocalRunner:
         report.test_verdict = outcome.verdict.value
         report.assertion_results = [asdict(r) for r in assertion_results]
         report.verdict_notes = outcome.notes
+        if cleanup_note:
+            # Tuples are immutable: rebuild rather than append. The note is
+            # advisory and never rewrites the verdict.
+            report.verdict_notes = (*report.verdict_notes, cleanup_note)
         report.finished_at = datetime.now(UTC).isoformat()
         report.events = collector.to_dicts()
 

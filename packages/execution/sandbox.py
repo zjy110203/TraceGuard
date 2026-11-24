@@ -56,6 +56,18 @@ OWNERSHIP = {"project": "traceguard", "round": "r3", "owner": "RepairSandbox"}
 HEALTH_TIMEOUT_S = 60.0
 REPLAY_BUDGET_S = 90.0
 EVAL_TOKEN = "local-dev-eval-token-change-me"
+# A subprocess cannot inherit a bound socket reliably (especially on Windows),
+# so it must bind the port itself. ``_free_port`` therefore leaves a window in
+# which another process can steal the port; that is retried, but only when the
+# child's stderr proves the failure was a bind conflict.
+START_ATTEMPTS = 3
+STDERR_TAIL_BYTES = 4000
+_PORT_CONFLICT_MARKERS = (
+    "address already in use",
+    "errno 98",
+    "errno 10048",
+    "winerror 10048",
+)
 
 
 class SandboxError(RuntimeError):
@@ -110,6 +122,7 @@ class RepairSandbox:
         candidate: TestCaseVersion,
         control_case: TestCaseVersion | None = None,
         on_evidence: Callable[[dict[str, Any]], None] | None = None,
+        root: Path | None = None,
     ) -> None:
         self.sandbox_id = f"sb_{uuid.uuid4().hex[:12]}"
         self.proposal_id = proposal_id
@@ -117,7 +130,13 @@ class RepairSandbox:
         self.candidate = candidate
         self.control_case = control_case
         self.on_evidence = on_evidence
-        self._dir = SANDBOX_ROOT / self.sandbox_id
+        # The root is injectable so tests can isolate each sandbox under their
+        # own tmp_path. The previous fixed root accumulated one directory per
+        # sandbox forever (180 found after a few rounds), and a host that guards
+        # bulk deletes then refused the cleanup — making an honest test fail for
+        # an unrelated reason. Production keeps the project temporary root.
+        self._root = Path(root) if root is not None else SANDBOX_ROOT
+        self._dir = self._root / self.sandbox_id
         self._process: subprocess.Popen[Any] | None = None
         self._stderr_handle: Any = None
         self._target_url = ""
@@ -127,10 +146,10 @@ class RepairSandbox:
     # ------------------------------------------------------------- lifecycle
 
     def open(self) -> Path:
-        SANDBOX_ROOT.mkdir(parents=True, exist_ok=True)
+        self._root.mkdir(parents=True, exist_ok=True)
         self._dir.mkdir(parents=True, exist_ok=True)
         resolved = self._dir.resolve()
-        if SANDBOX_ROOT.resolve() not in resolved.parents:
+        if self._root.resolve() not in resolved.parents:
             raise SandboxError("sandbox dir escaped the project temporary root")
         marker = {
             **OWNERSHIP,
@@ -144,8 +163,15 @@ class RepairSandbox:
         return resolved
 
     def _start_target(self) -> str:
-        """Start an isolated TeamFlow subprocess on a throwaway SQLite database."""
-        port = _free_port()
+        """Start an isolated TeamFlow subprocess on a throwaway SQLite database.
+
+        ``_free_port`` only *observed* a port as free; the child binds it later,
+        so a concurrent process can take it in between. A child that exits
+        before becoming healthy is therefore retried on a fresh port, and the
+        final error says whether the stderr actually showed a bind conflict.
+        A child that stays alive yet never answers ``/health`` is a real
+        startup bug — retrying would only hide it, so that fails immediately.
+        """
         db_path = self._dir / "teamflow.db"
         # `python -m uvicorn` does not add the project root to sys.path.
         env = _child_env(
@@ -155,6 +181,59 @@ class RepairSandbox:
                 "TEAMFLOW_DISABLE_SEED": "1",
             }
         )
+        stderr_path = self._dir / "target_stderr.log"
+        tried: list[int] = []
+        last_stderr = ""
+        last_rc: int | None = None
+        conflict_evidence = False
+        for _attempt in range(START_ATTEMPTS):
+            port = _free_port()
+            tried.append(port)
+            url = f"http://127.0.0.1:{port}"
+            self._spawn_target(port, env, stderr_path)
+            deadline = time.monotonic() + HEALTH_TIMEOUT_S
+            while time.monotonic() < deadline:
+                try:
+                    if httpx.get(f"{url}/health", timeout=1.0, trust_env=False).status_code == 200:
+                        self._target_url = url
+                        return url
+                except httpx.HTTPError:
+                    pass
+                proc = self._process
+                if proc is not None and proc.poll() is not None:
+                    last_rc = proc.returncode
+                    self._close_stderr()
+                    last_stderr = _stderr_tail(stderr_path)
+                    conflict_evidence = conflict_evidence or _stderr_shows_port_conflict(
+                        last_stderr
+                    )
+                    break
+                time.sleep(0.2)
+            else:
+                # Alive but never healthy: a real bug, fail fast and keep stderr.
+                last_stderr = _stderr_tail(stderr_path)
+                pid = self._process.pid if self._process is not None else -1
+                raise SandboxError(
+                    f"sandbox TeamFlow stayed alive but never became healthy on port "
+                    f"{port} (pid={pid}); stderr tail: {last_stderr or '<empty>'}"
+                )
+            self._stop_process()
+            # Child exited before health: the port may have been stolen, so try
+            # another one. The last attempt's error keeps the evidence.
+        if conflict_evidence:
+            raise SandboxError(
+                f"sandbox TeamFlow could not bind a free port after {START_ATTEMPTS} "
+                f"attempts (child stderr reports an address conflict); "
+                f"ports tried={tried}; last stderr: {last_stderr or '<empty>'}"
+            )
+        raise SandboxError(
+            f"sandbox TeamFlow exited before becoming healthy on {START_ATTEMPTS} "
+            f"attempts (no bind-conflict evidence in stderr, rc={last_rc}); "
+            f"ports tried={tried}; last stderr: {last_stderr or '<empty>'}"
+        )
+
+    def _spawn_target(self, port: int, env: dict[str, str], stderr_path: Path) -> None:
+        """Start one child attempt; the previous attempt's log is truncated."""
         cmd = [
             sys.executable,
             "-m",
@@ -169,7 +248,7 @@ class RepairSandbox:
         ]
         # Keep the target's stderr on disk: a subprocess that dies before health
         # must leave a diagnosable trace, not just a generic failure.
-        self._stderr_handle = (self._dir / "target_stderr.log").open("wb")
+        self._stderr_handle = stderr_path.open("wb")
         self._process = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
             cmd,
             cwd=str(ROOT),
@@ -179,19 +258,31 @@ class RepairSandbox:
         )
         self._target_pid = self._process.pid
         (self._dir / "target.pid").write_text(str(self._process.pid), encoding="utf-8")
-        url = f"http://127.0.0.1:{port}"
-        deadline = time.monotonic() + HEALTH_TIMEOUT_S
-        while time.monotonic() < deadline:
-            try:
-                if httpx.get(f"{url}/health", timeout=1.0, trust_env=False).status_code == 200:
-                    self._target_url = url
-                    return url
-            except httpx.HTTPError:
-                pass
-            if self._process.poll() is not None:
-                raise SandboxError("sandbox TeamFlow exited before becoming healthy")
-            time.sleep(0.2)
-        raise SandboxError("sandbox TeamFlow did not become healthy in time")
+
+    def _close_stderr(self) -> None:
+        if self._stderr_handle is not None:
+            self._stderr_handle.close()
+            self._stderr_handle = None
+
+    def _stop_process(self) -> None:
+        """Reap/terminate the child attempt and drop its stderr handle."""
+        proc = self._process
+        if proc is not None:
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=5)
+            else:
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
+        self._process = None
+        self._target_pid = None
+        self._close_stderr()
 
     # -------------------------------------------------------------- replay
 
@@ -350,24 +441,13 @@ class RepairSandbox:
 
     def close(self) -> None:
         """Stop only OUR subprocess and delete only OUR directory."""
-        proc = self._process
-        if proc is not None and proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=5)
-        self._process = None
-        if self._stderr_handle is not None:
-            self._stderr_handle.close()
-            self._stderr_handle = None
+        self._stop_process()
 
         resolved = self._dir.resolve()
         marker = resolved / MARKER_NAME
         if not resolved.exists():
             return
-        if SANDBOX_ROOT.resolve() not in resolved.parents:
+        if self._root.resolve() not in resolved.parents:
             return  # escaped containment: refuse to delete
         try:
             recorded = json.loads(marker.read_text(encoding="utf-8"))
@@ -405,6 +485,26 @@ def _free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
+
+
+def _stderr_tail(path: Path, limit: int = STDERR_TAIL_BYTES) -> str:
+    """Last bytes of the child's stderr, decoded best-effort."""
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return ""
+    return data[-limit:].decode("utf-8", errors="replace").strip()
+
+
+def _stderr_shows_port_conflict(text: str) -> bool:
+    """True only when the log contains actual bind-conflict evidence.
+
+    ``[Errno 98]``/``[Errno 10048]`` are the POSIX/Windows codes uvicorn reports;
+    matching them prevents a "port stolen" failure from being reported as a
+    generic "TeamFlow did not start".
+    """
+    lowered = text.lower()
+    return any(marker in lowered for marker in _PORT_CONFLICT_MARKERS)
 
 
 def _case_jsonable(case: TestCaseVersion) -> dict[str, Any]:

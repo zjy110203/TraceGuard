@@ -91,6 +91,10 @@
         },
         "blocked_reason": {
           "type": "string"
+        },
+        "cleanup": {
+          "type": "object",
+          "additionalProperties": true
         }
       },
       "required": [

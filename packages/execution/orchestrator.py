@@ -43,6 +43,12 @@ from packages.execution.tasks import RunService, RunStatus, RunView, TaskService
 
 logger = get_logger(__name__)
 
+# A slow subscriber drops events; keeping every single dropped sequence would be
+# an unbounded growth path, while keeping none makes the loss invisible. Ranges
+# are coalesced and capped: the newest 100 are enough to explain a gap.
+_MAX_DROP_RANGES = 100
+_DEFAULT_QUEUE_MAXSIZE = 1000
+
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
@@ -64,25 +70,81 @@ class RunEvent:
         return asdict(self)
 
 
+class SubscriberQueue(queue.Queue[RunEvent]):
+    """Per-subscriber queue that *records* overflow instead of hiding it.
+
+    ``queue.Queue(maxsize=...)`` + ``put_nowait`` raises ``queue.Full`` and the
+    old bus swallowed it, so a slow SSE client silently missed events with no
+    count, no trace and no way for the consumer to notice. The queue now keeps
+    a drop counter and coalesced sequence ranges so the stream can tell the
+    client exactly which sequences it lost.
+
+    No `RunEvent` field is added or changed: the loss signal travels as an SSE
+    comment frame, which C05 consumers already ignore by spec.
+    """
+
+    def __init__(self, maxsize: int = _DEFAULT_QUEUE_MAXSIZE) -> None:
+        super().__init__(maxsize=maxsize)
+        self._drop_lock = threading.Lock()
+        self._dropped = 0
+        self._dropped_ranges: list[tuple[int, int]] = []
+
+    def note_drop(self, sequence: int) -> None:
+        """Record that ``sequence`` was dropped for this subscriber."""
+        with self._drop_lock:
+            self._dropped += 1
+            if self._dropped_ranges and sequence == self._dropped_ranges[-1][1] + 1:
+                self._dropped_ranges[-1] = (self._dropped_ranges[-1][0], sequence)
+                return
+            if len(self._dropped_ranges) >= _MAX_DROP_RANGES:
+                self._dropped_ranges.pop(0)
+            self._dropped_ranges.append((sequence, sequence))
+
+    @property
+    def dropped(self) -> int:
+        """Total events this subscriber never received."""
+        with self._drop_lock:
+            return self._dropped
+
+    @property
+    def dropped_ranges(self) -> list[tuple[int, int]]:
+        """Inclusive sequence ranges that were dropped, oldest first (bounded)."""
+        with self._drop_lock:
+            return list(self._dropped_ranges)
+
+    def drop_snapshot(self) -> tuple[int, list[tuple[int, int]]]:
+        """Consistent ``(dropped, ranges)`` pair for diagnostics."""
+        with self._drop_lock:
+            return self._dropped, list(self._dropped_ranges)
+
+
 class EventBus:
     """Fan-out bus with per-subscriber queues and a monotonic sequence."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._subscribers: list[queue.Queue[RunEvent]] = []
+        self._subscribers: list[SubscriberQueue] = []
         self._sequence = 0
         self._history: list[RunEvent] = []
+        # Aggregate loss across every subscriber ever served by this bus.
+        # Process-local, like ``_history``: it resets on restart.
+        self.dropped_total = 0
 
-    def subscribe(self) -> queue.Queue[RunEvent]:
-        q: queue.Queue[RunEvent] = queue.Queue(maxsize=1000)
+    def subscribe(self, maxsize: int = _DEFAULT_QUEUE_MAXSIZE) -> SubscriberQueue:
+        """Register a subscriber queue. ``maxsize`` exists for tests/gateways."""
+        if maxsize < 1:
+            raise ValueError(f"maxsize must be >= 1, got {maxsize}")
+        q = SubscriberQueue(maxsize)
         with self._lock:
             self._subscribers.append(q)
         return q
 
     def unsubscribe(self, q: queue.Queue[RunEvent]) -> None:
         with self._lock:
-            if q in self._subscribers:
-                self._subscribers.remove(q)
+            for index, existing in enumerate(self._subscribers):
+                if existing is q:
+                    del self._subscribers[index]
+                    break
 
     @property
     def subscriber_count(self) -> int:
@@ -107,14 +169,53 @@ class EventBus:
                 try:
                     q.put_nowait(event)
                 except queue.Full:
-                    # Slow consumer: drop for this subscriber only. At-least-once
-                    # replay is available from history (consumer replay cursor).
-                    pass
+                    # Slow consumer: drop for this subscriber only, but make the
+                    # loss observable so the SSE stream can emit a gap frame and
+                    # an operator can see it in dropped_total / subscriber_stats.
+                    q.note_drop(event.sequence)
+                    self.dropped_total += 1
         return event
 
     def history(self, after_sequence: int = 0) -> list[RunEvent]:
         with self._lock:
             return [e for e in self._history if e.sequence > after_sequence]
+
+    def subscriber_stats(self) -> list[dict[str, Any]]:
+        """Per-subscriber queue depth and drop accounting (diagnostics only)."""
+        with self._lock:
+            subs = list(self._subscribers)
+        stats: list[dict[str, Any]] = []
+        for q in subs:
+            dropped, ranges = q.drop_snapshot()
+            stats.append(
+                {
+                    "maxsize": q.maxsize,
+                    "queued": q.qsize(),
+                    "dropped": dropped,
+                    "dropped_ranges": ranges,
+                }
+            )
+        return stats
+
+    def dropped_ranges(self) -> list[tuple[int, int]]:
+        """Union of every live subscriber's drop ranges, merged and sorted.
+
+        This is a cross-check for diagnostics: the authoritative answer for one
+        connection is that connection's own queue (``SubscriberQueue``).
+        """
+        merged: list[tuple[int, int]] = []
+        with self._lock:
+            subs = list(self._subscribers)
+        for q in subs:
+            merged.extend(q.dropped_ranges)
+        merged.sort()
+        out: list[tuple[int, int]] = []
+        for lo, hi in merged:
+            if out and lo <= out[-1][1] + 1:
+                out[-1] = (out[-1][0], max(out[-1][1], hi))
+            else:
+                out.append((lo, hi))
+        return out
 
 
 class Orchestrator:
