@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 from sqlalchemy import create_engine, select
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
 from packages.evidence.events import (
     EventRow,
@@ -212,9 +212,7 @@ def test_legacy_rows_without_cursor_are_backfilled(db: dict[str, Any]) -> None:
 
     assert backfilled == 1
     assert db["store"].stream_position("runevt_legacy0001") == 1
-    assert [row["event_id"] for _, row in db["store"].replay_stream(0, 10)] == [
-        "runevt_legacy0001"
-    ]
+    assert [row["event_id"] for _, row in db["store"].replay_stream(0, 10)] == ["runevt_legacy0001"]
 
 
 # --------------------------------------------------------------------- EventBus
@@ -295,7 +293,7 @@ def test_persistence_never_writes_outside_the_event_tables(db: dict[str, Any]) -
     recorder = _recorder(db)
     _append(recorder, 0)
 
-    with db["factory"]() as session:  # type: Session
+    with db["factory"]() as session:
         assert session.query(EventRow).count() == 1
         assert session.query(StreamCursorRow).count() == 1
 

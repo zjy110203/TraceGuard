@@ -24,7 +24,7 @@ import pytest
 from apps.api.main import build_app
 from packages.core.config import Settings
 from tests.netutil import serve_uvicorn
-from tests.test_sse_lifecycle import _open_reader, _SSEReader, _sse_url
+from tests.test_sse_lifecycle import _open_reader, _sse_url, _SSEReader
 
 CASE_DIR = Path("benchmark/cases")
 EVAL_TOKEN = "local-dev-eval-token-change-me"
@@ -159,9 +159,7 @@ def test_unknown_cursor_is_announced_and_not_replayed(tmp_path: Path, teamflow: 
         assert _payload_frames(reader.frames) == []
 
 
-def test_expired_cursor_is_announced_and_replays_retained(
-    tmp_path: Path, teamflow: str
-) -> None:
+def test_expired_cursor_is_announced_and_replays_retained(tmp_path: Path, teamflow: str) -> None:
     with _platform(tmp_path, teamflow) as platform:
         bus = platform["bus"]
         published = [

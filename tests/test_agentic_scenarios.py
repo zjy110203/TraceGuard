@@ -25,6 +25,8 @@ import httpx
 import pytest
 import uvicorn
 
+from apps.api.explorer_api import scenario_steps
+from packages.agents.compiler import TestCaseCompiler
 from packages.agents.exploration import Budget
 from packages.agents.explorer import Explorer
 from packages.agents.goal_assertions import (
@@ -34,14 +36,13 @@ from packages.agents.goal_assertions import (
     PASSED,
     VERIFIED,
     AssertionDefinitionError,
+    _ObservationView,
     evaluate_assertion,
     evaluate_assertions,
     validate_assertion,
-    _ObservationView,
 )
-from packages.agents.compiler import TestCaseCompiler
 from packages.agents.scenarios import Scenario, ScenarioRegistry, default_registry
-from apps.api.explorer_api import scenario_steps
+from packages.core.errors import ValidationError
 from tests.netutil import release_reserved, reserve_port, take_reserved
 
 TF_PORT = reserve_port()
@@ -118,8 +119,13 @@ _OBSERVATION: dict[str, Any] = {
         {"tag": "ul", "testid": "project-list", "name": "Alpha", "visible": True},
         {"tag": "a", "testid": "new-project-link", "name": "新建项目", "visible": True},
         {"tag": "input", "testid": "project-name", "name": "name", "visible": True},
-        {"tag": "button", "testid": "create-submit", "name": "创建", "visible": True,
-         "disabled": True},
+        {
+            "tag": "button",
+            "testid": "create-submit",
+            "name": "创建",
+            "visible": True,
+            "disabled": True,
+        },
         # Deliberately pre-R5-5.2 shape: no ``visible`` key, as traces captured
         # before visibility was recorded look like this.
         {"tag": "span", "testid": "legacy-badge", "name": "旧"},
@@ -139,11 +145,33 @@ _OBSERVATION: dict[str, Any] = {
         ({"name": "el", "kind": "element_exists", "testid": "project-name"}, PASSED),
         ({"name": "el", "kind": "element_exists", "testid": "ghost"}, FAILED),
         ({"name": "vis", "kind": "element_visible", "testid": "new-project-link"}, PASSED),
-        ({"name": "txt", "kind": "element_text", "testid": "new-project-link", "contains": "新建"}, PASSED),
-        ({"name": "txt", "kind": "element_text", "testid": "new-project-link", "contains": "删除"}, FAILED),
-        ({"name": "fs", "kind": "form_state", "testid": "project-name", "state": "present"}, PASSED),
+        (
+            {
+                "name": "txt",
+                "kind": "element_text",
+                "testid": "new-project-link",
+                "contains": "新建",
+            },
+            PASSED,
+        ),
+        (
+            {
+                "name": "txt",
+                "kind": "element_text",
+                "testid": "new-project-link",
+                "contains": "删除",
+            },
+            FAILED,
+        ),
+        (
+            {"name": "fs", "kind": "form_state", "testid": "project-name", "state": "present"},
+            PASSED,
+        ),
         ({"name": "fs", "kind": "form_state", "testid": "ghost", "state": "absent"}, PASSED),
-        ({"name": "fs", "kind": "form_state", "testid": "create-submit", "state": "disabled"}, PASSED),
+        (
+            {"name": "fs", "kind": "form_state", "testid": "create-submit", "state": "disabled"},
+            PASSED,
+        ),
         ({"name": "ps", "kind": "page_state", "field": "title", "value": "项目列表"}, PASSED),
         (
             {
@@ -244,7 +272,12 @@ def test_required_failure_wins_over_inconclusive() -> None:
             {"name": "wrong", "kind": "url_exact", "value": "/login", "required": True},
             # project-list has no ``visible`` flag in this observation, so this
             # one is genuinely INCONCLUSIVE (a different verdict from FAILED).
-            {"name": "blind", "kind": "element_visible", "testid": "legacy-badge", "required": True},
+            {
+                "name": "blind",
+                "kind": "element_visible",
+                "testid": "legacy-badge",
+                "required": True,
+            },
         ],
         _OBSERVATION,
     )
@@ -319,7 +352,9 @@ def _run_scenario(scenario: Scenario):  # noqa: ANN202 - ExplorationTrace
         ),
         application_version=f"teamflow-0.1.0 ({scenario.scenario_id})",
     )
-    return explorer.explore(f"i-{scenario.scenario_id}", TF_BASE, intent=_intent_from_scenario(scenario))
+    return explorer.explore(
+        f"i-{scenario.scenario_id}", TF_BASE, intent=_intent_from_scenario(scenario)
+    )
 
 
 def test_two_scenarios_run_through_the_same_explorer(teamflow_server: None) -> None:
@@ -369,9 +404,7 @@ def test_scenario_traces_compile_into_candidates(teamflow_server: None) -> None:
 def test_wrong_password_scenario_is_not_verified(teamflow_server: None) -> None:
     """Failure scenario: the click works, the business goal does not happen."""
     login = default_registry().require("teamflow-login")
-    steps = scenario_steps(
-        login, base_url=TF_BASE, username="tester", password="definitely-wrong"
-    )
+    steps = scenario_steps(login, base_url=TF_BASE, username="tester", password="definitely-wrong")
     from packages.agents.scripted_agent import ScriptedAgentPolicy
 
     trace = Explorer(
@@ -386,5 +419,5 @@ def test_wrong_password_scenario_is_not_verified(teamflow_server: None) -> None:
     ).explore("i-login-wrong", TF_BASE, intent=_intent_from_scenario(login))
 
     assert trace.goal_status == "NOT_VERIFIED", trace.goal_reason
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         TestCaseCompiler().compile(trace, case_id="TC-WRONG", title="wrong password")
