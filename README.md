@@ -5,15 +5,16 @@ Event/Evidence 证据链 + 多假设诊断 + 证据图 + Oracle 保护的自愈�
 UI-FaultBench 评测 + 产品级 Vue3 工作台。
 
 > 设计依据：`docs/design/`（11 篇规格）+ `docs/roadmap/`（十四阶段实施路线）。
-> 当前状态：第五轮（R5）—— R5-4.11 工程基线收口 + R5-5.1 事件持久化 + **R5-5.1-R 长稳与事件流最终验收 PASS** + **R5-5.2 场景化 Agentic Testing 基础能力完成** + **R5-5.3 设计评审整改完成（DR1 + DR2 + DR2.1 收尾）**。
+> 当前状态：第五轮（R5）—— R5-4.11 工程基线收口 + R5-5.1 事件持久化 + **R5-5.1-R 长稳与事件流最终验收 PASS** + **R5-5.2 场景化 Agentic Testing 基础能力完成** + **R5-5.3 设计评审整改完成（DR1 + DR2 + DR2.1 收尾 + E1 最终勘误）**。
 > Python 全量 **626 passed / 1 skipped**、Product E2E 24/24、Browser E2E 150/150、安全回归 93 passed、前端门禁全绿（R5-5.1-R 最终验收，2026-11-25）。
 > **Git 状态（三基线分列，不得混用）**：
-> 1. **本轮（DR2.1）起点 HEAD**：`bb3bd55`，分支 `r5-5-product-completion`，起点 20 ahead / 0 behind main（本轮 3 个文档提交后 23 / 0）；
+> 1. **本轮（DR2.1）起点 HEAD**：`bb3bd55`，分支 `r5-5-product-completion`，起点 20 ahead / 0 behind main（DR2.1 三个文档提交后 23 / 0；其后 E1 勘误再 +1 → 24 / 0）；
 > 2. **最后一次实际修改业务代码**：`60d89e7`（R5-5.1-R 事件流故障区间修复）；`8819694` 是设计文档提交，**不是**代码变更基线；
 > 3. **起点最新已完成 CI**：run `45542085918`（head_sha=bb3bd55），5/5 Job success；本轮 DR2.1 提交对应的 CI 结果在交付说明中给出（**不在文档里追记最终 CI**，避免自引用提交无限增长）。
 > **历史 CI 证据（独立陈述）**：R5-5.1-R 文档验收基线 `6a21f47`：run `45441655349`，5/5 success；
 > R5-5.1-R 门禁证据基于 `60d89e7`（run `45439716584`）——三套证据源分开陈述，不混用。
-> 下一步：R5-5.3 Agent 决策与场景能力升级——设计评审整改（DR1 + DR2 + DR2.1）已完成，**等待 M0 独立架构评审**，未启动 M1～M5 开发。
+> 下一步：R5-5.3 Agent 决策与场景能力升级——设计评审整改（DR1 + DR2 + DR2.1 + E1 勘误）已完成，**等待 M0 独立架构评审**，未启动 M1～M5 开发。
+> M0 材料另含 **4 项待评审观察项**（DR2 记录 §14.10：digest 算法白名单 / Execution Lock 作用域 / `url_and_content` 归类 / D8 Provider 默认模型）——均为**待评审，非已实现**。
 > 完整文档导航见 [`docs/00-DOCUMENTATION-INDEX.md`](docs/00-DOCUMENTATION-INDEX.md)。
 
 ## 快速启动
