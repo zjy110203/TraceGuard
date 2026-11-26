@@ -13,9 +13,9 @@ UI-FaultBench 评测 + 产品级 Vue3 工作台。
 > 3. **起点最新已完成 CI**：run `45542085918`（head_sha=bb3bd55），5/5 Job success；本轮 DR2.1 提交对应的 CI 结果在交付说明中给出（**不在文档里追记最终 CI**，避免自引用提交无限增长）。
 > **历史 CI 证据（独立陈述）**：R5-5.1-R 文档验收基线 `6a21f47`：run `45441655349`，5/5 success；
 > R5-5.1-R 门禁证据基于 `60d89e7`（run `45439716584`）——三套证据源分开陈述，不混用。
-> 下一步：R5-5.3 Agent 决策与场景能力升级——设计评审整改（DR1 + DR2 + DR2.1 + E1 勘误）与 **M0 技术预审（含 R1 补充修正）**已完成，**等待 M0 独立架构评审与责任人签字**，未启动 M1～M5 开发。
-> **M0 决策清单**：共 18 项，其中 **15 项待责任人决策（`PENDING`）、3 项已登记工程必修项（`REGISTERED`：N2/N4/N7）**，目前 **0 项已批准**；N8 仍为 `PENDING`。`M0_FROZEN=false`、`M1_START=NO-GO`。
+> **当前授权状态（2026-11-26）**：项目方授权技术决策代理冻结本机单用户开发范围。15 项为 `DECIDED_BY_DELEGATION`，N2/N4/N7 为 `REGISTERED`；具名责任人 `APPROVED` 为 0。`M0_LOCAL_SCOPE_FROZEN=true`、`M1_START=GO_LOCAL_ONLY`，首项必须通过 M1-0。完整跨角色 `M0_FROZEN=false`；远程/多用户仍 BLOCKED。
 > M0 材料另含 **4 项待评审观察项**（DR2 记录 §14.10：digest 算法白名单 / Execution Lock 作用域 / `url_and_content` 归类 / D8 Provider 默认模型）——均为**待评审，非已实现**。
+> 真实 LLM 独立门禁仍为 `409 BLOCKED`；本轮模型请求数为 0。
 > 完整文档导航见 [`docs/00-DOCUMENTATION-INDEX.md`](docs/00-DOCUMENTATION-INDEX.md)。
 
 ## 快速启动
@@ -117,7 +117,7 @@ cd apps/web; npm run build; npx vue-tsc --noEmit
 
 **明确未实现（不冒充）**：真实 LLM 推理（D8 未批准，`llm` 策略一律 409）；project-edit / form-validation 场景（SUT 缺编辑路由 / 缺可重复种子）；Candidate 身份认证（L2）；Repair 产品闭环（创建/晋升路由）；Benchmark 正式准确率（GT 未批准）；S3BlobStore（L4）；驱动级即时取消（L3，动作超时兜底）；分布式任务队列。
 
-## 下一阶段：R5-5.3 Agent 决策与场景能力升级（DR2.1 收尾完成，等待 M0 评审）
+## 当前阶段：R5-5.3 Agent 决策与场景能力升级（本机范围已授权，M1-0 先行）
 
 将 ScriptedProvider 为主的探索体系升级为严格约束下可自主决策的 Agentic Testing 系统。设计与准入材料已完成 DR1 + DR2 + DR2.1 三轮整改：
 
@@ -126,10 +126,11 @@ cd apps/web; npm run build; npx vue-tsc --noEmit
 - [`docs/r5/R5-5.3-D8-真实LLM接入审批准备.md`](docs/r5/R5-5.3-D8-真实LLM接入审批准备.md) —— 调用范围/费用/隐私/风险/回滚（口径已统一），等待 D8 审批
 - [`docs/r5/R5-5.3-开发任务与验收矩阵.md`](docs/r5/R5-5.3-开发任务与验收矩阵.md) —— M0～M5 任务、依赖、验收门槛、风险清单
 - [`docs/r5/R5-5.3-DR2-第二轮设计一致性与安全准入整改记录.md`](docs/r5/R5-5.3-DR2-第二轮设计一致性与安全准入整改记录.md) —— DR2-01～DR2-12 整改记录 + **DR2.1-01～09 最终收尾记录（§14）**，含未决决策 D1–D5 与 M0 准入状态
-- [`docs/r5/R5-5.3-M0-架构评审预审记录.md`](docs/r5/R5-5.3-M0-架构评审预审记录.md) —— M0 技术预审底稿（**非人工审批**）：八项职责源码核对、审批**三维能力矩阵**、网络暴露取证、**N1–N8** 新发现风险、九项门槛核对；结论 `M0_REVIEW_WITH_BLOCKERS` / `M0_FROZEN=false` / `M1_START=NO-GO`
-- [`docs/r5/R5-5.3-M0-决策确认单.md`](docs/r5/R5-5.3-M0-决策确认单.md) —— **18 项决项：15 项 `PENDING` + 3 项 `REGISTERED`（N2/N4/N7）**；N8 仍 `PENDING`，签字栏留空，`M0_FROZEN=false`、`M1_START=NO-GO`
+- [`docs/r5/R5-5.3-M0-架构评审预审记录.md`](docs/r5/R5-5.3-M0-架构评审预审记录.md) —— M0 技术预审底稿（**非人工审批**）；其预审结论保留为历史事实，委托本机范围状态见新增附记
+- [`docs/r5/R5-5.3-M0-委托技术决策与本机范围冻结记录.md`](docs/r5/R5-5.3-M0-委托技术决策与本机范围冻结记录.md) —— 授权来源、15 项本机决策、范围限制、M1 准入和 D8 独立门禁
+- [`docs/r5/R5-5.3-M0-决策确认单.md`](docs/r5/R5-5.3-M0-决策确认单.md) —— 15 项 `DECIDED_BY_DELEGATION` + 3 项 `REGISTERED`（N2/N4/N7）；具名责任人批准为 0，`M0_FROZEN=false`，本机 `M1_START=GO_LOCAL_ONLY`
 
-**未取得 M0 评审结论前不进入 M1～M5 正式开发**；D8 批准前不启用真实模型、不解禁 409。
+**完整跨角色 M0 仍未冻结**；本机范围按授权记录推进。M1-0 通过前不开展 M1 业务改造；D8 批准前不启用真实模型、不解禁 409。
 
 ## 状态纪律（不冒充完成）
 

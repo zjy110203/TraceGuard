@@ -47,6 +47,60 @@ def test_full_happy_path(client: TestClient, eval_headers: dict[str, str]) -> No
     assert state["source"].endswith("tf_project")
 
 
+def test_project_edit_web_flow_prefills_saves_and_reports_success(client: TestClient) -> None:
+    login(client)
+    created = client.post("/api/v1/projects", json={"name": "Before Edit", "description": "old"})
+    project_id = created.json()["id"]
+
+    form = client.get(f"/projects/{project_id}/edit")
+    assert form.status_code == 200
+    assert 'data-testid="project-edit-form"' in form.text
+    assert 'value="Before Edit"' in form.text
+    assert "old</textarea>" in form.text
+
+    submitted = client.post(
+        f"/projects/{project_id}/edit",
+        data={"name": "After Edit", "description": "new"},
+        follow_redirects=False,
+    )
+    assert submitted.status_code == 303
+    detail = client.get(submitted.headers["location"])
+    assert 'data-testid="edit-success"' in detail.text
+    assert 'data-testid="project-title">After Edit<' in detail.text
+    assert "new</dd>" in detail.text
+
+
+@pytest.mark.parametrize(
+    ("name", "status", "error"),
+    [
+        ("", 422, "must not be empty"),
+        ("x" * 201, 422, "at most 200"),
+        ("Other", 409, "already exists"),
+    ],
+)
+def test_project_edit_web_validation_and_recovery(
+    client: TestClient, name: str, status: int, error: str
+) -> None:
+    login(client)
+    first = client.post("/api/v1/projects", json={"name": "Editable"}).json()
+    client.post("/api/v1/projects", json={"name": "Other"})
+
+    response = client.post(f"/projects/{first['id']}/edit", data={"name": name, "description": ""})
+
+    assert response.status_code == status
+    assert 'data-testid="form-error"' in response.text
+    assert error in response.text
+    assert client.get(f"/api/v1/projects/{first['id']}").json()["name"] == "Editable"
+
+    recovered = client.post(
+        f"/projects/{first['id']}/edit",
+        data={"name": "Recovered", "description": "ok"},
+        follow_redirects=False,
+    )
+    assert recovered.status_code == 303
+    assert client.get(f"/api/v1/projects/{first['id']}").json()["name"] == "Recovered"
+
+
 def test_business_plane_cannot_read_ground_truth(
     client: TestClient, eval_headers: dict[str, str]
 ) -> None:

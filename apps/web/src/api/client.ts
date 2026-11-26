@@ -138,7 +138,17 @@ export const api = {
   probeAudit: () => request<AuditRow[]>('/probes/audit'),
 
   repairs: () => request<RepairProposal[]>('/repairs'),
+  repairAudit: () => request<Record<string, unknown>[]>('/repairs/audit'),
   repair: (id: string) => request<RepairProposal>(`/repairs/${encodeURIComponent(id)}`),
+  repairFormalCase: (id: string) => request<{ case: Record<string, unknown>; source_file: string }>(
+    `/repairs/cases/${encodeURIComponent(id)}/formal`,
+  ),
+  createRepair: (body: Record<string, unknown>) =>
+    request<RepairProposal>('/repairs', { method: 'POST', body: JSON.stringify(body) }),
+  validateRepair: (id: string) =>
+    request<RepairProposal>(`/repairs/${encodeURIComponent(id)}/validate`, { method: 'POST' }),
+  submitRepair: (id: string) =>
+    request<RepairProposal>(`/repairs/${encodeURIComponent(id)}/submit`, { method: 'POST' }),
   approveRepair: (id: string, body: { approver: string; approval_record: string }) =>
     request<RepairProposal>(`/repairs/${encodeURIComponent(id)}/approve`, {
       method: 'POST',
@@ -146,6 +156,13 @@ export const api = {
     }),
   rejectRepair: (id: string, body: { reason: string; reviewer: string }) =>
     request<RepairProposal>(`/repairs/${encodeURIComponent(id)}/reject`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  replayRepair: (id: string) =>
+    request<RepairProposal>(`/repairs/${encodeURIComponent(id)}/sandbox-replay`, { method: 'POST' }),
+  promoteRepair: (id: string, body: { operator: string; reason: string }) =>
+    request<RepairProposal>(`/repairs/${encodeURIComponent(id)}/promote`, {
       method: 'POST',
       body: JSON.stringify(body),
     }),

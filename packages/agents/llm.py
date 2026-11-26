@@ -281,10 +281,56 @@ PROVIDER_ENV: dict[str, tuple[str, str]] = {
     "DEEPSEEK_API_KEY": ("deepseek", "https://api.deepseek.com/v1"),
     "OPENAI_API_KEY": ("openai", "https://api.openai.com/v1"),
 }
+PROVIDER_MODELS: dict[str, frozenset[str]] = {
+    "deepseek": frozenset({"deepseek-chat", "deepseek-reasoner"}),
+    "openai": frozenset({"gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "o3", "o4-mini"}),
+}
+DEFAULT_MODELS = {"deepseek": "deepseek-chat", "openai": "gpt-4o-mini"}
+
+
+def resolve_provider_config(
+    environ: dict[str, str] | None = None, *, model: str | None = None
+) -> tuple[str, str, str, str] | None:
+    """Resolve an explicit Provider/Endpoint/Model/Key binding without a call."""
+    values = os.environ if environ is None else environ
+    configured_keys = {
+        provider: values.get(key_name, "")
+        for key_name, (provider, _) in PROVIDER_ENV.items()
+        if values.get(key_name, "")
+    }
+    provider = str(values.get("LLM_PROVIDER") or "").strip().casefold()
+    endpoint = str(values.get("LLM_ENDPOINT") or "").strip().rstrip("/")
+    selected_model = str(model or values.get("LLM_MODEL") or "").strip()
+
+    if not configured_keys:
+        if provider or endpoint or selected_model:
+            raise ProviderUnavailable(
+                "provider, endpoint or model is configured without an API key"
+            )
+        return None
+    if not provider:
+        raise ProviderUnavailable("LLM_PROVIDER must explicitly select the configured provider")
+    if provider not in PROVIDER_MODELS:
+        raise ProviderUnavailable("unknown LLM_PROVIDER")
+    if provider not in configured_keys:
+        raise ProviderUnavailable("selected LLM_PROVIDER has no matching API key")
+    expected_endpoint = next(url for name, url in PROVIDER_ENV.values() if name == provider)
+    if endpoint and endpoint != expected_endpoint.rstrip("/"):
+        raise ProviderUnavailable("LLM_ENDPOINT does not match the selected provider")
+    endpoint = expected_endpoint.rstrip("/")
+    selected_model = selected_model or DEFAULT_MODELS[provider]
+    if selected_model not in PROVIDER_MODELS[provider]:
+        raise ProviderUnavailable("LLM_MODEL is unknown or does not match the selected provider")
+    return provider, endpoint, selected_model, configured_keys[provider]
+
+
+def validate_provider_config(environ: dict[str, str] | None = None) -> None:
+    """Fail closed on malformed config; this function never constructs a client."""
+    resolve_provider_config(environ)
 
 
 def provider_from_env(
-    model: str = "deepseek-chat",
+    model: str | None = None,
 ) -> tuple[LLMProvider, ModelConfig] | None:
     """Return a provider only when a known key is present. Never invents one.
 
@@ -292,12 +338,12 @@ def provider_from_env(
     behaviour via ``os.environ`` and must stay hermetic. Entry points that
     want ``.env`` support call ``ensure_env_file_vars()`` explicitly first.
     """
-    for env_name, (provider_name, base_url) in PROVIDER_ENV.items():
-        key = os.environ.get(env_name)
-        if key:
-            provider = OpenAICompatibleProvider(base_url=base_url, api_key=key, model=model)
-            return provider, ModelConfig(provider=provider_name, model=model)
-    return None
+    resolved = resolve_provider_config(model=model)
+    if resolved is None:
+        return None
+    provider_name, base_url, model_name, key = resolved
+    provider = OpenAICompatibleProvider(base_url=base_url, api_key=key, model=model_name)
+    return provider, ModelConfig(provider=provider_name, model=model_name)
 
 
 def _parse_json(text: str) -> Any:

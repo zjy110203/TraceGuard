@@ -24,7 +24,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 from packages.core.errors import ForbiddenError, ValidationError
 from packages.execution.dataref import (
@@ -39,6 +39,10 @@ from packages.execution.dataref import (
 # pierce is rejected before Playwright ever sees it.
 _SELECTOR_SAFE = re.compile(r"^[A-Za-z0-9\s\[\]=\"'#._:\->~*+,()]+$")
 _SELECTOR_DENY = re.compile(r"(javascript|vbscript|data)\s*:", re.IGNORECASE)
+_DESTRUCTIVE_INTENT = re.compile(
+    r"\b(delete|remove|destroy|reset(?:_data)?|drop|truncate|wipe|purge|clear)\b",
+    re.IGNORECASE,
+)
 
 
 def _now() -> str:
@@ -437,6 +441,8 @@ class ToolGateway:
             raise ForbiddenError(f"selector contains unsupported syntax: {selector[:60]!r}")
         if _SELECTOR_DENY.search(selector):
             raise ForbiddenError("selector must not contain a URL scheme")
+        if _DESTRUCTIVE_INTENT.search(selector):
+            raise ForbiddenError("destructive actions are disabled by policy")
         return selector
 
     def _check_value(self, raw: Any) -> str:
@@ -517,7 +523,12 @@ class Observation:
     step_index: int = 0
     title: str = ""
     url_path: str = ""
-    visible_elements: tuple[dict[str, str], ...] = ()
+    visible_elements: tuple[dict[str, Any], ...] = ()
+    dom_counts: dict[str, int] = field(default_factory=dict)
+    dom_relations: tuple[dict[str, Any], ...] = ()
+    attrs: tuple[dict[str, str], ...] = ()
+    page_state: str = "unknown"
+    previous_url_path: str = ""
     observed_at: str = field(default_factory=_now)
     evidence_ref: str = ""
     phase: str = "pre"  # pre = before the next action, post = after one
@@ -532,32 +543,85 @@ class Observation:
 
     def to_record(self, *, max_text: int = 400) -> dict[str, Any]:
         """Persistable observation: bounded text, no unbounded DOM dump."""
-        return {
+        max_text = min(max(int(max_text), 0), 3000)
+        record = {
             "url": self.url,
             "url_path": self.url_path,
             "title": self.title,
             "visible_testids": list(self.visible_testids),
-            "visible_elements": [_safe_element(e) for e in self.visible_elements],
+            "visible_elements": [_safe_element(e) for e in self.visible_elements[:40]],
+            "dom_counts": {str(k): max(0, int(v)) for k, v in list(self.dom_counts.items())[:32]},
+            "dom_relations": [
+                {
+                    k: str(v)[:200]
+                    for k, v in x.items()
+                    if k in {"relation", "testid", "parent_testid"}
+                }
+                for x in self.dom_relations[:100]
+            ],
+            "attrs": [_safe_attrs(x) for x in self.attrs[:100]],
+            "page_state": self.page_state[:40],
+            "previous_url_path": self.previous_url_path[:500],
             "text_excerpt": self.page_text[:max_text],
             "state_summary": self.state_summary,
             "observed_at": self.observed_at,
             "step_index": self.step_index,
+            "step_id": f"step-{self.step_index}",
             "phase": self.phase,
             "evidence_ref": self.evidence_ref,
         }
+        identity = json.dumps(record, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+        record["observation_ref"] = "obs_" + hashlib.sha256(identity.encode()).hexdigest()[:24]
+        return record
 
 
-def _safe_element(element: dict[str, str]) -> dict[str, str]:
+def _safe_element(element: dict[str, Any]) -> dict[str, Any]:
     """Second line of defence: a field that *looks* sensitive carries no text.
 
     The adapter already refuses to read input values; this catches any other
     adapter (or a page that renders a secret as visible text) before it is
     persisted.
     """
-    out = dict(element)
+    # Only a small, non-value attribute allowlist is persisted.
+    out = {
+        k: v
+        for k, v in element.items()
+        if k
+        in {"tag", "testid", "name", "visible", "disabled", "type", "role", "href", "sensitive"}
+    }
     testid = str(out.get("testid") or "")
     if SENSITIVE_HINT.search(testid) or SENSITIVE_HINT.search(str(out.get("name") or "")):
         out["name"] = REDACTED_MARKER
+    if (
+        bool(out.get("sensitive"))
+        or str(out.get("type", "")).casefold() == "password"
+        or SENSITIVE_HINT.search(str(out.get("name") or ""))
+    ):
+        out.pop("type", None)
+        out.pop("href", None)
+    elif out.get("href"):
+        parsed = urlparse(str(out["href"]))
+        out["href"] = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+    return out
+
+
+def _safe_attrs(attrs: dict[str, Any]) -> dict[str, Any]:
+    allowed = {"testid", "role", "href", "type", "sensitive"}
+    out = {
+        key: value if key == "sensitive" else str(value)[:200]
+        for key, value in attrs.items()
+        if key in allowed
+    }
+    if (
+        bool(out.get("sensitive"))
+        or SENSITIVE_HINT.search(str(out.get("testid", "")))
+        or str(out.get("type", "")).casefold() == "password"
+    ):
+        out.pop("href", None)
+        out.pop("type", None)
+    elif out.get("href"):
+        parsed = urlparse(out["href"])
+        out["href"] = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
     return out
 
 
@@ -607,6 +671,7 @@ def sanitize_action(action: dict[str, Any]) -> tuple[dict[str, Any], int]:
 
 HASH_VERSION_LEGACY = 1
 HASH_VERSION = 2
+HASH_VERSION_DECISIONS = 3
 
 # Fields hashed in v2: everything that influences compilation and review.
 # Deliberately EXCLUDED (derived state — hashing them would be self-reference):
@@ -637,6 +702,7 @@ def compute_trace_hash(
     stop_reason: str,
     test_intent: dict[str, Any] | None = None,
     agent_decisions: list[dict[str, Any]] | None = None,
+    decision_records: list[dict[str, Any]] | None = None,
     versions: dict[str, Any] | None = None,
     hash_version: int = HASH_VERSION,
 ) -> str:
@@ -663,6 +729,8 @@ def compute_trace_hash(
             sort_keys=True,
         )
         return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
+    if hash_version not in (HASH_VERSION, HASH_VERSION_DECISIONS):
+        raise ValueError(f"unsupported trace hash version: {hash_version}")
     v = dict(versions or {})
     payload: dict[str, Any] = {
         "exploration_id": exploration_id,
@@ -679,6 +747,9 @@ def compute_trace_hash(
         "browser_version": v.get("browser_version", ""),
         "hash_scope": list(_HASH_VERSION_FIELDS),
     }
+    if hash_version == HASH_VERSION_DECISIONS:
+        payload["decision_records"] = list(decision_records or [])
+        payload["hash_scope"] = [*_HASH_VERSION_FIELDS, "decision_records"]
     canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
 
@@ -706,6 +777,7 @@ def verify_trace_record(record: dict[str, Any]) -> bool:
         stop_reason=str(record.get("stop_reason") or ""),
         test_intent=dict(record.get("test_intent") or {}),
         agent_decisions=list(record.get("agent_decisions") or []),
+        decision_records=list(record.get("decision_records") or []),
         versions={
             "agent_version": str(record.get("agent_version") or ""),
             "prompt_version": str(record.get("prompt_version") or ""),
@@ -742,6 +814,7 @@ class ExplorationTrace:
     action_sequence: list[dict[str, Any]] = field(default_factory=list)
     observations: list[dict[str, Any]] = field(default_factory=list)
     agent_decisions: list[dict[str, Any]] = field(default_factory=list)
+    decision_records: list[dict[str, Any]] = field(default_factory=list)
     # Every security refusal, with its reason: a reviewer must be able to see
     # that a call was blocked and why, not just that the trace ended early.
     security_events: list[dict[str, Any]] = field(default_factory=list)
@@ -777,6 +850,7 @@ class ExplorationTrace:
             stop_reason=self.stop_reason,
             test_intent=self.test_intent,
             agent_decisions=self.agent_decisions,
+            decision_records=self.decision_records,
             versions={
                 "agent_version": self.agent_version,
                 "prompt_version": self.prompt_version,
@@ -788,7 +862,10 @@ class ExplorationTrace:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        record = asdict(self)
+        if self.hash_version < HASH_VERSION_DECISIONS:
+            record.pop("decision_records", None)
+        return record
 
 
 class ScriptedPolicy:

@@ -59,6 +59,12 @@
         "approved_by": {
           "type": "string"
         },
+        "rejected_by": {
+          "type": "string"
+        },
+        "source_run_id": {"type": "string"},
+        "source_hypothesis_id": {"type": "string"},
+        "source_evidence_refs": {"type": "array", "items": {"type": "string"}},
         "approval_record": {
           "type": "string"
         },

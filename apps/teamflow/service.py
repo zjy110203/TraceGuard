@@ -15,7 +15,7 @@ from typing import Any
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from packages.core.errors import ConflictError, DomainError, NotFoundError
+from packages.core.errors import ConflictError, DomainError, NotFoundError, ValidationError
 
 from . import faults
 from .models import Project, TestUser, Workspace
@@ -82,6 +82,11 @@ def reset_data(session: Session, test_user: str, test_password: str) -> dict[str
 
 def create_project(session: Session, name: str, description: str | None) -> Project:
     """Create with fault hooks. Order of hooks mirrors realistic failure surfaces."""
+    name = name.strip()
+    if not name:
+        raise ValidationError("project name must not be empty")
+    if len(name) > 200:
+        raise ValidationError("project name must be at most 200 characters")
     # TF-API-001: API returns 500 before any write.
     api = faults.get_active_fault(session, faults.TF_API_001)
     if api:
@@ -146,7 +151,21 @@ def get_project(session: Session, project_id: str) -> Project:
 def update_project(
     session: Session, project_id: str, name: str, description: str | None
 ) -> Project:
+    name = name.strip()
+    if not name:
+        raise ValidationError("project name must not be empty")
+    if len(name) > 200:
+        raise ValidationError("project name must be at most 200 characters")
     project = get_project(session, project_id)
+    duplicate = session.execute(
+        select(Project).where(
+            Project.workspace_id == project.workspace_id,
+            Project.name == name,
+            Project.id != project_id,
+        )
+    ).scalar_one_or_none()
+    if duplicate is not None:
+        raise ConflictError("project name already exists", details={"name": name})
     project.name = name
     project.description = description
     session.commit()

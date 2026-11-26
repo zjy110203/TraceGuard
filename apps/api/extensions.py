@@ -15,6 +15,10 @@ from __future__ import annotations
 
 import enum
 import json
+import os
+import re
+import tempfile
+import uuid
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -30,15 +34,18 @@ from packages.agents.probe_catalog import build_default_engine, specs_as_dicts
 from packages.core.errors import ConflictError, NotFoundError, ValidationError
 from packages.execution.models import (
     TestCaseVersion,
+    case_from_dict,
     load_case,
     load_cases_dir,
     load_cases_dir_report,
 )
-from packages.execution.repair import RepairService
+from packages.execution.repair import DiffEntry, RepairService
+from packages.execution.review_policy import SELF_APPROVER_IDENTIFIERS, is_self_approver
+from packages.execution.sandbox import RepairSandbox
 
 router = APIRouter(prefix="/api/v1", tags=["workbench-ext"])
 
-SELF_APPROVERS = frozenset({"", "agent", "ai", "system", "auto", "traceguard"})
+SELF_APPROVERS = SELF_APPROVER_IDENTIFIERS
 
 
 # --------------------------------------------------------------------- helpers
@@ -104,6 +111,7 @@ def _case_dir(request: Request) -> Path:
 
 
 def _find_case(case_dir: Path, case_id: str) -> tuple[TestCaseVersion, str]:
+    matches: list[tuple[TestCaseVersion, str]] = []
     for path in sorted(case_dir.glob("*.json")):
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
@@ -112,7 +120,9 @@ def _find_case(case_dir: Path, case_id: str) -> tuple[TestCaseVersion, str]:
         if not isinstance(raw, dict) or "case_id" not in raw:
             continue
         if raw.get("case_id") == case_id:
-            return load_case(path), path.name
+            matches.append((load_case(path), path.name))
+    if matches:
+        return max(matches, key=lambda item: item[0].version)
     raise NotFoundError(f"unknown case: {case_id}")
 
 
@@ -397,24 +407,137 @@ class ApproveBody(BaseModel):
 class RejectBody(BaseModel):
     reason: str
     reviewer: str = "human"
+    rejected_by: str = ""
+
+
+class CreateRepairBody(BaseModel):
+    case_id: str
+    candidate: dict[str, Any]
+    change_kinds: list[str]
+    diff: list[dict[str, str]]
+    source_run_id: str
+    hypothesis_id: str
+    evidence_refs: list[str]
+
+
+class RepairOperatorBody(BaseModel):
+    operator: str
+    reason: str
+
+
+def _repair_view(request: Request, proposal_id: str) -> dict[str, Any]:
+    service = request.app.state.repair_service
+    try:
+        record = service.get(proposal_id)
+    except ConflictError as exc:
+        raise NotFoundError(str(exc)) from exc
+    replay = getattr(request.app.state, "repair_replay_results", {}).get(proposal_id)
+    record["sandbox_replay"] = replay
+    return record
+
+
+@router.get("/repairs/cases/{case_id}/formal")
+def repair_source_case(case_id: str, request: Request) -> dict[str, Any]:
+    case, source = _find_case(_case_dir(request), case_id)
+    return {"case": case.to_dict(), "source_file": source}
+
+
+@router.post("/repairs", status_code=201)
+def create_repair(body: CreateRepairBody, request: Request) -> dict[str, Any]:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{1,79}", body.case_id):
+        raise ValidationError("case_id contains unsupported characters")
+    if not body.source_run_id.strip() or not body.hypothesis_id.strip() or not body.evidence_refs:
+        raise ValidationError("repair proposal requires run, hypothesis and evidence references")
+    diagnosis = run_diagnosis(body.source_run_id, request)
+    hypothesis = next(
+        (
+            row
+            for row in diagnosis.get("hypotheses", [])
+            if row.get("hypothesis_id") == body.hypothesis_id
+        ),
+        None,
+    )
+    if hypothesis is None or hypothesis.get("status") not in {"SUPPORTED", "CONFIRMED"}:
+        raise ValidationError("repair proposal requires a supported diagnosis hypothesis")
+    supporting = {str(item.get("ref_id") or "") for item in hypothesis.get("supporting", [])}
+    if not set(body.evidence_refs) <= supporting:
+        raise ValidationError("repair evidence refs must cite supporting diagnosis evidence")
+    base, _ = _find_case(_case_dir(request), body.case_id)
+    candidate = case_from_dict(body.candidate)
+    if candidate.case_id != body.case_id:
+        raise ValidationError("candidate case_id does not match selected formal case")
+    proposal_id = f"rp_{uuid.uuid4().hex[:12]}"
+    diff = [DiffEntry(**item) for item in body.diff]
+    try:
+        proposal = request.app.state.repair_service.create_proposal(
+            proposal_id,
+            base,
+            candidate,
+            change_kinds=tuple(body.change_kinds),
+            diff=diff,
+            source_run_id=body.source_run_id,
+            source_hypothesis_id=body.hypothesis_id,
+            source_evidence_refs=tuple(body.evidence_refs),
+        )
+    except ConflictError as exc:
+        raise ValidationError(str(exc)) from exc
+    return {**proposal.to_dict(), "sandbox_replay": None}
 
 
 @router.get("/repairs")
 def list_repairs(request: Request) -> list[dict[str, Any]]:
-    return request.app.state.repair_service.list()
+    return [
+        _repair_view(request, str(item["proposal_id"]))
+        for item in request.app.state.repair_service.list()
+    ]
+
+
+@router.get("/repairs/audit")
+def repair_audit(request: Request) -> list[dict[str, Any]]:
+    rows = request.app.state.repair_service.list()
+    return [
+        {
+            "proposal_id": row["proposal_id"],
+            "case_id": row["case_id"],
+            "state": row["state"],
+            "approved_by": row["approved_by"],
+            "rejected_by": row.get("rejected_by", ""),
+            "approval_record": row["approval_record"],
+            "source_run_id": row.get("source_run_id", ""),
+            "source_hypothesis_id": row.get("source_hypothesis_id", ""),
+            "source_evidence_refs": row.get("source_evidence_refs", []),
+            "promotion_record": row["promotion_record"],
+        }
+        for row in rows
+    ]
+
+
+@router.post("/repairs/{proposal_id}/validate")
+def validate_repair(proposal_id: str, request: Request) -> dict[str, Any]:
+    try:
+        result = request.app.state.repair_service.validate(proposal_id)
+    except ConflictError as exc:
+        raise NotFoundError(str(exc)) from exc
+    return _repair_view(request, result.proposal_id)
+
+
+@router.post("/repairs/{proposal_id}/submit")
+def submit_repair(proposal_id: str, request: Request) -> dict[str, Any]:
+    try:
+        result = request.app.state.repair_service.submit_for_approval(proposal_id)
+    except ConflictError as exc:
+        raise ValidationError(str(exc)) from exc
+    return _repair_view(request, result.proposal_id)
 
 
 @router.get("/repairs/{proposal_id}")
 def get_repair(proposal_id: str, request: Request) -> dict[str, Any]:
-    try:
-        return request.app.state.repair_service.get(proposal_id)
-    except ConflictError as exc:
-        raise NotFoundError(str(exc)) from exc
+    return _repair_view(request, proposal_id)
 
 
 @router.post("/repairs/{proposal_id}/approve")
 def approve_repair(proposal_id: str, body: ApproveBody, request: Request) -> dict[str, Any]:
-    if body.approver.strip().lower() in SELF_APPROVERS:
+    if is_self_approver(body.approver):
         raise ValidationError(
             "repair approval requires a named human approver; self-approval is refused"
         )
@@ -434,12 +557,90 @@ def approve_repair(proposal_id: str, body: ApproveBody, request: Request) -> dic
 def reject_repair(proposal_id: str, body: RejectBody, request: Request) -> dict[str, Any]:
     if not body.reason.strip():
         raise ValidationError("rejection reason is required")
+    rejected_by = body.rejected_by or body.reviewer
+    if is_self_approver(rejected_by):
+        raise ValidationError("repair rejection requires a named human reviewer")
     service = request.app.state.repair_service
     try:
-        proposal = service.reject(proposal_id, body.reason)
+        proposal = service.reject(proposal_id, body.reason, rejected_by=rejected_by)
     except ConflictError as exc:
         raise NotFoundError(str(exc)) from exc
-    return proposal.to_dict()
+    return _repair_view(request, proposal.proposal_id)
+
+
+@router.post("/repairs/{proposal_id}/sandbox-replay")
+def sandbox_repair(proposal_id: str, request: Request) -> dict[str, Any]:
+    service = request.app.state.repair_service
+    record = _repair_view(request, proposal_id)
+    if record["state"] != "APPROVED":
+        raise ValidationError("sandbox replay requires human approval")
+    base, candidate = service._candidate_pair(proposal_id)
+    root = Path(tempfile.gettempdir()) / "traceguard-repair-sandboxes"
+    result = RepairSandbox(
+        proposal_id=proposal_id,
+        base_case=base,
+        candidate=candidate,
+        on_evidence=None,
+        root=root,
+    ).run()
+    replay = {
+        "verdict": result.verdict,
+        "reason": result.reason,
+        "cleanup_error": result.cleanup_error,
+        "evidence_sha256": result.evidence_sha256,
+        "evidence": result.evidence,
+        "replayed_at": datetime.now(UTC).isoformat(),
+        "status": "PASSED"
+        if result.verdict == "VALIDATED" and not result.cleanup_error
+        else "FAILED",
+    }
+    request.app.state.repair_replay_results[proposal_id] = replay
+    if replay["status"] != "PASSED":
+        raise ValidationError(f"sandbox replay did not pass: {result.reason}")
+    return {**_repair_view(request, proposal_id), "sandbox_replay": replay}
+
+
+@router.post("/repairs/{proposal_id}/promote")
+def promote_repair(proposal_id: str, body: RepairOperatorBody, request: Request) -> dict[str, Any]:
+    if not body.operator.strip():
+        raise ValidationError("promotion requires a named human operator")
+    if not body.reason.strip():
+        raise ValidationError("promotion reason is required for audit")
+    if is_self_approver(body.operator):
+        raise ValidationError("automated actors cannot promote repair assets")
+    record = _repair_view(request, proposal_id)
+    if record["state"] != "APPROVED":
+        raise ValidationError("promotion requires a human-approved proposal")
+    replay = request.app.state.repair_replay_results.get(proposal_id)
+    if not replay or replay.get("status") != "PASSED":
+        raise ValidationError("promotion requires a successful sandbox replay")
+    case_id = str(record["case_id"])
+    current, _ = _find_case(_case_dir(request), case_id)
+    target_path = _case_dir(request) / f"{case_id}.v{record['candidate_testcase_version']}.json"
+    if target_path.exists():
+        raise ConflictError("formal version file already exists; refusing overwrite")
+    try:
+        promoted, version = request.app.state.repair_service.promote(
+            proposal_id,
+            current_formal=current,
+            sandbox_replay=lambda _candidate: True,
+            operator=body.operator.strip(),
+            promotion_reason=body.reason.strip(),
+        )
+    except ConflictError as exc:
+        raise ValidationError(str(exc)) from exc
+    if promoted.state != "PROMOTED":
+        raise ConflictError(promoted.failure_reason or "formal version changed during promotion")
+    temp_path = target_path.with_name(f".{target_path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        temp_path.write_text(
+            json.dumps(version.to_dict(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        os.replace(temp_path, target_path)
+    except OSError as exc:
+        temp_path.unlink(missing_ok=True)
+        raise ValidationError(f"promotion asset write failed: {type(exc).__name__}") from exc
+    return _repair_view(request, proposal_id)
 
 
 # ----------------------------------------------------------------- benchmark
@@ -473,6 +674,7 @@ def register_extensions(
     """
     app.state.probe_engine = build_default_engine()
     app.state.repair_service = RepairService()
+    app.state.repair_replay_results = {}
 
     gt = GroundTruthManager()
     datasets = DatasetManager(gt)

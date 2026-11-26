@@ -7,6 +7,8 @@
 <body>
   <h1 data-testid="project-title">{{ project.name }}</h1>
   <a href="/projects">返回列表</a>
+  <a href="/projects/{{ project.id }}/edit" data-testid="project-edit-link">编辑项目</a>
+  {% if updated %}<p data-testid="edit-success">项目已更新</p>{% endif %}
   <dl>
     <dt>ID</dt><dd data-testid="project-id">{{ project.id }}</dd>
     <dt>描述</dt><dd data-testid="project-description">{{ project.description or '' }}</dd>

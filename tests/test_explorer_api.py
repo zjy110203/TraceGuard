@@ -17,8 +17,19 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from apps.api.explorer_api import REDACTED, redact_actions
+from apps.api.explorer_api import (
+    REDACTED,
+    _cleanup_scenario_data,
+    _prepare_scenario_data,
+    recover_expired_scenario_data,
+    redact_actions,
+)
 from apps.api.main import build_app
+from apps.teamflow import service as teamflow_service
+from apps.teamflow.models import Base as TeamFlowBase
+from apps.teamflow.models import Project
+from packages.agents.scenarios import default_registry
+from packages.core import database
 from packages.core.config import Settings
 
 
@@ -87,6 +98,120 @@ def test_unknown_exploration_is_404(client: TestClient) -> None:
 def test_path_like_id_cannot_escape_the_store(client: TestClient) -> None:
     # A traversal-shaped id must not read outside the exploration directory.
     assert client.get("/api/v1/explorations/exp_..%2F..%2Fsecret").status_code == 404
+
+
+def test_scenario_digest_tampering_is_reported_on_read(client: TestClient) -> None:
+    store = client.app.state.exploration_store
+    store.save(
+        {
+            "exploration_id": "exp_scenario_digest_tamper",
+            "scenario_id": "teamflow-login",
+            "scenario_version": "1.0.0",
+            "scenario_digest": "0" * 64,
+            "digest_algorithm": "sha256",
+            "digest_algorithm_version": "canonical-json-v1",
+            "action_sequence": [],
+            "observations": [],
+        }
+    )
+
+    response = client.get("/api/v1/explorations/exp_scenario_digest_tamper")
+
+    assert response.status_code == 200
+    assert response.json()["scenario_digest_verified"] is False
+
+
+def test_unknown_scenario_digest_algorithm_is_rejected(client: TestClient) -> None:
+    store = client.app.state.exploration_store
+    store.save(
+        {
+            "exploration_id": "exp_unknown_scenario_digest",
+            "scenario_id": "teamflow-login",
+            "scenario_version": "1.0.0",
+            "scenario_digest": "0" * 64,
+            "digest_algorithm": "md5",
+            "digest_algorithm_version": "legacy",
+            "action_sequence": [],
+            "observations": [],
+        }
+    )
+
+    response = client.get("/api/v1/explorations/exp_unknown_scenario_digest")
+
+    assert response.status_code == 422
+    assert response.json()["error"]["details"]["code"] == "unsupported-digest-algorithm"
+
+
+def test_run_data_seed_cleanup_isolated_to_own_run(client: TestClient) -> None:
+    TeamFlowBase.metadata.create_all(client.app.state.engine)
+    session_factory = database.make_session_factory(client.app.state.engine)
+    with session_factory() as session:
+        teamflow_service.seed_default(session, "tester", "test-pass-123")
+    manager = client.app.state.data_lease_manager
+    first = manager.setup("exp_run_one")
+    second = manager.setup("exp_run_two")
+    request = type("RequestStub", (), {"app": client.app})()
+    scenario = default_registry().require("project-edit", "2.0.0")
+
+    first_values = _prepare_scenario_data(request, scenario, "exp_run_one", first)
+    second_values = _prepare_scenario_data(request, scenario, "exp_run_two", second)
+    with session_factory() as session:
+        assert session.query(Project).count() == 2
+    _cleanup_scenario_data(request, "exp_run_one", first)
+    assert manager.cleanup("exp_run_one", first)
+    with session_factory() as session:
+        projects = session.query(Project).all()
+        assert len(projects) == 1
+        assert projects[0].name == second_values["project_target"]
+    _cleanup_scenario_data(request, "exp_run_two", second)
+    assert manager.cleanup("exp_run_two", second)
+    assert first_values["project_target_id"] != second_values["project_target_id"]
+
+
+def test_run_data_cleanup_refuses_modified_project_identity(client: TestClient) -> None:
+    TeamFlowBase.metadata.create_all(client.app.state.engine)
+    session_factory = database.make_session_factory(client.app.state.engine)
+    with session_factory() as session:
+        teamflow_service.seed_default(session, "tester", "test-pass-123")
+    manager = client.app.state.data_lease_manager
+    token = manager.setup("exp_identity_guard")
+    request = type("RequestStub", (), {"app": client.app})()
+    scenario = default_registry().require("project-edit", "2.0.0")
+    values = _prepare_scenario_data(request, scenario, "exp_identity_guard", token)
+    with session_factory() as session:
+        project = session.get(Project, values["project_target_id"])
+        assert project is not None
+        project.name = "unowned-project"
+        session.commit()
+
+    with pytest.raises(RuntimeError, match="refusing cleanup"):
+        _cleanup_scenario_data(request, "exp_identity_guard", token)
+    with session_factory() as session:
+        assert session.get(Project, values["project_target_id"]) is not None
+
+
+def test_startup_recovery_cleans_stale_run_data_only(client: TestClient) -> None:
+    import time
+
+    TeamFlowBase.metadata.create_all(client.app.state.engine)
+    session_factory = database.make_session_factory(client.app.state.engine)
+    with session_factory() as session:
+        teamflow_service.seed_default(session, "tester", "test-pass-123")
+    manager = client.app.state.data_lease_manager
+    stale_token = manager.setup("exp_stale_owner", now=time.time() - 61)
+    active_token = manager.setup("exp_active_owner")
+    request = type("RequestStub", (), {"app": client.app})()
+    scenario = default_registry().require("project-edit", "2.0.0")
+    stale_values = _prepare_scenario_data(request, scenario, "exp_stale_owner", stale_token)
+    active_values = _prepare_scenario_data(request, scenario, "exp_active_owner", active_token)
+
+    recover_expired_scenario_data(client.app)
+
+    with session_factory() as session:
+        assert session.get(Project, stale_values["project_target_id"]) is None
+        assert session.get(Project, active_values["project_target_id"]) is not None
+    assert not (client.app.state.data_lease_manager.root / "exp_stale_owner").exists()
+    assert (client.app.state.data_lease_manager.root / "exp_active_owner").exists()
 
 
 def test_redact_actions_masks_credentials_only() -> None:

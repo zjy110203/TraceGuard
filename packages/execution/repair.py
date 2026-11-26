@@ -30,6 +30,7 @@ from typing import Any
 
 from packages.core.errors import ConflictError, ValidationError
 from packages.execution.models import TestCaseVersion
+from packages.execution.review_policy import is_self_approver
 from packages.execution.verdict import OracleVerdict
 
 ALLOWED_KINDS = frozenset(
@@ -110,6 +111,10 @@ class RepairProposal:
     promotion_record: dict[str, Any] = field(default_factory=dict)
     validation_notes: tuple[str, ...] = ()
     approved_by: str = ""
+    rejected_by: str = ""
+    source_run_id: str = ""
+    source_hypothesis_id: str = ""
+    source_evidence_refs: tuple[str, ...] = ()
     approval_record: str = ""
     failure_reason: str = ""
     created_at: str = field(default_factory=_now)
@@ -179,6 +184,9 @@ class RepairService:
         *,
         change_kinds: tuple[str, ...],
         diff: list[DiffEntry],
+        source_run_id: str = "",
+        source_hypothesis_id: str = "",
+        source_evidence_refs: tuple[str, ...] = (),
     ) -> RepairProposal:
         if any(k in FORBIDDEN_KINDS for k in change_kinds):
             raise ValidationError(
@@ -204,6 +212,9 @@ class RepairService:
                 base_testcase_version=base.version,
                 candidate_testcase_version=candidate.version,
                 promotion_target_version=candidate.version,
+                source_run_id=source_run_id,
+                source_hypothesis_id=source_hypothesis_id,
+                source_evidence_refs=source_evidence_refs,
             )
             self._proposals[proposal_id] = proposal
             self._candidates[proposal_id] = candidate
@@ -245,22 +256,29 @@ class RepairService:
     def approve(self, proposal_id: str, *, approver: str, approval_record: str) -> RepairProposal:
         if not approver or not approval_record:
             raise ValidationError("human approver and approval_record are mandatory")
+        if is_self_approver(approver):
+            raise ValidationError("self-approval is refused")
         with self._lock:
             p = self._get(proposal_id)
             if p.state != "PENDING_APPROVAL":
                 raise ConflictError(f"cannot approve from {p.state}")
-            if approver == "agent":
-                raise ValidationError("agent may not self-approve a repair")
             self._transition(p, "APPROVED")
             p.approved_by = approver
             p.approval_record = approval_record
             return p  # APPROVED != PROMOTED
 
-    def reject(self, proposal_id: str, reason: str) -> RepairProposal:
+    def reject(self, proposal_id: str, reason: str, rejected_by: str = "human") -> RepairProposal:
+        if not reason.strip():
+            raise ValidationError("rejection reason is required")
+        if not rejected_by.strip():
+            raise ValidationError("rejected_by is required")
+        if is_self_approver(rejected_by):
+            raise ValidationError("repair rejection requires a named human reviewer")
         with self._lock:
             p = self._get(proposal_id)
             self._transition(p, "REJECTED")
             p.failure_reason = reason[:500]
+            p.rejected_by = rejected_by.strip()
             return p
 
     def promote(
@@ -269,13 +287,15 @@ class RepairService:
         *,
         current_formal: TestCaseVersion,
         sandbox_replay: Callable[[TestCaseVersion], bool] | None = None,
+        operator: str = "",
+        promotion_reason: str = "",
     ) -> tuple[RepairProposal, TestCaseVersion]:
         """Atomic CAS promotion under a lock. One attempt per base version."""
         with self._lock:
             p = self._get(proposal_id)
             if p.state != "APPROVED":
                 raise ConflictError(f"promotion requires APPROVED, got {p.state}")
-            if p.approved_by in ("", "agent"):
+            if is_self_approver(p.approved_by):
                 raise ValidationError("no valid human approval for promotion")
             self._transition(p, "PROMOTING")
             # CAS: current formal version MUST equal the proposal's base.
@@ -302,7 +322,8 @@ class RepairService:
                 "target_version": promoted.version,
                 "base_version": current_formal.version,
                 "at": _now(),
-                "operator": p.approved_by,
+                "operator": operator or p.approved_by,
+                "reason": promotion_reason[:500],
                 "cas_check": "passed",
             }
             self._transition(p, "PROMOTED")

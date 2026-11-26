@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -29,7 +30,11 @@ from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
+from sqlalchemy import select
 
+from apps.teamflow import service as teamflow_service
+from apps.teamflow.models import Project
+from packages.agents.data_lifecycle import DataLeaseManager
 from packages.agents.exploration import (
     Budget,
     ScriptedPolicy,
@@ -42,6 +47,7 @@ from packages.agents.explorer import Explorer
 from packages.agents.goal_assertions import evaluate_assertions
 from packages.agents.scenarios import Scenario, default_registry
 from packages.agents.scripted_agent import AgentStep, ScriptedAgentPolicy
+from packages.core import database
 from packages.core.errors import ConflictError, NotFoundError, ValidationError
 from packages.core.logging import get_logger
 from packages.execution.dataref import REDACTED_MARKER
@@ -51,7 +57,7 @@ logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["explorer"])
 
-_LOCAL_HOSTS = {"127.0.0.1", "localhost"}
+_LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 # The one implementation lives with the trace primitives, so the live capture
 # path and this defence-in-depth pass can never drift apart.
@@ -128,7 +134,12 @@ def _substitute(value: Any, mapping: dict[str, str]) -> Any:
 
 
 def scenario_steps(
-    scenario: Scenario, *, base_url: str, username: str, password: str
+    scenario: Scenario,
+    *,
+    base_url: str,
+    username: str,
+    password: str,
+    seed_values: dict[str, str] | None = None,
 ) -> list[AgentStep]:
     """Turn a scenario's declared decisions into provider steps.
 
@@ -142,9 +153,12 @@ def scenario_steps(
         "base_url": base_url,
         "username": username,
         "password": password,
+        "wrong_password": "invalid-password-for-negative-path",
+        "boundary_username": "U" * 120,
         # A scenario may create data; a per-run suffix keeps it re-runnable
         # instead of failing on the second attempt with a duplicate name.
         "unique_suffix": uuid.uuid4().hex[:8],
+        **(seed_values or {}),
     }
     steps: list[AgentStep] = []
     for step in scenario.steps:
@@ -168,8 +182,113 @@ def scenario_steps(
     return steps
 
 
+def _prepare_scenario_data(
+    request: Request, scenario: Scenario, run_id: str, token: str
+) -> dict[str, str]:
+    """Create only package-declared, per-run fixtures and record exact ownership."""
+    setup = scenario.data_setup or {}
+    unknown = set(setup) - {"projects"}
+    if unknown:
+        raise ValidationError(f"unsupported scenario data_setup keys: {sorted(unknown)}")
+    projects = setup.get("projects", [])
+    if not isinstance(projects, list):
+        raise ValidationError("scenario data_setup.projects must be a list")
+    session_factory = database.make_session_factory(request.app.state.engine)
+    values: dict[str, str] = {}
+    run_prefix = f"TG_RUN_{run_id}_"
+    values["run_prefix"] = run_prefix
+    values["owner_marker"] = f"traceguard-run:{run_id}"
+    values["boundary_name"] = f"{run_prefix}{'B' * (200 - len(run_prefix))}"
+    values["overlong_name"] = f"{run_prefix}{'B' * (201 - len(run_prefix))}"
+    with session_factory() as session:
+        for index, spec in enumerate(projects):
+            if not isinstance(spec, dict) or set(spec) - {"name", "description", "key"}:
+                raise ValidationError("scenario project seed has an invalid structure")
+            key = str(spec.get("key") or f"project_{index}")
+            seed_name = str(spec.get("name") or "").strip()
+            if not seed_name:
+                raise ValidationError("scenario project seed name must not be empty")
+            owned_name = f"{run_prefix}{seed_name}"[:200]
+            marker = f"traceguard-run:{run_id}"
+            project = Project(
+                id=uuid.uuid4().hex,
+                workspace_id=teamflow_service.WS_ID,
+                name=owned_name,
+                description=f"{marker}; {str(spec.get('description') or '')}",
+            )
+            session.add(project)
+            session.flush()
+            request.app.state.data_lease_manager.add_resource(
+                run_id,
+                token,
+                {
+                    "kind": "teamflow-project",
+                    "id": project.id,
+                    "name": owned_name,
+                    "marker": marker,
+                },
+            )
+            session.commit()
+            values[key] = owned_name
+            values[f"{key}_id"] = project.id
+    return values
+
+
+def _cleanup_scenario_data(request: Request, run_id: str, token: str) -> None:
+    """Delete only exact rows created and recorded by this run's lease."""
+    app = request.app
+    _cleanup_app_scenario_data(app, run_id, token)
+
+
+def _cleanup_app_scenario_data(app: Any, run_id: str, token: str) -> None:
+    """App-level form used by both the request finalizer and startup recovery."""
+    manager: DataLeaseManager = app.state.data_lease_manager
+    resources = manager.resources(run_id, token)
+    session_factory = database.make_session_factory(app.state.engine)
+    with session_factory() as session:
+        for resource in resources:
+            if resource.get("kind") != "teamflow-project":
+                raise RuntimeError("unknown run-owned resource kind")
+            project = session.get(Project, str(resource.get("id") or ""))
+            if project is None:
+                continue
+            marker = str(resource.get("marker") or "")
+            if not project.name.startswith(f"TG_RUN_{run_id}_") or not (
+                project.description or ""
+            ).startswith(marker):
+                raise RuntimeError("run-owned project identity changed; refusing cleanup")
+            session.delete(project)
+        run_prefix = f"TG_RUN_{run_id}_"
+        owner_marker = f"traceguard-run:{run_id}"
+        for project in session.scalars(select(Project)).all():
+            if project.name.startswith(run_prefix) and (project.description or "").startswith(
+                owner_marker
+            ):
+                session.delete(project)
+        session.commit()
+
+
+def recover_expired_scenario_data(app: Any) -> None:
+    """Recover data owned by runs whose process stopped heartbeating."""
+    manager: DataLeaseManager = app.state.data_lease_manager
+    for run_id in manager.expired_runs():
+        token = ""
+        try:
+            lease = manager.lease(run_id)
+            token = str(lease["token"])
+            _cleanup_app_scenario_data(app, run_id, token)
+            manager.cleanup(run_id, token)
+        except Exception as exc:  # noqa: BLE001 - preserve failed cleanup for inspection
+            if token:
+                manager.mark_cleanup_failed(run_id, token, type(exc).__name__)
+
+
 def build_policy(
-    policy_id: str, settings: Any, base_url: str, scenario: Scenario
+    policy_id: str,
+    settings: Any,
+    base_url: str,
+    scenario: Scenario,
+    seed_values: dict[str, str] | None = None,
 ) -> tuple[Any, str]:
     """Build the named policy. Returns (policy, agent_version).
 
@@ -190,7 +309,10 @@ def build_policy(
                         "base_url": base_url,
                         "username": str(settings.teamflow_test_user),
                         "password": str(settings.teamflow_test_password),
+                        "wrong_password": "invalid-password-for-negative-path",
+                        "boundary_username": "U" * 120,
                         "unique_suffix": uuid.uuid4().hex[:8],
+                        **(seed_values or {}),
                     },
                 ),
                 str(step.get("rationale") or ""),
@@ -204,6 +326,7 @@ def build_policy(
             base_url=base_url,
             username=str(settings.teamflow_test_user),
             password=str(settings.teamflow_test_password),
+            seed_values=seed_values,
         )
         return (
             ScriptedAgentPolicy(steps, goal=scenario.description),
@@ -299,6 +422,7 @@ def _summary(record: dict[str, Any]) -> dict[str, Any]:
         "test_intent_ref": record.get("test_intent_ref") or "",
         "goal": (record.get("test_intent") or {}).get("goal", ""),
         "target": record.get("target") or "",
+        "scenario_version": record.get("scenario_version") or "",
         "policy": record.get("policy") or "scripted",
         "policy_label": record.get("policy_label") or "",
         "is_llm": bool(record.get("is_llm")),
@@ -335,6 +459,8 @@ class RunExplorationRequest(BaseModel):
     # Declared business scenario (§3.1.1). Only registered scenarios run; an
     # unknown one gets UNSUPPORTED_SCENARIO instead of a silent login replay.
     scenario: str = "teamflow-login"
+    scenario_version: str | None = None
+    path: str = "normal"
     base_url: str = "http://127.0.0.1:8001"
     policy: str = "scripted"
     max_steps: int = 8
@@ -376,7 +502,23 @@ def get_exploration(request: Request, exploration_id: str) -> dict[str, Any]:
     record["trace_integrity_verified"] = verify_trace_record(record)
     # Assertions are derived (intent + observations, both hashed), so they are
     # re-derived on every read instead of being taken on trust.
-    scenario_for_record = SCENARIOS.get(str(record.get("scenario") or ""))
+    scenario_id = str(record.get("scenario_id") or record.get("scenario") or "")
+    scenario_version = record.get("scenario_version")
+    scenario_for_record = SCENARIOS.get(
+        scenario_id, str(scenario_version) if scenario_version else None
+    )
+    if record.get("digest_algorithm") and (
+        record.get("digest_algorithm") != "sha256"
+        or record.get("digest_algorithm_version") != "canonical-json-v1"
+    ):
+        raise ValidationError(
+            "unsupported scenario digest algorithm",
+            details={"code": "unsupported-digest-algorithm"},
+        )
+    if record.get("scenario_digest"):
+        record["scenario_digest_verified"] = bool(
+            scenario_for_record and scenario_for_record.digest == record["scenario_digest"]
+        )
     if scenario_for_record and scenario_for_record.goal_definition:
         recomputed = evaluate_assertions(
             list(scenario_for_record.goal_definition),
@@ -403,7 +545,7 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
                 "available": ["scripted", "scripted-agent"],
             },
         )
-    scenario = SCENARIOS.get(body.scenario)
+    scenario = SCENARIOS.get(body.scenario, body.scenario_version)
     if scenario is None or not scenario.implemented:
         # §3.1.1: unsupported goals must be REJECTED, never silently executed
         # as some other scenario's script while claiming to satisfy the user's
@@ -421,6 +563,14 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
             },
         )
 
+    path_steps = scenario.steps_for_path(body.path)
+    if path_steps is None:
+        raise ValidationError(
+            f"scenario path {body.path!r} is not registered",
+            details={"scenario_id": scenario.scenario_id, "scenario_version": scenario.version},
+        )
+    execution_scenario = replace(scenario, steps=path_steps)
+
     parsed = urlsplit(body.base_url)
     host = (parsed.hostname or "").lower()
     if parsed.scheme not in {"http", "https"} or host not in _LOCAL_HOSTS:
@@ -434,11 +584,8 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
     title = next((p["label"] for p in POLICIES if p["id"] == body.policy), body.policy)
     started = datetime.now(UTC).isoformat()
 
-    policy, agent_version = build_policy(
-        body.policy, request.app.state.settings, body.base_url, scenario
-    )
     explorer = Explorer(
-        policy=policy,
+        sensitive_selectors=scenario.sensitive_selectors,
         budget=Budget(
             max_steps=body.max_steps,
             max_tool_calls=body.max_steps * 2 + 4,
@@ -450,6 +597,29 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
         ),
         application_version=f"teamflow-0.1.0 ({body.scenario})",
     )
+    lease_manager: DataLeaseManager = request.app.state.data_lease_manager
+    run_id = explorer.trace.exploration_id
+    lease_token = lease_manager.setup(run_id, scenario.data_setup or {})
+    lease_manager.start_heartbeat(run_id, lease_token)
+    try:
+        seed_values = _prepare_scenario_data(request, scenario, run_id, lease_token)
+        policy, agent_version = build_policy(
+            body.policy,
+            request.app.state.settings,
+            body.base_url,
+            execution_scenario,
+            seed_values=seed_values,
+        )
+        explorer.policy = policy
+        explorer.trace.agent_version = agent_version
+        explorer.trace.prompt_version = "none-scripted" if body.policy == "scripted" else "external"
+    except Exception:
+        lease_manager.stop_heartbeat(run_id)
+        try:
+            _cleanup_scenario_data(request, run_id, lease_token)
+        finally:
+            lease_manager.cleanup(run_id, lease_token)
+        raise
     # The TestIntent is assembled ONCE here, embedded into the trace before
     # finalize (so the v2 hash covers it), and is the exact input the compiler
     # and the reviewer see later.
@@ -511,6 +681,12 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
         "is_llm": False,
         "agent_version": payload.get("agent_version") or agent_version,
         "target": body.base_url,
+        "scenario_id": scenario.scenario_id,
+        "scenario_version": scenario.version,
+        "scenario_path": body.path,
+        "scenario_digest": scenario.digest,
+        "digest_algorithm": "sha256",
+        "digest_algorithm_version": "canonical-json-v1",
         "test_intent": payload.get("test_intent") or test_intent,
         "status": status,
         "error": error,
@@ -521,6 +697,20 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
     # password, and every reader (get/list/UI) then gets the safe version.
     record["action_sequence"], masked = redact_actions(record.get("action_sequence", []))
     record["redacted_fields"] = masked
+    lease_manager.stop_heartbeat(run_id)
+    cleanup_error = ""
+    try:
+        _cleanup_scenario_data(request, run_id, lease_token)
+        cleanup_ok = lease_manager.cleanup(run_id, lease_token)
+    except Exception as exc:  # noqa: BLE001 - cleanup failure must be retained
+        cleanup_ok = False
+        cleanup_error = type(exc).__name__
+        lease_manager.mark_cleanup_failed(run_id, lease_token, cleanup_error)
+    record["data_lifecycle"] = {
+        "run_id": run_id,
+        "state": "CLEANED" if cleanup_ok else "CLEANUP_FAILED",
+        "cleanup_error": cleanup_error,
+    }
     store: ExplorationStore = request.app.state.exploration_store
     store.save(record)
     # Verify against what the store actually holds (post JSON round-trip): the
@@ -535,4 +725,11 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
 
 def register_explorer(app: Any, *, exploration_dir: Path) -> None:
     app.state.exploration_store = ExplorationStore(exploration_dir)
+    settings = app.state.settings
+    app.state.data_lease_manager = DataLeaseManager(
+        exploration_dir / "_leases",
+        heartbeat_seconds=settings.data_lease_heartbeat_seconds,
+        timeout_seconds=settings.data_lease_timeout_seconds,
+    )
+    app.state.data_lease_manager.recover_orphans()
     app.include_router(router)

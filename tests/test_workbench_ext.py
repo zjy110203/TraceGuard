@@ -8,6 +8,7 @@ refused when the caller tries to approve its own change.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import tempfile
@@ -131,6 +132,136 @@ def test_approval_requires_a_record(client: Any) -> None:
         json={"approver": "alice", "approval_record": "  "},
     )
     assert resp.status_code == 422
+
+
+def test_repair_api_requires_supported_evidence_and_advances_review_state(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import apps.api.extensions as extensions
+
+    monkeypatch.setattr(
+        extensions,
+        "run_diagnosis",
+        lambda _run_id, _request: {
+            "hypotheses": [
+                {
+                    "hypothesis_id": "hyp-1",
+                    "status": "SUPPORTED",
+                    "supporting": [{"ref_id": "ev-1"}],
+                }
+            ]
+        },
+    )
+    formal_response = client.get("/api/v1/repairs/cases/TC-CREATE-001/formal")
+    assert formal_response.status_code == 200
+    candidate = formal_response.json()["case"]
+    candidate["version"] += 1
+    payload = {
+        "case_id": "TC-CREATE-001",
+        "candidate": candidate,
+        "change_kinds": ["locator_update"],
+        "diff": [],
+        "source_run_id": "run-1",
+        "hypothesis_id": "hyp-1",
+        "evidence_refs": ["ev-1"],
+    }
+    unsupported = {**payload, "evidence_refs": ["ev-unrelated"]}
+    assert client.post("/api/v1/repairs", json=unsupported).status_code == 422
+
+    created = client.post("/api/v1/repairs", json=payload)
+    assert created.status_code == 201, created.text
+    proposal_id = created.json()["proposal_id"]
+    assert created.json()["source_run_id"] == "run-1"
+    assert created.json()["source_evidence_refs"] == ["ev-1"]
+    assert client.post(f"/api/v1/repairs/{proposal_id}/validate").json()["state"] == "VALIDATED"
+    assert (
+        client.post(f"/api/v1/repairs/{proposal_id}/submit").json()["state"] == "PENDING_APPROVAL"
+    )
+    denied = client.post(
+        f"/api/v1/repairs/{proposal_id}/approve",
+        json={"approver": "system", "approval_record": "auto"},
+    )
+    assert denied.status_code == 422
+    approved = client.post(
+        f"/api/v1/repairs/{proposal_id}/approve",
+        json={"approver": "reviewer@example.test", "approval_record": "review-42"},
+    )
+    assert approved.status_code == 200
+    assert approved.json()["state"] == "APPROVED"
+
+
+def test_repair_api_replays_and_promotes_append_only_version(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import apps.api.extensions as extensions
+
+    case_id = "TC-CREATE-001"
+    case_path = client.app.state.case_dir / f"{case_id}.json"
+    formal = json.loads(case_path.read_text(encoding="utf-8"))
+    drifted = json.loads(json.dumps(formal))
+    for step in drifted["steps"]:
+        if step["step_id"] == "s6":
+            step["target"] = "[data-testid=legacy-new-project-link]"
+    case_path.write_text(json.dumps(drifted), encoding="utf-8")
+
+    monkeypatch.setattr(
+        extensions,
+        "run_diagnosis",
+        lambda _run_id, _request: {
+            "hypotheses": [
+                {
+                    "hypothesis_id": "hyp-repair",
+                    "status": "SUPPORTED",
+                    "supporting": [{"ref_id": "ev-repair"}],
+                }
+            ]
+        },
+    )
+    candidate = json.loads(json.dumps(formal))
+    candidate["version"] = formal["version"] + 1
+    payload = {
+        "case_id": case_id,
+        "candidate": candidate,
+        "change_kinds": ["locator_update"],
+        "diff": [
+            {
+                "kind": "locator_update",
+                "target": "s6",
+                "before": "[data-testid=legacy-new-project-link]",
+                "after": "[data-testid=new-project-link]",
+            }
+        ],
+        "source_run_id": "run-repair",
+        "hypothesis_id": "hyp-repair",
+        "evidence_refs": ["ev-repair"],
+    }
+    created = client.post("/api/v1/repairs", json=payload)
+    assert created.status_code == 201, created.text
+    proposal_id = created.json()["proposal_id"]
+    assert client.post(f"/api/v1/repairs/{proposal_id}/validate").json()["state"] == "VALIDATED"
+    assert (
+        client.post(f"/api/v1/repairs/{proposal_id}/submit").json()["state"] == "PENDING_APPROVAL"
+    )
+    assert (
+        client.post(
+            f"/api/v1/repairs/{proposal_id}/approve",
+            json={"approver": "repair-reviewer", "approval_record": "review-1"},
+        ).status_code
+        == 200
+    )
+    replay = client.post(f"/api/v1/repairs/{proposal_id}/sandbox-replay")
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["sandbox_replay"]["status"] == "PASSED"
+    promoted = client.post(
+        f"/api/v1/repairs/{proposal_id}/promote",
+        json={"operator": "release-operator", "reason": "verified browser repair"},
+    )
+    assert promoted.status_code == 200, promoted.text
+    assert promoted.json()["state"] == "PROMOTED"
+    assert (client.app.state.case_dir / f"{case_id}.v2.json").exists()
+    detail = client.get(f"/api/v1/cases/{case_id}").json()
+    assert detail["version"] == 2
+    assert detail["versions"][-1]["file"] == f"{case_id}.v2.json"
 
 
 def test_dispatch_status_exposes_broker_semantics(client: Any) -> None:

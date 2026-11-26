@@ -15,6 +15,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
+from packages.core.errors import DomainError
+
 from . import faults, service
 from .api import get_db
 
@@ -73,12 +75,10 @@ def new_project_page(request: Request) -> HTMLResponse:
 @router.post("/projects/new", response_class=HTMLResponse)
 def create_project_form(
     request: Request,
-    name: str = Form(...),
+    name: str = Form(""),
     description: str = Form(""),
     db: Session = Depends(get_db),  # type: ignore[assignment]
 ):
-    from packages.core.errors import DomainError
-
     try:
         service.create_project(db, name, description or None)
     except DomainError as exc:
@@ -95,4 +95,40 @@ def project_detail(
     db: Session = Depends(get_db),  # type: ignore[assignment]
 ):
     project = service.project_to_dict(service.get_project(db, project_id))
-    return templates.TemplateResponse(request, "detail.html", {"project": project})
+    return templates.TemplateResponse(
+        request,
+        "detail.html",
+        {"project": project, "updated": request.query_params.get("updated") == "1"},
+    )
+
+
+@router.get("/projects/{project_id}/edit", response_class=HTMLResponse)
+def edit_project_page(project_id: str, request: Request, db: Session = Depends(get_db)):
+    project = service.project_to_dict(service.get_project(db, project_id))
+    return templates.TemplateResponse(
+        request, "edit_project.html", {"project": project, "error": None}
+    )
+
+
+@router.post("/projects/{project_id}/edit", response_class=HTMLResponse)
+def edit_project_form(
+    project_id: str,
+    request: Request,
+    name: str = Form(""),
+    description: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    project = service.project_to_dict(service.get_project(db, project_id))
+    try:
+        project = service.project_to_dict(
+            service.update_project(db, project_id, name, description or None)
+        )
+    except DomainError as exc:
+        project = {**project, "name": name, "description": description}
+        return templates.TemplateResponse(
+            request,
+            "edit_project.html",
+            {"project": project, "error": exc.message},
+            status_code=exc.status_code,
+        )
+    return RedirectResponse(f"/projects/{project_id}?updated=1", status_code=303)

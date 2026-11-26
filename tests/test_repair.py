@@ -32,6 +32,7 @@ from packages.execution.repair import (
     OracleIntegrityChecker,
     RepairService,
 )
+from packages.execution.review_policy import SELF_APPROVER_IDENTIFIERS
 
 for _m in (TestCaseVersion, TestIntent, TestStep):
     _m.__test__ = False  # type: ignore[attr-defined]
@@ -162,6 +163,30 @@ def test_agent_cannot_self_approve() -> None:
     svc.submit_for_approval(p.proposal_id)
     with pytest.raises(ValidationError):
         svc.approve(p.proposal_id, approver="agent", approval_record="auto")
+
+
+@pytest.mark.parametrize("actor", sorted(SELF_APPROVER_IDENTIFIERS))
+def test_repair_reject_requires_human_actor(actor: str) -> None:
+    svc = RepairService()
+    _base_case, proposal = _valid_proposal(svc, f"p-reject-{actor or 'blank'}")
+    svc.validate(proposal.proposal_id)
+    svc.submit_for_approval(proposal.proposal_id)
+    if actor:
+        with pytest.raises(ValidationError):
+            svc.reject(proposal.proposal_id, "not acceptable", rejected_by=actor)
+    else:
+        with pytest.raises(ValidationError):
+            svc.reject(proposal.proposal_id, "not acceptable", rejected_by="")
+
+
+def test_repair_rejection_persists_operator() -> None:
+    svc = RepairService()
+    _base_case, proposal = _valid_proposal(svc, "p-rejected-by")
+    svc.validate(proposal.proposal_id)
+    svc.submit_for_approval(proposal.proposal_id)
+    rejected = svc.reject(proposal.proposal_id, "evidence insufficient", rejected_by="qa-reviewer")
+    assert rejected.rejected_by == "qa-reviewer"
+    assert svc.get(proposal.proposal_id)["rejected_by"] == "qa-reviewer"
 
 
 def test_validation_failure_tracked() -> None:

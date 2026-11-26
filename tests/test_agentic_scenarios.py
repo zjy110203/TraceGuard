@@ -27,8 +27,10 @@ from typing import Any
 import httpx
 import pytest
 import uvicorn
+from fastapi.testclient import TestClient
 
 from apps.api.explorer_api import scenario_steps
+from apps.api.main import build_app as build_platform_app
 from packages.agents.compiler import TestCaseCompiler
 from packages.agents.exploration import Budget
 from packages.agents.explorer import Explorer
@@ -73,6 +75,7 @@ def test_default_registry_is_valid_and_lists_every_required_scenario() -> None:
     } <= ids
     # An unimplemented scenario stays visible, with the reason it is not runnable.
     for scenario in registry.all():
+        assert set(scenario.paths or {}) == {"normal", "exception", "boundary", "recovery"}
         if not scenario.implemented:
             assert scenario.blocked_reason, scenario.scenario_id
 
@@ -95,6 +98,46 @@ def test_registry_rejects_duplicates_and_unknown_actions() -> None:
     )
     with pytest.raises(ValueError, match="unknown tools"):
         registry.register(bad)
+
+
+def test_registry_supports_exact_versions_without_replacing_history() -> None:
+    registry = ScenarioRegistry()
+    latest = default_registry().require("teamflow-login")
+    original = Scenario(**{**latest.__dict__, "version": "1.0.0"})
+    newer = Scenario(**{**latest.__dict__, "version": "2.0.0"})
+    registry.register(original)
+    registry.register(newer)
+
+    assert registry.require("teamflow-login", "1.0.0") is original
+    assert registry.require("teamflow-login", "2.0.0") is newer
+    assert registry.require("teamflow-login") is newer
+    assert len(registry.all()) == 2
+    with pytest.raises(ValueError, match="already registered"):
+        registry.register(newer)
+
+
+def test_scenario_legacy_mapping_and_strict_unknown_field_validation() -> None:
+    original = default_registry().require("teamflow-login")
+    legacy_fields = {"version", "preconditions", "data_setup", "cleanup", "denied_actions", "paths"}
+    legacy = Scenario.from_mapping(
+        {key: value for key, value in original.__dict__.items() if key not in legacy_fields}
+    )
+    assert legacy.version == "1.0.0"
+    assert legacy.validate() == []
+    with pytest.raises(ValueError, match="unknown scenario fields"):
+        Scenario.from_mapping({**original.__dict__, "unexpected": True})
+
+
+def test_scenario_digest_is_canonical_and_covers_v2_fields() -> None:
+    original = default_registry().require("teamflow-login")
+    equivalent = Scenario(
+        **{**original.__dict__, "intent_templates": dict(original.intent_templates)}
+    )
+    changed = Scenario(**{**original.__dict__, "denied_actions": ("click",)})
+
+    assert original.digest == equivalent.digest
+    assert original.digest != changed.digest
+    assert original.to_dict()["digest_algorithm_version"] == "canonical-json-v1"
 
 
 def test_scenario_without_constraints_is_refused() -> None:
@@ -614,3 +657,177 @@ def test_unexpected_page_stops_the_plan_instead_of_verifying(tmp_path: Path) -> 
         )
         with pytest.raises(ValidationError):
             TestCaseCompiler().compile(trace, case_id="TC-DRIFT", title="deviated")
+
+
+def test_project_edit_paths_run_through_api_and_cleanup_owned_data(tmp_path: Path) -> None:
+    scenario = default_registry().require("project-edit", "2.0.0")
+    database_path = (tmp_path / "teamflow.db").as_posix()
+    with _isolated_teamflow(tmp_path) as base:
+        settings = Settings(
+            app_env="test",
+            database_url=f"sqlite:///{database_path}",
+            exploration_data_dir=str(tmp_path / "explorations"),
+            candidate_data_dir=str(tmp_path / "candidates"),
+            case_dir=str(tmp_path / "cases"),
+            benchmark_data_dir=str(tmp_path / "benchmark"),
+            chain_data_dir=str(tmp_path / "chains"),
+            blob_dir=str(tmp_path / "blobs"),
+        )
+        with TestClient(build_platform_app(settings)) as client:
+            results: dict[str, dict[str, Any]] = {}
+            for path_kind in ("normal", "exception", "boundary", "recovery"):
+                response = client.post(
+                    "/api/v1/explorations",
+                    json={
+                        "scenario": scenario.scenario_id,
+                        "scenario_version": scenario.version,
+                        "path": path_kind,
+                        "goal": "Edit the seeded project and verify the saved result",
+                        "target": "/projects/*",
+                        "base_url": base,
+                        "policy": "scripted",
+                        "max_steps": 20,
+                    },
+                )
+                assert response.status_code == 201, response.text
+                record = response.json()
+                results[path_kind] = record
+                assert record["scenario_version"] == "2.0.0"
+                assert record["scenario_digest"] == scenario.digest
+                assert record["data_lifecycle"]["state"] == "CLEANED"
+                from apps.teamflow.models import Project
+                from packages.core import database
+
+                session_factory = database.make_session_factory(client.app.state.engine)
+                with session_factory() as session:
+                    assert not any(
+                        project.name.startswith("TG_RUN_")
+                        for project in session.query(Project).all()
+                    )
+
+            normal = results["normal"]
+            assert normal["goal_status"] == VERIFIED, normal["goal_reason"]
+            assert normal["goal_assertions"]["verdict"] == VERIFIED
+            candidate = client.post(
+                f"/api/v1/explorations/{normal['exploration_id']}/compile",
+                json={"case_id": "TC-PROJECT-EDIT", "title": "Project edit normal path"},
+            )
+            assert candidate.status_code == 201, candidate.text
+            assert candidate.json()["status"] == "PENDING_REVIEW"
+
+            exception = results["exception"]
+            assert any(
+                "form-error" in observation.get("visible_testids", [])
+                for observation in exception.get("observations", [])
+            )
+            recovery = results["recovery"]
+            assert recovery["goal_assertions"]["verdict"] == VERIFIED
+
+
+def test_form_validation_paths_repeat_with_run_scoped_seed_cleanup(tmp_path: Path) -> None:
+    scenario = default_registry().require("form-validation")
+    database_path = (tmp_path / "teamflow.db").as_posix()
+    with _isolated_teamflow(tmp_path) as base:
+        settings = Settings(
+            app_env="test",
+            database_url=f"sqlite:///{database_path}",
+            exploration_data_dir=str(tmp_path / "explorations"),
+            candidate_data_dir=str(tmp_path / "candidates"),
+            case_dir=str(tmp_path / "cases"),
+            benchmark_data_dir=str(tmp_path / "benchmark"),
+            chain_data_dir=str(tmp_path / "chains"),
+            blob_dir=str(tmp_path / "blobs"),
+        )
+        with TestClient(build_platform_app(settings)) as client:
+            from apps.teamflow.models import Project
+            from packages.core import database
+
+            session_factory = database.make_session_factory(client.app.state.engine)
+            for path_kind in ("normal", "exception", "boundary", "recovery", "normal"):
+                response = client.post(
+                    "/api/v1/explorations",
+                    json={
+                        "scenario": scenario.scenario_id,
+                        "scenario_version": scenario.version,
+                        "path": path_kind,
+                        "goal": "Validate project form input and show the correct result",
+                        "target": "/projects/new",
+                        "expected_outcomes": ["project name already exists"],
+                        "base_url": base,
+                        "policy": "scripted",
+                        "max_steps": 20,
+                    },
+                )
+                assert response.status_code == 201, response.text
+                record = response.json()
+                assert record["scenario_path"] == path_kind
+                assert record["data_lifecycle"]["state"] == "CLEANED"
+                visible = {
+                    testid
+                    for observation in record.get("observations", [])
+                    for testid in observation.get("visible_testids", [])
+                }
+                if path_kind in {"normal", "exception", "recovery"}:
+                    assert "form-error" in visible
+                if path_kind in {"boundary", "recovery"}:
+                    assert "success-message" in visible
+                with session_factory() as session:
+                    assert not any(
+                        project.name.startswith("TG_RUN_")
+                        for project in session.query(Project).all()
+                    )
+
+
+def test_four_path_matrix_for_existing_scenarios_through_real_browser_api(
+    tmp_path: Path,
+) -> None:
+    database_path = (tmp_path / "teamflow.db").as_posix()
+    with _isolated_teamflow(tmp_path) as base:
+        settings = Settings(
+            app_env="test",
+            database_url=f"sqlite:///{database_path}",
+            exploration_data_dir=str(tmp_path / "explorations"),
+            candidate_data_dir=str(tmp_path / "candidates"),
+            case_dir=str(tmp_path / "cases"),
+            benchmark_data_dir=str(tmp_path / "benchmark"),
+            chain_data_dir=str(tmp_path / "chains"),
+            blob_dir=str(tmp_path / "blobs"),
+        )
+        with TestClient(build_platform_app(settings)) as client:
+            registry = default_registry()
+            for scenario_id in (
+                "teamflow-login",
+                "project-create",
+                "project-query",
+                "page-navigation",
+            ):
+                scenario = registry.require(scenario_id)
+                templates = scenario.intent_templates
+                for path_kind in ("normal", "exception", "boundary", "recovery"):
+                    response = client.post(
+                        "/api/v1/explorations",
+                        json={
+                            "scenario": scenario.scenario_id,
+                            "scenario_version": scenario.version,
+                            "path": path_kind,
+                            "goal": templates.get("goal", scenario.description),
+                            "target": templates.get("target", ""),
+                            "expected_outcomes": templates.get("expected_outcomes", []),
+                            "required_assertions": templates.get("required_assertions", []),
+                            "base_url": base,
+                            "policy": "scripted",
+                            "max_steps": scenario.max_steps,
+                        },
+                    )
+                    assert response.status_code == 201, response.text
+                    record = response.json()
+                    assert record["scenario_path"] == path_kind
+                    assert record["scenario_version"] == scenario.version
+                    assert record["action_sequence"]
+                    if path_kind in {"normal", "recovery"}:
+                        assert record["goal_status"] == VERIFIED, record["goal_reason"]
+                    if path_kind == "exception":
+                        assert record["goal_status"] != VERIFIED
+                    reread = client.get(f"/api/v1/explorations/{record['exploration_id']}")
+                    assert reread.status_code == 200
+                    assert reread.json()["scenario_digest_verified"] is True

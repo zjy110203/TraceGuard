@@ -313,6 +313,8 @@ def test_evidence_api_endpoints(tmp_path: Path) -> None:
 
 
 def test_contract_registry_marks_c05_c06_draft() -> None:
+    from packages.contracts.loader import SCHEMA_DIR
+
     registry_path = Path("packages/contracts/registry.json")
     registry = json.loads(registry_path.read_text(encoding="utf-8"))
     by_id = {c["id"]: c for c in registry["contracts"]}
@@ -320,5 +322,5 @@ def test_contract_registry_marks_c05_c06_draft() -> None:
     assert by_id["C06"]["status"] == "draft"
     assert by_id["C12"]["status"] == "draft"
     for cid in ("C05", "C06"):
-        schema = json.loads((Path("packages/contracts") / by_id[cid]["schema_file"]).read_text())
-        assert "DRAFT" in schema["title"] or "DRAFT" in schema["description"]
+        schema = json.loads((SCHEMA_DIR / by_id[cid]["schema_file"]).read_text(encoding="utf-8"))
+        assert schema["status"] == "draft"

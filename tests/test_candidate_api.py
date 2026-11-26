@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from apps.api.main import build_app
 from packages.agents.exploration import compute_trace_hash
 from packages.core.config import Settings
+from packages.execution.review_policy import SELF_APPROVER_IDENTIFIERS
 
 TRACE_ACTIONS = [
     {"tool": "navigate", "args": {"url": "http://127.0.0.1:8001/"}, "rejected": False},
@@ -312,6 +313,27 @@ def test_reject_closes_candidate_without_writing_case(client: TestClient) -> Non
     assert resp.status_code == 200
     assert resp.json()["status"] == "REJECTED"
     assert client.get("/api/v1/cases").json() == []
+
+
+@pytest.mark.parametrize("reviewer", sorted(SELF_APPROVER_IDENTIFIERS))
+def test_candidate_reject_refuses_self_approver_identities(
+    client: TestClient, reviewer: str
+) -> None:
+    cand = _compile(client)
+    resp = client.post(
+        f"/api/v1/candidates/{cand['candidate_id']}/reject",
+        json={"reviewer": reviewer, "reason": "self review attempt"},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.parametrize("reviewer", sorted(SELF_APPROVER_IDENTIFIERS))
+def test_candidate_approve_refuses_self_approver_identities(
+    client: TestClient, reviewer: str
+) -> None:
+    cand = _compile(client)
+    resp = _approve(client, cand["candidate_id"], reviewer=reviewer)
+    assert resp.status_code == 422
 
 
 def test_recompile_after_review_is_refused(client: TestClient) -> None:

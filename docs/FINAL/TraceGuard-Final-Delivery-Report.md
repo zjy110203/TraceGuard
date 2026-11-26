@@ -81,11 +81,11 @@
 | 契约 | 状态 | 位置 |
 |---|---|---|
 | C01 TestIntent / C02 TestCase / C03 Oracle / C04 Execution | 领域模型实现，JSON Schema **未冻结** | `packages/execution/models.py`, `verdict.py`, `tasks.py`；registry=placeholder |
-| C05 Event / C06 Evidence | **draft schema** | `packages/contracts/C05_Event.schema.json`, `C06_Evidence.schema.json` |
+| C05 Event / C06 Evidence | **draft schema** | `docs/archive/contracts-shadow/C05_Event.schema.json`, `C06_Evidence.schema.json` |
 | C07 Evidence Graph | 实现，Schema 未冻结 | `packages/evidence/graph.py`；registry=placeholder |
 | C08 Diagnosis / C09 Probe / C10 Disposition | 实现（枚举/模型），Schema 未冻结 | `packages/agents/diagnosis.py`, `probes.py` |
-| C11 Repair | **draft schema** | `packages/contracts/C11_Repair.schema.json` |
-| C12 Benchmark | **draft schema**（基线既有） | `packages/contracts/C12_Benchmark.schema.json` |
+| C11 Repair | **draft schema** | `docs/archive/contracts-shadow/C11_Repair.schema.json` |
+| C12 Benchmark | **draft schema**（基线既有） | `docs/archive/contracts-shadow/C12_Benchmark.schema.json` |
 
 registry.json 中 C05/C06/C11/C12 标 `draft`，其余 `placeholder`；**无任何契约标 frozen**。不冒充冻结。
 

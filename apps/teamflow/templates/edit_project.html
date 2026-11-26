@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>编辑项目 · TeamFlow</title>
+</head>
+<body>
+  <h1>编辑项目</h1>
+  <a href="/projects/{{ project.id }}">返回项目</a>
+  {% if error %}<p style="color:#b00020" data-testid="form-error">{{ error }}</p>{% endif %}
+  <form method="post" action="/projects/{{ project.id }}/edit" data-testid="project-edit-form">
+    <label>项目名称 <input name="name" data-testid="edit-project-name" value="{{ project.name }}" maxlength="200"></label><br>
+    <label>描述 <textarea name="description" data-testid="edit-project-description">{{ project.description or '' }}</textarea></label><br>
+    <button type="submit" data-testid="edit-project-submit">保存</button>
+  </form>
+</body>
+</html>

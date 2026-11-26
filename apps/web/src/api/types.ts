@@ -338,9 +338,21 @@ export interface RepairProposal {
   promotion_target_version: number
   validation_notes: string[]
   approved_by: string
+  rejected_by: string
   approval_record: string
   failure_reason: string
   created_at: string
+  source_run_id: string
+  source_hypothesis_id: string
+  source_evidence_refs: string[]
+  promotion_record: Record<string, unknown>
+  sandbox_replay: {
+    status: string
+    verdict: string
+    reason: string
+    evidence_sha256: string
+    replayed_at: string
+  } | null
 }
 
 export interface DatasetRow {

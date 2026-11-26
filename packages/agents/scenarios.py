@@ -30,11 +30,13 @@ answer "what would this take?" instead of pretending the capability exists.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
-from packages.agents.goal_assertions import validate_assertion
+from packages.agents.goal_assertions import expand_assertion_sugar, validate_assertion
 
 ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{1,47}$")
 REQUIRED_ACTIONS = ("navigate", "snapshot")
@@ -64,14 +66,90 @@ class Scenario:
     stop_conditions: tuple[str, ...]
     timeout_budget_s: float
     evidence_requirements: tuple[str, ...]
+    version: str = "1.0.0"
     steps: tuple[dict[str, Any], ...] = ()
     max_steps: int = 8
     implemented: bool = True
     blocked_reason: str = ""
+    preconditions: tuple[dict[str, Any], ...] = ()
+    data_setup: dict[str, Any] | None = None
+    cleanup: dict[str, Any] | None = None
+    denied_actions: tuple[str, ...] = ()
+    sensitive_selectors: tuple[str, ...] = ()
+    paths: dict[str, tuple[dict[str, Any], ...]] | None = None
+
+    @classmethod
+    def from_mapping(cls, value: dict[str, Any]) -> Scenario:
+        """Strictly load a legacy or v2 package without accepting extensions silently."""
+        allowed = set(cls.__dataclass_fields__)
+        unknown = set(value) - allowed
+        if unknown:
+            raise ValueError(f"unknown scenario fields: {sorted(unknown)}")
+        normalized = dict(value)
+        for key in (
+            "allowed_origins",
+            "goal_definition",
+            "allowed_actions",
+            "constraints",
+            "success_conditions",
+            "stop_conditions",
+            "evidence_requirements",
+            "steps",
+            "preconditions",
+            "denied_actions",
+            "sensitive_selectors",
+        ):
+            if key in normalized:
+                normalized[key] = tuple(normalized[key])
+        if isinstance(normalized.get("paths"), dict):
+            normalized["paths"] = {key: tuple(items) for key, items in normalized["paths"].items()}
+        return cls(**normalized)
+
+    def canonical_payload(self) -> dict[str, Any]:
+        """Return the stable, credential-free Scenario Package v2 payload."""
+        return {
+            "scenario_id": self.scenario_id,
+            "version": self.version,
+            "name": self.name,
+            "description": self.description,
+            "allowed_origins": list(self.allowed_origins),
+            "initial_url": self.initial_url,
+            "intent_templates": self.intent_templates,
+            "goal_definition": list(self.goal_definition),
+            "allowed_actions": list(self.allowed_actions),
+            "constraints": list(self.constraints),
+            "success_conditions": list(self.success_conditions),
+            "stop_conditions": list(self.stop_conditions),
+            "timeout_budget_s": self.timeout_budget_s,
+            "evidence_requirements": list(self.evidence_requirements),
+            "steps": list(self.steps),
+            "max_steps": self.max_steps,
+            "implemented": self.implemented,
+            "blocked_reason": self.blocked_reason,
+            "preconditions": list(self.preconditions),
+            "data_setup": self.data_setup or {},
+            "cleanup": self.cleanup or {},
+            "denied_actions": list(self.denied_actions),
+            "sensitive_selectors": list(self.sensitive_selectors),
+            "paths": {k: list(v) for k, v in (self.paths or {}).items()},
+        }
+
+    def steps_for_path(self, path_kind: str) -> tuple[dict[str, Any], ...] | None:
+        if path_kind == "normal" and not (self.paths or {}).get(path_kind):
+            return self.steps
+        return (self.paths or {}).get(path_kind)
+
+    @property
+    def digest(self) -> str:
+        encoded = json.dumps(
+            self.canonical_payload(), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "scenario_id": self.scenario_id,
+            "version": self.version,
             "name": self.name,
             "description": self.description,
             "allowed_origins": list(self.allowed_origins),
@@ -88,6 +166,9 @@ class Scenario:
             "implemented": self.implemented,
             "blocked_reason": self.blocked_reason,
             "step_count": len(self.steps),
+            "digest_algorithm": "sha256",
+            "digest_algorithm_version": "canonical-json-v1",
+            "digest": self.digest,
         }
 
     def validate(self) -> list[str]:
@@ -95,6 +176,10 @@ class Scenario:
         problems: list[str] = []
         if not ID_PATTERN.match(self.scenario_id):
             problems.append(f"scenario_id {self.scenario_id!r} is not a valid slug")
+        if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", self.version):
+            problems.append("version must use numeric semantic version MAJOR.MINOR.PATCH")
+        if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", self.version):
+            problems.append("version must use numeric semantic version MAJOR.MINOR.PATCH")
         for label, value in (
             ("name", self.name),
             ("description", self.description),
@@ -132,9 +217,74 @@ class Scenario:
             problems.append("evidence_requirements must not be empty")
         if self.max_steps < 1:
             problems.append("max_steps must be >= 1")
+        if any(not isinstance(item, dict) for item in self.preconditions):
+            problems.append("preconditions must be structured objects")
+        for selector in self.sensitive_selectors:
+            if len(selector) > 200 or not re.fullmatch(
+                r"[A-Za-z0-9\s\[\]=\"'#._:\->~*+,()]+", selector
+            ):
+                problems.append("sensitive_selectors contains an unsafe selector")
+        if not isinstance(self.data_setup or {}, dict) or not isinstance(self.cleanup or {}, dict):
+            problems.append("data_setup and cleanup must be structured objects")
+        setup = self.data_setup or {}
+        if isinstance(setup, dict):
+            if set(setup) - {"projects"}:
+                problems.append("data_setup contains unknown fields")
+            if "projects" in setup and not isinstance(setup["projects"], list):
+                problems.append("data_setup.projects must be a list")
+            for index, project in enumerate(setup.get("projects", [])):
+                if not isinstance(project, dict) or set(project) - {
+                    "key",
+                    "name",
+                    "description",
+                }:
+                    problems.append(f"data_setup.projects[{index}] has an invalid structure")
+        cleanup = self.cleanup or {}
+        if isinstance(cleanup, dict) and (
+            set(cleanup) - {"owned_resources"}
+            or cleanup.get("owned_resources", "lease-only") != "lease-only"
+        ):
+            problems.append("cleanup must use owned_resources='lease-only'")
+        if set(self.denied_actions) - set(KNOWN_ACTIONS):
+            problems.append("denied_actions contain unknown tools")
+        conflicts = set(self.denied_actions) & set(self.allowed_actions)
+        if conflicts:
+            problems.append(f"denied_actions conflict with allowed_actions: {sorted(conflicts)}")
+        valid_path_kinds = {"normal", "exception", "boundary", "recovery"}
+        if self.paths is not None:
+            paths = self.paths if isinstance(self.paths, dict) else {}
+            if not isinstance(self.paths, dict):
+                problems.append("paths must be an object")
+            unknown_paths = set(paths) - valid_path_kinds
+            if unknown_paths:
+                problems.append(f"paths contain unknown path kinds: {sorted(unknown_paths)}")
+            for path_kind, path in paths.items():
+                if not isinstance(path, (tuple, list)) or any(
+                    not isinstance(step, dict) for step in path
+                ):
+                    problems.append(f"paths[{path_kind!r}] must be a sequence of step objects")
+                    continue
+                for step_index, step in enumerate(path):
+                    if set(step) - {"tool", "args", "rationale", "expect"}:
+                        problems.append(f"paths[{path_kind!r}][{step_index}] has unknown fields")
+                    if not isinstance(step.get("args", {}), dict):
+                        problems.append(
+                            f"paths[{path_kind!r}][{step_index}].args must be an object"
+                        )
+                    if str(step.get("tool") or "") not in self.allowed_actions:
+                        problems.append(
+                            f"paths[{path_kind!r}][{step_index}] uses a tool "
+                            "outside allowed_actions"
+                        )
+                if len(path) > self.max_steps:
+                    problems.append(f"paths[{path_kind!r}] exceeds max_steps")
         if self.implemented and not self.steps:
             problems.append("an implemented scenario must declare its decision steps")
         for index, step in enumerate(self.steps):
+            if set(step) - {"tool", "args", "rationale", "expect"}:
+                problems.append(f"steps[{index}] has unknown fields")
+            if not isinstance(step.get("args", {}), dict):
+                problems.append(f"steps[{index}].args must be an object")
             tool = str(step.get("tool") or "")
             if tool not in self.allowed_actions:
                 problems.append(f"steps[{index}] uses {tool!r} outside allowed_actions")
@@ -145,22 +295,31 @@ class ScenarioRegistry:
     """Register / look up scenarios. Duplicates are a load error, not a replace."""
 
     def __init__(self) -> None:
-        self._scenarios: dict[str, Scenario] = {}
+        self._scenarios: dict[tuple[str, str], Scenario] = {}
 
     def register(self, scenario: Scenario) -> Scenario:
+        normalized_goal = tuple(
+            expand_assertion_sugar(dict(spec)) for spec in scenario.goal_definition
+        )
+        if normalized_goal != scenario.goal_definition:
+            scenario = replace(scenario, goal_definition=normalized_goal)
         problems = scenario.validate()
         if problems:
             raise ValueError(f"scenario {scenario.scenario_id!r} is invalid: {problems}")
-        if scenario.scenario_id in self._scenarios:
-            raise ValueError(f"scenario {scenario.scenario_id!r} is already registered")
-        self._scenarios[scenario.scenario_id] = scenario
+        key = (scenario.scenario_id, scenario.version)
+        if key in self._scenarios:
+            raise ValueError(f"scenario {key!r} is already registered")
+        self._scenarios[key] = scenario
         return scenario
 
-    def get(self, scenario_id: str) -> Scenario | None:
-        return self._scenarios.get(scenario_id)
+    def get(self, scenario_id: str, version: str | None = None) -> Scenario | None:
+        if version is not None:
+            return self._scenarios.get((scenario_id, version))
+        matches = [s for (sid, _), s in self._scenarios.items() if sid == scenario_id]
+        return max(matches, key=lambda s: tuple(int(x) for x in s.version.split(".")), default=None)
 
-    def require(self, scenario_id: str) -> Scenario:
-        scenario = self.get(scenario_id)
+    def require(self, scenario_id: str, version: str | None = None) -> Scenario:
+        scenario = self.get(scenario_id, version)
         if scenario is None:
             raise KeyError(scenario_id)
         return scenario
@@ -173,7 +332,11 @@ class ScenarioRegistry:
 
     def public_view(self) -> dict[str, str]:
         """id -> description, the shape older clients already consume."""
-        return {s.scenario_id: s.description for s in self._scenarios.values()}
+        return {
+            s.scenario_id: s.description
+            for s in self._scenarios.values()
+            if self.get(s.scenario_id) is s
+        }
 
     def validate_all(self) -> dict[str, list[str]]:
         return {s.scenario_id: s.validate() for s in self._scenarios.values() if s.validate()}
@@ -212,10 +375,47 @@ _COMMON_CONSTRAINTS = (
     "凭据只从受信配置读取，动作记录必须脱敏",
     "每次探索必须有步数与时长上限，超限即停止",
 )
+_RUN_PROJECT_LINK = '[data-testid=project-item][data-project-id="{project_target_id}"] a'
+_BOUNDARY_PROJECT_LINK = '[data-testid=project-item][data-project-id="{boundary_project_id}"] a'
 
 
 def _goal(*assertions: dict[str, Any]) -> tuple[dict[str, Any], ...]:
     return assertions
+
+
+def _login_with_password(password: str) -> tuple[dict[str, Any], ...]:
+    steps = [dict(step) for step in _LOGIN_STEPS]
+    steps[2] = {
+        **steps[2],
+        "args": {"selector": "[data-testid=password]", "value": password},
+    }
+    return tuple(steps)
+
+
+def _create_project_steps(name: str, description: str) -> tuple[dict[str, Any], ...]:
+    return (
+        {
+            "tool": "click",
+            "args": {"selector": "[data-testid=new-project-link]"},
+            "rationale": "open create form",
+        },
+        {
+            "tool": "fill",
+            "args": {"selector": "[data-testid=project-name]", "value": name},
+            "rationale": "enter project name",
+        },
+        {
+            "tool": "fill",
+            "args": {"selector": "[data-testid=project-description]", "value": description},
+            "rationale": "enter project description",
+        },
+        {
+            "tool": "click",
+            "args": {"selector": "[data-testid=create-submit]"},
+            "rationale": "submit project form",
+        },
+        {"tool": "snapshot", "args": {}, "rationale": "observe create result"},
+    )
 
 
 def build_default_registry() -> ScenarioRegistry:
@@ -225,6 +425,7 @@ def build_default_registry() -> ScenarioRegistry:
     registry.register(
         Scenario(
             scenario_id="teamflow-login",
+            version="2.0.0",
             name="用户登录",
             description="登录 TeamFlow 并进入项目列表（已实现；动作仍经安全网关校验）",
             allowed_origins=("http://127.0.0.1:8001",),
@@ -262,12 +463,58 @@ def build_default_registry() -> ScenarioRegistry:
             timeout_budget_s=45.0,
             evidence_requirements=("登录后页面快照", "动作序列（凭据已脱敏）"),
             steps=_LOGIN_STEPS,
+            paths={
+                "normal": _LOGIN_STEPS,
+                "exception": _login_with_password("{wrong_password}"),
+                "boundary": (
+                    {"tool": "navigate", "args": {"url": "{base_url}/"}, "rationale": "open login"},
+                    {
+                        "tool": "fill",
+                        "args": {
+                            "selector": "[data-testid=username]",
+                            "value": "{boundary_username}",
+                        },
+                        "rationale": "use maximum-width username",
+                    },
+                    {
+                        "tool": "fill",
+                        "args": {"selector": "[data-testid=password]", "value": "{password}"},
+                        "rationale": "fill password",
+                    },
+                    {
+                        "tool": "click",
+                        "args": {"selector": "[data-testid=login-submit]"},
+                        "rationale": "submit boundary username",
+                    },
+                    {"tool": "snapshot", "args": {}, "rationale": "capture boundary response"},
+                ),
+                "recovery": _login_with_password("{wrong_password}")[:4]
+                + (
+                    {
+                        "tool": "fill",
+                        "args": {"selector": "[data-testid=username]", "value": "{username}"},
+                        "rationale": "restore username after failed login",
+                    },
+                    {
+                        "tool": "fill",
+                        "args": {"selector": "[data-testid=password]", "value": "{password}"},
+                        "rationale": "correct the password",
+                    },
+                    {
+                        "tool": "click",
+                        "args": {"selector": "[data-testid=login-submit]"},
+                        "rationale": "retry login",
+                    },
+                    {"tool": "snapshot", "args": {}, "rationale": "verify recovery"},
+                ),
+            },
         )
     )
 
     registry.register(
         Scenario(
             scenario_id="project-create",
+            version="2.0.0",
             name="项目创建",
             description="登录后新建一个项目，并确认列表页出现该项目的创建成功提示",
             allowed_origins=("http://127.0.0.1:8001",),
@@ -304,6 +551,11 @@ def build_default_registry() -> ScenarioRegistry:
             stop_conditions=("创建被拒绝（409/4xx）", "步数/时长超限"),
             timeout_budget_s=60.0,
             evidence_requirements=("创建表单提交前快照", "创建后列表页快照"),
+            data_setup={
+                "projects": [{"key": "duplicate_project_name", "name": "project-create-duplicate"}]
+            },
+            cleanup={"owned_resources": "lease-only"},
+            preconditions=({"kind": "project_seeded", "key": "duplicate_project_name"},),
             steps=_LOGIN_STEPS
             + (
                 {
@@ -335,13 +587,50 @@ def build_default_registry() -> ScenarioRegistry:
                 },
                 {"tool": "snapshot", "args": {}, "rationale": "observe the list after creation"},
             ),
-            max_steps=10,
+            paths={
+                "normal": _LOGIN_STEPS
+                + _create_project_steps(
+                    "{run_prefix}created-{unique_suffix}", "{owner_marker}; normal"
+                ),
+                "exception": _LOGIN_STEPS
+                + _create_project_steps("{duplicate_project_name}", "duplicate case"),
+                "boundary": _LOGIN_STEPS
+                + _create_project_steps("{boundary_name}", "{owner_marker}; boundary"),
+                "recovery": _LOGIN_STEPS
+                + _create_project_steps("{duplicate_project_name}", "duplicate case")
+                + (
+                    {
+                        "tool": "fill",
+                        "args": {
+                            "selector": "[data-testid=project-name]",
+                            "value": "{run_prefix}recovered-{unique_suffix}",
+                        },
+                        "rationale": "correct duplicate name",
+                    },
+                    {
+                        "tool": "fill",
+                        "args": {
+                            "selector": "[data-testid=project-description]",
+                            "value": "{owner_marker}; recovered",
+                        },
+                        "rationale": "mark run ownership",
+                    },
+                    {
+                        "tool": "click",
+                        "args": {"selector": "[data-testid=create-submit]"},
+                        "rationale": "submit recovered form",
+                    },
+                    {"tool": "snapshot", "args": {}, "rationale": "verify recovered creation"},
+                ),
+            },
+            max_steps=15,
         )
     )
 
     registry.register(
         Scenario(
             scenario_id="project-query",
+            version="2.0.0",
             name="项目查询",
             description="登录后从列表进入第一个项目的详情页，读取项目标题与状态",
             allowed_origins=("http://127.0.0.1:8001",),
@@ -386,6 +675,20 @@ def build_default_registry() -> ScenarioRegistry:
             stop_conditions=("列表为空，无项目可查询", "步数/时长超限"),
             timeout_budget_s=60.0,
             evidence_requirements=("列表页快照", "详情页快照"),
+            data_setup={
+                "projects": [
+                    {"key": "project_target", "name": "query-target", "description": "query seed"},
+                    {
+                        "key": "boundary_project",
+                        "name": "query-boundary",
+                        "description": "boundary seed",
+                    },
+                ]
+            },
+            cleanup={"owned_resources": "lease-only"},
+            preconditions=(
+                {"kind": "projects_seeded", "keys": ["project_target", "boundary_project"]},
+            ),
             steps=_LOGIN_STEPS
             + (
                 {
@@ -402,13 +705,62 @@ def build_default_registry() -> ScenarioRegistry:
                 },
                 {"tool": "snapshot", "args": {}, "rationale": "observe the detail page"},
             ),
-            max_steps=9,
+            paths={
+                "normal": _LOGIN_STEPS
+                + (
+                    {
+                        "tool": "click",
+                        "args": {"selector": _RUN_PROJECT_LINK},
+                        "rationale": "open exact run-owned project",
+                    },
+                    {"tool": "snapshot", "args": {}, "rationale": "observe project detail"},
+                ),
+                "exception": _LOGIN_STEPS
+                + (
+                    {
+                        "tool": "navigate",
+                        "args": {"url": "{base_url}/projects/does-not-exist"},
+                        "rationale": "request a nonexistent project",
+                    },
+                    {"tool": "snapshot", "args": {}, "rationale": "capture not-found result"},
+                ),
+                "boundary": _LOGIN_STEPS
+                + (
+                    {
+                        "tool": "click",
+                        "args": {"selector": _BOUNDARY_PROJECT_LINK},
+                        "rationale": "open the second run-owned row",
+                    },
+                    {"tool": "snapshot", "args": {}, "rationale": "verify exact boundary row"},
+                ),
+                "recovery": _LOGIN_STEPS
+                + (
+                    {
+                        "tool": "navigate",
+                        "args": {"url": "{base_url}/projects/does-not-exist"},
+                        "rationale": "observe missing project",
+                    },
+                    {
+                        "tool": "navigate",
+                        "args": {"url": "{base_url}/projects"},
+                        "rationale": "return to list",
+                    },
+                    {
+                        "tool": "click",
+                        "args": {"selector": _RUN_PROJECT_LINK},
+                        "rationale": "open valid run-owned project",
+                    },
+                    {"tool": "snapshot", "args": {}, "rationale": "verify recovery"},
+                ),
+            },
+            max_steps=10,
         )
     )
 
     registry.register(
         Scenario(
             scenario_id="page-navigation",
+            version="2.0.0",
             name="页面导航",
             description="登录后从项目列表导航到新建项目页，验证页面切换与可交互元素",
             allowed_origins=("http://127.0.0.1:8001",),
@@ -455,38 +807,279 @@ def build_default_registry() -> ScenarioRegistry:
                 },
                 {"tool": "snapshot", "args": {}, "rationale": "observe the new page"},
             ),
-            max_steps=9,
+            paths={
+                "normal": _LOGIN_STEPS
+                + (
+                    {
+                        "tool": "click",
+                        "args": {"selector": "[data-testid=new-project-link]"},
+                        "rationale": "navigate to create form",
+                    },
+                    {"tool": "snapshot", "args": {}, "rationale": "verify navigation"},
+                ),
+                "exception": _LOGIN_STEPS
+                + (
+                    {
+                        "tool": "click",
+                        "args": {"selector": "[data-testid=missing-navigation-link]"},
+                        "rationale": "attempt unavailable navigation",
+                    },
+                    {"tool": "snapshot", "args": {}, "rationale": "capture unavailable target"},
+                ),
+                "boundary": _LOGIN_STEPS
+                + (
+                    {
+                        "tool": "click",
+                        "args": {"selector": "[data-testid=new-project-link]"},
+                        "rationale": "open create form",
+                    },
+                    {
+                        "tool": "fill",
+                        "args": {
+                            "selector": "[data-testid=project-name]",
+                            "value": "{boundary_name}",
+                        },
+                        "rationale": "inspect maximum name length",
+                    },
+                    {"tool": "snapshot", "args": {}, "rationale": "capture boundary form state"},
+                ),
+                "recovery": _LOGIN_STEPS
+                + (
+                    {
+                        "tool": "click",
+                        "args": {"selector": "[data-testid=missing-navigation-link]"},
+                        "rationale": "record failed navigation attempt",
+                    },
+                    {
+                        "tool": "click",
+                        "args": {"selector": "[data-testid=new-project-link]"},
+                        "rationale": "recover through valid navigation",
+                    },
+                    {"tool": "snapshot", "args": {}, "rationale": "verify valid destination"},
+                ),
+            },
+            max_steps=10,
         )
     )
 
     registry.register(
         Scenario(
             scenario_id="project-edit",
+            version="2.0.0",
             name="项目编辑",
             description="修改已存在项目的名称/描述并保存",
             allowed_origins=("http://127.0.0.1:8001",),
             initial_url="/projects",
-            intent_templates={"goal": "编辑一个已存在的项目并保存"},
+            intent_templates={
+                "goal": "编辑一个已存在的项目并保存",
+                "target": "/projects/*",
+                "expected_outcomes": [],
+            },
             goal_definition=_goal(
                 {
-                    "name": "edit_form_visible",
-                    "kind": "testid",
-                    "value": "project-edit-form",
+                    "name": "edit_url",
+                    "kind": "url_regex",
+                    "value": r"^/projects/[A-Za-z0-9_-]+$",
                     "required": True,
-                }
+                },
+                {
+                    "name": "updated_project_title",
+                    "kind": "testid",
+                    "value": "project-title",
+                    "required": True,
+                },
             ),
-            allowed_actions=("navigate", "fill", "click", "snapshot"),
+            allowed_actions=("navigate", "fill", "click", "snapshot", "wait"),
             constraints=_COMMON_CONSTRAINTS,
-            success_conditions=("详情页出现编辑表单", "保存后名称更新"),
-            stop_conditions=("SUT 无编辑入口",),
+            success_conditions=("编辑表单预填", "保存后详情页显示新名称"),
+            stop_conditions=("项目种子不存在", "名称校验失败", "步数/时长超限"),
             timeout_budget_s=60.0,
-            evidence_requirements=("编辑前后快照",),
-            implemented=False,
-            blocked_reason=(
-                "被测站点 apps/teamflow/web.py 没有编辑路由（只有 /projects、"
-                "/projects/new、/projects/{id}）。先补 SUT 能力再注册场景，"
-                "不在 Explorer 里模拟一个不存在的页面。"
+            evidence_requirements=("编辑前表单快照", "提交后详情页快照"),
+            data_setup={
+                "projects": [
+                    {"key": "project_target", "name": "edit-target", "description": "edit seed"}
+                ]
+            },
+            cleanup={"owned_resources": "lease-only"},
+            preconditions=({"kind": "project_seeded", "key": "project_target"},),
+            denied_actions=("assert_text",),
+            steps=_LOGIN_STEPS
+            + (
+                {
+                    "tool": "click",
+                    "args": {"selector": _RUN_PROJECT_LINK},
+                    "rationale": "open the run-owned project",
+                },
+                {
+                    "tool": "click",
+                    "args": {"selector": "[data-testid=project-edit-link]"},
+                    "rationale": "open the real project edit page",
+                },
+                {
+                    "tool": "fill",
+                    "args": {
+                        "selector": "[data-testid=edit-project-name]",
+                        "value": "{run_prefix}updated-{unique_suffix}",
+                    },
+                    "rationale": "enter the updated run-owned project name",
+                },
+                {
+                    "tool": "fill",
+                    "args": {
+                        "selector": "[data-testid=edit-project-description]",
+                        "value": "{owner_marker}; updated",
+                    },
+                    "rationale": "preserve the run ownership marker",
+                },
+                {
+                    "tool": "click",
+                    "args": {"selector": "[data-testid=edit-project-submit]"},
+                    "rationale": "save the edit through the Web form",
+                },
+                {"tool": "snapshot", "args": {}, "rationale": "verify the updated detail page"},
             ),
+            paths={
+                "normal": _LOGIN_STEPS
+                + (
+                    {
+                        "tool": "click",
+                        "args": {"selector": _RUN_PROJECT_LINK},
+                        "rationale": "open seeded project",
+                    },
+                    {
+                        "tool": "click",
+                        "args": {"selector": "[data-testid=project-edit-link]"},
+                        "rationale": "open edit page",
+                    },
+                    {
+                        "tool": "fill",
+                        "args": {
+                            "selector": "[data-testid=edit-project-name]",
+                            "value": "{run_prefix}updated-{unique_suffix}",
+                        },
+                        "rationale": "enter new name",
+                    },
+                    {
+                        "tool": "fill",
+                        "args": {
+                            "selector": "[data-testid=edit-project-description]",
+                            "value": "{owner_marker}; updated",
+                        },
+                        "rationale": "retain run marker",
+                    },
+                    {
+                        "tool": "click",
+                        "args": {"selector": "[data-testid=edit-project-submit]"},
+                        "rationale": "save project",
+                    },
+                    {"tool": "snapshot", "args": {}, "rationale": "verify updated page"},
+                ),
+                "exception": _LOGIN_STEPS
+                + (
+                    {
+                        "tool": "click",
+                        "args": {"selector": _RUN_PROJECT_LINK},
+                        "rationale": "open seeded project",
+                    },
+                    {
+                        "tool": "click",
+                        "args": {"selector": "[data-testid=project-edit-link]"},
+                        "rationale": "open edit page",
+                    },
+                    {
+                        "tool": "fill",
+                        "args": {"selector": "[data-testid=edit-project-name]", "value": ""},
+                        "rationale": "submit an empty project name",
+                    },
+                    {
+                        "tool": "click",
+                        "args": {"selector": "[data-testid=edit-project-submit]"},
+                        "rationale": "trigger server-side validation",
+                    },
+                    {"tool": "snapshot", "args": {}, "rationale": "capture validation feedback"},
+                ),
+                "boundary": _LOGIN_STEPS
+                + (
+                    {
+                        "tool": "click",
+                        "args": {"selector": _RUN_PROJECT_LINK},
+                        "rationale": "open seeded project",
+                    },
+                    {
+                        "tool": "click",
+                        "args": {"selector": "[data-testid=project-edit-link]"},
+                        "rationale": "open edit page",
+                    },
+                    {
+                        "tool": "fill",
+                        "args": {
+                            "selector": "[data-testid=edit-project-name]",
+                            "value": "{boundary_name}",
+                        },
+                        "rationale": "enter a 200 character boundary name",
+                    },
+                    {
+                        "tool": "fill",
+                        "args": {
+                            "selector": "[data-testid=edit-project-description]",
+                            "value": "{owner_marker}; boundary",
+                        },
+                        "rationale": "retain run marker",
+                    },
+                    {
+                        "tool": "click",
+                        "args": {"selector": "[data-testid=edit-project-submit]"},
+                        "rationale": "save boundary length name",
+                    },
+                    {"tool": "snapshot", "args": {}, "rationale": "verify boundary save"},
+                ),
+                "recovery": _LOGIN_STEPS
+                + (
+                    {
+                        "tool": "click",
+                        "args": {"selector": _RUN_PROJECT_LINK},
+                        "rationale": "open seeded project",
+                    },
+                    {
+                        "tool": "click",
+                        "args": {"selector": "[data-testid=project-edit-link]"},
+                        "rationale": "open edit page",
+                    },
+                    {
+                        "tool": "fill",
+                        "args": {"selector": "[data-testid=edit-project-name]", "value": ""},
+                        "rationale": "enter invalid empty name",
+                    },
+                    {
+                        "tool": "click",
+                        "args": {"selector": "[data-testid=edit-project-submit]"},
+                        "rationale": "show validation error",
+                    },
+                    {
+                        "tool": "fill",
+                        "args": {
+                            "selector": "[data-testid=edit-project-name]",
+                            "value": "{run_prefix}recovered-{unique_suffix}",
+                        },
+                        "rationale": "correct the name",
+                    },
+                    {
+                        "tool": "fill",
+                        "args": {
+                            "selector": "[data-testid=edit-project-description]",
+                            "value": "{owner_marker}; recovered",
+                        },
+                        "rationale": "retain run marker",
+                    },
+                    {
+                        "tool": "click",
+                        "args": {"selector": "[data-testid=edit-project-submit]"},
+                        "rationale": "save corrected data",
+                    },
+                    {"tool": "snapshot", "args": {}, "rationale": "verify recovery"},
+                ),
+            },
+            max_steps=14,
         )
     )
 
@@ -497,7 +1090,11 @@ def build_default_registry() -> ScenarioRegistry:
             description="提交重复项目名称，验证服务端校验错误被正确展示",
             allowed_origins=("http://127.0.0.1:8001",),
             initial_url="/projects/new",
-            intent_templates={"goal": "创建一个重名项目，确认页面展示校验错误"},
+            intent_templates={
+                "goal": "创建一个重名项目，确认页面展示校验错误",
+                "target": "/projects/new",
+                "expected_outcomes": ["project name already exists"],
+            },
             goal_definition=_goal(
                 {
                     "name": "error_banner",
@@ -512,11 +1109,156 @@ def build_default_registry() -> ScenarioRegistry:
             stop_conditions=("名称未被拒绝（说明校验缺失）",),
             timeout_budget_s=45.0,
             evidence_requirements=("提交前快照", "错误页快照"),
-            implemented=False,
-            blocked_reason=(
-                "需要一个可重复的“已存在名称”种子；探索流程不重置被测站点数据，"
-                "固定名称在第二次运行时会先失败。补齐场景级数据准备后再启用。"
+            data_setup={
+                "projects": [
+                    {
+                        "key": "duplicate_project_name",
+                        "name": "form-validation-duplicate",
+                        "description": "repeatable validation seed",
+                    }
+                ]
+            },
+            cleanup={"owned_resources": "lease-only"},
+            preconditions=({"kind": "project_seeded", "key": "duplicate_project_name"},),
+            steps=_LOGIN_STEPS
+            + (
+                {
+                    "tool": "click",
+                    "args": {"selector": "[data-testid=new-project-link]"},
+                    "rationale": "open create form",
+                },
+                {
+                    "tool": "fill",
+                    "args": {
+                        "selector": "[data-testid=project-name]",
+                        "value": "{duplicate_project_name}",
+                    },
+                    "rationale": "enter the existing name",
+                },
+                {
+                    "tool": "click",
+                    "args": {"selector": "[data-testid=create-submit]"},
+                    "rationale": "submit duplicate",
+                },
+                {"tool": "snapshot", "args": {}, "rationale": "observe duplicate validation"},
             ),
+            paths={
+                "normal": _LOGIN_STEPS
+                + (
+                    {
+                        "tool": "click",
+                        "args": {"selector": "[data-testid=new-project-link]"},
+                        "rationale": "open create form",
+                    },
+                    {
+                        "tool": "fill",
+                        "args": {
+                            "selector": "[data-testid=project-name]",
+                            "value": "{duplicate_project_name}",
+                        },
+                        "rationale": "enter the existing name",
+                    },
+                    {
+                        "tool": "click",
+                        "args": {"selector": "[data-testid=create-submit]"},
+                        "rationale": "submit duplicate",
+                    },
+                    {"tool": "snapshot", "args": {}, "rationale": "observe duplicate validation"},
+                ),
+                "exception": _LOGIN_STEPS
+                + (
+                    {
+                        "tool": "click",
+                        "args": {"selector": "[data-testid=new-project-link]"},
+                        "rationale": "open create form",
+                    },
+                    {
+                        "tool": "fill",
+                        "args": {"selector": "[data-testid=project-name]", "value": ""},
+                        "rationale": "trigger server-side empty-name validation",
+                    },
+                    {
+                        "tool": "click",
+                        "args": {"selector": "[data-testid=create-submit]"},
+                        "rationale": "submit over-limit value",
+                    },
+                    {"tool": "snapshot", "args": {}, "rationale": "observe length validation"},
+                ),
+                "boundary": _LOGIN_STEPS
+                + (
+                    {
+                        "tool": "click",
+                        "args": {"selector": "[data-testid=new-project-link]"},
+                        "rationale": "open create form",
+                    },
+                    {
+                        "tool": "fill",
+                        "args": {
+                            "selector": "[data-testid=project-name]",
+                            "value": "{boundary_name}",
+                        },
+                        "rationale": "enter exactly 200 characters",
+                    },
+                    {
+                        "tool": "fill",
+                        "args": {
+                            "selector": "[data-testid=project-description]",
+                            "value": "{owner_marker}; boundary",
+                        },
+                        "rationale": "mark run ownership",
+                    },
+                    {
+                        "tool": "click",
+                        "args": {"selector": "[data-testid=create-submit]"},
+                        "rationale": "submit boundary value",
+                    },
+                    {"tool": "snapshot", "args": {}, "rationale": "verify boundary success"},
+                ),
+                "recovery": _LOGIN_STEPS
+                + (
+                    {
+                        "tool": "click",
+                        "args": {"selector": "[data-testid=new-project-link]"},
+                        "rationale": "open create form",
+                    },
+                    {
+                        "tool": "fill",
+                        "args": {
+                            "selector": "[data-testid=project-name]",
+                            "value": "{duplicate_project_name}",
+                        },
+                        "rationale": "submit duplicate first",
+                    },
+                    {
+                        "tool": "click",
+                        "args": {"selector": "[data-testid=create-submit]"},
+                        "rationale": "capture the validation error",
+                    },
+                    {
+                        "tool": "fill",
+                        "args": {
+                            "selector": "[data-testid=project-name]",
+                            "value": "{run_prefix}recovered-{unique_suffix}",
+                        },
+                        "rationale": "correct the name",
+                    },
+                    {
+                        "tool": "fill",
+                        "args": {
+                            "selector": "[data-testid=project-description]",
+                            "value": "{owner_marker}; recovered",
+                        },
+                        "rationale": "mark run ownership",
+                    },
+                    {
+                        "tool": "click",
+                        "args": {"selector": "[data-testid=create-submit]"},
+                        "rationale": "submit corrected value",
+                    },
+                    {"tool": "snapshot", "args": {}, "rationale": "verify recovery"},
+                ),
+            },
+            max_steps=14,
         )
     )
 

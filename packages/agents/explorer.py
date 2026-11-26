@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright
 
+from packages.agents.decision_records import make_decision_record
 from packages.agents.exploration import (
     Budget,
     ExplorationTrace,
@@ -50,9 +51,16 @@ class PlaywrightAdapter:
     somehow slipped through. Every action is bounded by ``max_action_s``.
     """
 
-    def __init__(self, trace: ExplorationTrace, budget: Budget | None = None) -> None:
+    def __init__(
+        self,
+        trace: ExplorationTrace,
+        budget: Budget | None = None,
+        *,
+        sensitive_selectors: tuple[str, ...] = (),
+    ) -> None:
         self.trace = trace
         self.budget = budget or Budget()
+        self.sensitive_selectors = sensitive_selectors
         # The route guard uses the SAME OriginPolicy implementation as the
         # formal BrowserManager (R5-4.7): one network boundary, two consumers.
         # A Budget without explicit origins stays hostname-scoped — inventing a
@@ -65,6 +73,7 @@ class PlaywrightAdapter:
         self._pw: Any | None = None
         self._browser: Any | None = None
         self._page: Any | None = None
+        self._last_observed_url_path = ""
         self.blocked_requests: list[str] = []
 
     def _approved(self, url: str) -> bool:
@@ -107,9 +116,13 @@ class PlaywrightAdapter:
     def observe(self, step_index: int, *, phase: str = "pre") -> Observation:
         assert self._page is not None
         page = self._page
+        previous_url_path = self._last_observed_url_path
         text = ""
         testids: list[str] = []
-        elements: list[dict[str, str]] = []
+        elements: list[dict[str, Any]] = []
+        dom_counts: dict[str, int] = {}
+        dom_relations: list[dict[str, Any]] = []
+        attrs: list[dict[str, str]] = []
         title = ""
         url_path = ""
         try:
@@ -129,16 +142,33 @@ class PlaywrightAdapter:
             elements = (
                 page.eval_on_selector_all(
                     "a,button,input,select,textarea,[data-testid]",
-                    """els => els.slice(0, 40).map(e => {
+                    """(els, sensitiveSelectors) => els.slice(0, 40).map(e => {
                         const tag = e.tagName.toLowerCase();
                         const isField = ['input', 'textarea', 'select'].includes(tag);
+                        const autocomplete = (e.getAttribute('autocomplete') || '').toLowerCase();
+                        const selectorSensitive = sensitiveSelectors.some(s => {
+                            try { return e.matches(s); } catch (_) { return true; }
+                        });
+                        const sensitive = e.type === 'password'
+                            || /password|one-time-code|cc-number|cc-csc/.test(autocomplete)
+                            || selectorSensitive
+                            || /password|secret|token|credential/i.test(
+                                e.getAttribute('data-testid') || ''
+                            )
+                            || /password|secret|token|credential/i.test(
+                                e.getAttribute('name') || ''
+                            );
                         const label = isField
                             ? (e.getAttribute('name') || e.getAttribute('type') || '')
                             : (e.innerText || '');
                         return {
                             tag: tag,
                             testid: e.getAttribute('data-testid') || '',
-                            name: label.trim().slice(0, 60),
+                            name: sensitive ? '«redacted»' : label.trim().slice(0, 60),
+                            type: e.getAttribute('type') || '',
+                            role: e.getAttribute('role') || '',
+                            sensitive: sensitive,
+                            testid: e.getAttribute('data-testid') || '',
                             // R5-5.2: visibility / disabled are OBSERVATIONS used
                             // to decide element_visible and form_state. They grant
                             // nothing and never carry a value.
@@ -147,11 +177,47 @@ class PlaywrightAdapter:
                             disabled: !!e.disabled
                         };
                     })""",
+                    arg=list(self.sensitive_selectors),
                 )
                 or []
             )
+            dom_counts = page.evaluate("""() => ({
+                table_row_count: Math.min(document.querySelectorAll('tr').length, 10000),
+                list_item_count: Math.min(document.querySelectorAll('li').length, 10000),
+                button_count: Math.min(document.querySelectorAll('button').length, 10000),
+                input_count: Math.min(
+                    document.querySelectorAll('input,textarea,select').length, 10000
+                )
+            })""")
+            dom_relations = page.evaluate("""() => Array.from(document.querySelectorAll('tr,li'))
+                .slice(0, 100).map((e, i) => ({
+                    relation: e.tagName.toLowerCase() === 'tr' ? 'row_in_table' : 'item_in_list',
+                    index: i,
+                    testid: e.getAttribute('data-testid') || '',
+                    parent_testid: e.closest('[data-testid]')?.getAttribute('data-testid') || ''
+                }))""")
+            attrs = page.eval_on_selector_all(
+                "[data-testid]",
+                """(els, sensitiveSelectors) => els.slice(0, 100).map(e => ({
+                testid: e.getAttribute('data-testid') || '',
+                role: e.getAttribute('role') || '',
+                sensitive: sensitiveSelectors.some(s => {
+                    try { return e.matches(s); } catch (_) { return true; }
+                })
+                    || /password|one-time-code|cc-number|cc-csc/i.test(
+                        e.getAttribute('autocomplete') || ''
+                    )
+                    || /password|secret|token|credential/i.test(
+                        e.getAttribute('data-testid') || ''
+                    ),
+                href: e.tagName.toLowerCase() === 'a'
+                    ? (e.getAttribute('href') || '').slice(0, 200) : ''
+            }))""",
+                arg=list(self.sensitive_selectors),
+            )
         except Exception:  # noqa: BLE001 - blank page before first navigate
             pass
+        self._last_observed_url_path = url_path
         return Observation(
             url=page.url,
             page_text=text,  # UNTRUSTED: never used as a permission source
@@ -160,6 +226,11 @@ class PlaywrightAdapter:
             title=title,
             url_path=url_path,
             visible_elements=tuple(dict(e) for e in elements if isinstance(e, dict)),
+            dom_counts={str(k): int(v) for k, v in dom_counts.items()},
+            dom_relations=tuple(x for x in dom_relations if isinstance(x, dict))[:100],
+            attrs=tuple(x for x in attrs if isinstance(x, dict))[:100],
+            page_state="loaded" if title or url_path else "unavailable",
+            previous_url_path=previous_url_path,
             phase=phase,
         )
 
@@ -230,11 +301,14 @@ class Explorer:
         budget: Budget | None = None,
         application_version: str = "teamflow-0.1.0",
         browser_version: str = "system-chrome",
+        sensitive_selectors: tuple[str, ...] = (),
+        trace_hash_version: int = 2,
     ) -> None:
         self.policy = policy or ScriptedPolicy()
         self.budget = budget or Budget()
         self.application_version = application_version
         self.browser_version = browser_version
+        self.sensitive_selectors = sensitive_selectors
         self.trace = ExplorationTrace(
             exploration_id=f"exp_{uuid.uuid4().hex[:12]}",
             test_intent_ref="",
@@ -246,6 +320,7 @@ class Explorer:
             else "external",
             tool_version="1.0.0",
         )
+        self.trace.hash_version = trace_hash_version
 
     def explore(
         self,
@@ -269,8 +344,13 @@ class Explorer:
         self.trace.test_intent_ref = test_intent_ref
         self.trace.test_intent = intent_of(intent)
         gateway = ToolGateway(self.budget, tool_version=self.trace.tool_version)
+        bind_gateway = getattr(self.policy, "bind_gateway", None)
+        if callable(bind_gateway):
+            bind_gateway(gateway)
         stop = StopReason.POLICY_STOP
-        with PlaywrightAdapter(self.trace, self.budget) as adapter:
+        with PlaywrightAdapter(
+            self.trace, self.budget, sensitive_selectors=self.sensitive_selectors
+        ) as adapter:
             while True:
                 reason = gateway.check_budget()
                 if reason is not None:
@@ -351,6 +431,7 @@ class Explorer:
                     # aborting the whole exploration.
                     detail = f"{type(exc).__name__}: {exc}"[:300]
                     safe, _ = sanitize_action({"tool": call.tool, "args": dict(call.args)})
+                    self._record_decision(observation, safe, {"error": detail})
                     self.trace.action_sequence.append({**safe, "error": detail})
                     self.trace.agent_decisions.append(
                         {
@@ -371,6 +452,7 @@ class Explorer:
                 # Redact before the action enters the trace: the in-memory trace
                 # never holds a plaintext credential, not just the persisted one.
                 safe_result, _ = sanitize_action(raw_result)
+                self._record_decision(observation, safe_result, {"status": "OK"})
                 self.trace.action_sequence.append(safe_result)
                 self.trace.agent_decisions.append(
                     {
@@ -406,3 +488,27 @@ class Explorer:
             self.trace.stop_reason = StopReason.GOAL_VERIFIED
         self.trace.finalize()
         return self.trace
+
+    def _record_decision(
+        self, observation: Observation, actual_action: dict[str, Any], result: dict[str, Any]
+    ) -> None:
+        proposal = getattr(self.policy, "last_proposal", None)
+        policy_decision = getattr(self.policy, "last_policy_decision", None)
+        if proposal is None or not isinstance(policy_decision, dict):
+            return
+        self.trace.decision_records.append(
+            make_decision_record(
+                proposal={
+                    "proposal_id": proposal.proposal_id,
+                    "action_type": proposal.action_type,
+                    "arguments": proposal.arguments,
+                    "expected_outcome": proposal.expected_outcome,
+                    "decision_reason": proposal.decision_reason,
+                },
+                policy_decision=policy_decision,
+                actual_action=actual_action,
+                result=result,
+                observation_ref=observation.to_record()["observation_ref"],
+                decision_source=proposal.decision_source,
+            ).to_dict()
+        )

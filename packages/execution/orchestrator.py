@@ -38,7 +38,7 @@ from packages.core.logging import get_logger
 from packages.evidence.run_events import CursorResolution, RunEventRecorder
 from packages.execution.broker import Broker, Dispatcher, ExecutionJob, InProcessBroker
 from packages.execution.locators import LocatorRegistry
-from packages.execution.models import TestCaseVersion, load_case
+from packages.execution.models import TestCaseVersion, latest_case_path, load_case
 from packages.execution.runner import ExecutionAborted, LocalRunner
 from packages.execution.tasks import RunService, RunStatus, RunView, TaskService
 
@@ -657,7 +657,11 @@ class Orchestrator:
     ) -> RunView:
         """Create a NEW Run and schedule it. Never reuses an existing Run."""
         task = self.tasks.get(task_id)
-        case_path = self.case_dir / (case_file or f"{task['case_id']}.json")
+        case_path = (
+            self.case_dir / case_file
+            if case_file
+            else latest_case_path(self.case_dir, str(task["case_id"]))
+        )
         case: TestCaseVersion = load_case(case_path)
         run_id = f"run_{datetime.now(UTC).strftime('%Y%m%d%H%M%S%f')}_{uuid.uuid4().hex[:6]}"
         view = self.runs.create_run(

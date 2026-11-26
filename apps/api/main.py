@@ -18,7 +18,7 @@ from sqlalchemy import text
 from apps.api.candidate_api import register_candidates
 from apps.api.chain_api import register_chain_api
 from apps.api.evidence_api import register_evidence_api
-from apps.api.explorer_api import register_explorer
+from apps.api.explorer_api import recover_expired_scenario_data, register_explorer
 from apps.api.extensions import register_extensions
 from apps.api.workbench import register_workbench
 from packages.core import database
@@ -33,6 +33,7 @@ logger = get_logger("tg.api")
 
 def build_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
+    settings.validate_for_prod()
     setup_logging(settings.log_level, settings.log_json)
 
     engine = database.create_db_engine(settings.database_url)
@@ -40,6 +41,7 @@ def build_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         logger.info("platform_api_startup", extra={"extra_fields": {"env": settings.app_env.value}})
+        recover_expired_scenario_data(_app)
         yield
         engine.dispose()
 

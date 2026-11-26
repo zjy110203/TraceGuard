@@ -17,6 +17,8 @@ import pytest
 
 from packages.agents.exploration import Observation
 from packages.agents.llm import (
+    PROVIDER_ENV,
+    PROVIDER_MODELS,
     Message,
     ModelConfig,
     OpenAICompatibleProvider,
@@ -25,6 +27,8 @@ from packages.agents.llm import (
     StructuredOutputError,
     TracedClient,
     provider_from_env,
+    resolve_provider_config,
+    validate_provider_config,
 )
 from packages.agents.llm_policy import LLMPolicy, build_policy
 from packages.core.errors import ForbiddenError
@@ -131,7 +135,60 @@ def test_provider_from_env_returns_none_without_credentials(
 ) -> None:
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    for name in ("LLM_PROVIDER", "LLM_ENDPOINT", "LLM_MODEL"):
+        monkeypatch.delenv(name, raising=False)
     assert provider_from_env() is None
+
+
+def test_provider_config_requires_explicit_matching_provider() -> None:
+    with pytest.raises(ProviderUnavailable, match="LLM_PROVIDER"):
+        resolve_provider_config({"OPENAI_API_KEY": "secret", "DEEPSEEK_API_KEY": "secret"})
+    with pytest.raises(ProviderUnavailable, match="matching API key"):
+        resolve_provider_config({"LLM_PROVIDER": "openai", "DEEPSEEK_API_KEY": "secret"})
+
+
+def test_provider_config_rejects_endpoint_and_model_mismatch() -> None:
+    with pytest.raises(ProviderUnavailable, match="ENDPOINT"):
+        resolve_provider_config(
+            {
+                "LLM_PROVIDER": "openai",
+                "OPENAI_API_KEY": "secret",
+                "LLM_ENDPOINT": "https://api.deepseek.com/v1",
+            }
+        )
+    with pytest.raises(ProviderUnavailable, match="LLM_MODEL"):
+        resolve_provider_config(
+            {
+                "LLM_PROVIDER": "deepseek",
+                "DEEPSEEK_API_KEY": "secret",
+                "LLM_MODEL": "gpt-4o",
+            }
+        )
+
+
+def test_explicit_provider_binding_validates_without_network() -> None:
+    config = {
+        "LLM_PROVIDER": "deepseek",
+        "DEEPSEEK_API_KEY": "test-only",
+        "LLM_ENDPOINT": "https://api.deepseek.com/v1",
+        "LLM_MODEL": "deepseek-chat",
+    }
+    assert resolve_provider_config(config) == (
+        "deepseek",
+        "https://api.deepseek.com/v1",
+        "deepseek-chat",
+        "test-only",
+    )
+    validate_provider_config(config)
+
+
+@pytest.mark.parametrize(
+    "provider,model",
+    [(provider, model) for provider, models in PROVIDER_MODELS.items() for model in models],
+)
+def test_provider_model_allowlist_is_provider_scoped(provider: str, model: str) -> None:
+    key_name = next(key for key, (name, _) in PROVIDER_ENV.items() if name == provider)
+    assert resolve_provider_config({"LLM_PROVIDER": provider, key_name: "test", "LLM_MODEL": model})
 
 
 def test_build_policy_shares_one_traced_client() -> None:

@@ -137,7 +137,9 @@ def test_sandbox_cleanup_is_scoped_to_its_own_directory(
     result = sandbox.run()
     sandbox_dir = sandbox_root / result.sandbox_id
 
-    assert not sandbox_dir.exists(), "our own sandbox directory must be deleted"
+    assert not sandbox_dir.exists(), (
+        f"our own sandbox directory must be deleted: {result.cleanup_error}"
+    )
     assert sibling.exists(), "another sandbox's directory must never be touched"
     assert (sibling / "keep_me.txt").read_text(encoding="utf-8") == "do not delete"
     with pytest.raises(httpx.HTTPError):

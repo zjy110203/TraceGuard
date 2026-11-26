@@ -334,11 +334,16 @@ def _version_from_dict(item: dict[str, Any]) -> TestCaseVersion:
     return TestCaseVersion(**data)
 
 
-def load_case(path: Path) -> TestCaseVersion:
-    """Load one ``TestCaseVersion.to_dict()`` JSON file and validate it."""
-    version = _version_from_dict(json.loads(path.read_text(encoding="utf-8")))
+def case_from_dict(item: dict[str, Any]) -> TestCaseVersion:
+    """Strictly parse and validate one TestCaseVersion payload."""
+    version = _version_from_dict(dict(item))
     version.validate()
     return version
+
+
+def load_case(path: Path) -> TestCaseVersion:
+    """Load one ``TestCaseVersion.to_dict()`` JSON file and validate it."""
+    return case_from_dict(json.loads(path.read_text(encoding="utf-8")))
 
 
 def load_cases_dir_report(
@@ -373,7 +378,27 @@ def load_cases_dir_report(
             directory,
             ", ".join(item["file"] for item in invalid),
         )
-    return tuple(cases), invalid
+    latest: dict[str, TestCaseVersion] = {}
+    for case in cases:
+        current = latest.get(case.case_id)
+        if current is None or case.version > current.version:
+            latest[case.case_id] = case
+    return tuple(sorted(latest.values(), key=lambda case: case.case_id)), invalid
+
+
+def latest_case_path(directory: Path, case_id: str) -> Path:
+    """Find the latest append-only case file for one case id."""
+    found: list[tuple[int, Path]] = []
+    for path in directory.glob("*.json"):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if payload.get("case_id") == case_id:
+                found.append((int(payload.get("version", 0)), path))
+        except (ValueError, OSError, AttributeError, TypeError):
+            continue
+    if not found:
+        raise FileNotFoundError(f"case not found: {case_id}")
+    return max(found, key=lambda item: item[0])[1]
 
 
 def load_cases_dir(directory: Path) -> tuple[TestCaseVersion, ...]:

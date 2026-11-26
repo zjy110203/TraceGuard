@@ -51,6 +51,7 @@ from packages.execution.models import (
     TestIntent,
     TestStep,
 )
+from packages.execution.review_policy import is_self_approver
 
 router = APIRouter(prefix="/api/v1", tags=["candidates"])
 
@@ -369,6 +370,8 @@ def compile_exploration(
 def approve_candidate(request: Request, candidate_id: str, body: ReviewRequest) -> dict[str, Any]:
     if not body.reviewer.strip():
         raise ValidationError("reviewer is required to approve a candidate")
+    if is_self_approver(body.reviewer):
+        raise ValidationError("candidate self-approval is refused")
     if not body.approval_record.strip():
         raise ValidationError("approval_record is required to approve a candidate")
 
@@ -495,6 +498,8 @@ def approve_candidate(request: Request, candidate_id: str, body: ReviewRequest) 
 def reject_candidate(request: Request, candidate_id: str, body: ReviewRequest) -> dict[str, Any]:
     if not body.reviewer.strip():
         raise ValidationError("reviewer is required to reject a candidate")
+    if is_self_approver(body.reviewer):
+        raise ValidationError("candidate self-rejection is refused")
     if not body.reason.strip():
         # A rejection without a reason is not reviewable later — the trace is
         # permanently closed by a reject, so the decision must be explainable.

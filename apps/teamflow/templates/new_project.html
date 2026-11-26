@@ -9,7 +9,7 @@
   <a href="/projects">返回列表</a>
   {% if error %}<p style="color:#b00020" data-testid="form-error">{{ error }}</p>{% endif %}
   <form method="post" action="/projects/new">
-    <label>项目名称 <input name="name" data-testid="project-name" required maxlength="200"></label><br>
+    <label>项目名称 <input name="name" data-testid="project-name" maxlength="200"></label><br>
     <label>描述 <textarea name="description" data-testid="project-description"></textarea></label><br>
     <button type="submit" data-testid="create-submit">创建</button>
   </form>
