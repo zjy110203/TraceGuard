@@ -1,0 +1,4 @@
+# python.exe -m ruff format --check .
+exit=0 duration=0.1s
+
+258 files already formatted

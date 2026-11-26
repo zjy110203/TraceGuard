@@ -395,6 +395,7 @@ export interface PolicyCatalogue {
   llm_blocked_reason: string
   /** Registered business scenarios; anything else is UNSUPPORTED_SCENARIO. */
   supported_scenarios: Record<string, string>
+  scenario_versions?: Record<string, string[]>
 }
 
 /** Goal verification check: evidence-backed, or explicitly deferred. */

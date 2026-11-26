@@ -12,7 +12,7 @@ import uuid
 from pathlib import Path
 
 import httpx
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 
 from apps.teamflow.main import build_app as build_teamflow
 from packages.core.config import Settings
@@ -188,26 +188,33 @@ def test_explorer_repair_closed_loop():
             step = next(s for s in repaired["steps"] if "login-submit" in s["target"])
             before = step["target"]
             step["target"] = '[data-testid="login-submit-v2"]'
-            proposal = platform.call(
-                "POST",
-                "/api/v1/repairs",
-                {
-                    "case_id": case_id,
-                    "candidate": repaired,
-                    "change_kinds": ["locator_update"],
-                    "diff": [
-                        {
-                            "kind": "locator_update",
-                            "target": step["step_id"],
-                            "before": before,
-                            "after": step["target"],
-                        }
-                    ],
-                    "source_run_id": run_id,
-                    "hypothesis_id": hypothesis["hypothesis_id"],
-                    "evidence_refs": refs,
-                },
+            # Exercise the manual structured workbench against this same diagnosis.
+            page.goto(platform.base + "/#/repairs")
+            page.get_by_label("正式用例 ID").fill(case_id)
+            page.get_by_role("button", name="加载正式资产").click()
+            page.locator(".create-card .notice-text").filter(has_text="已加载正式资产").wait_for()
+            page.get_by_label("来源 Run ID").fill(run_id)
+            page.get_by_role("button", name="加载来源诊断").click()
+            page.get_by_label("选择受支持假设").select_option(hypothesis["hypothesis_id"])
+            expect(page.get_by_label("Supporting Evidence Ref", exact=False)).to_have_value(
+                ", ".join(refs)
             )
+            page.get_by_text("人工 Locator 编辑", exact=True).click()
+            page.get_by_label("步骤", exact=False).select_option(step["step_id"])
+            page.get_by_label("新 Locator", exact=True).fill(step["target"])
+            page.get_by_role("button", name="应用编辑并生成 Diff").click()
+            ui_candidate = json.loads(page.get_by_label("候选 TestCase JSON").input_value())
+            assert ui_candidate == repaired
+            expect(page.get_by_label("候选变更预览")).to_contain_text(before)
+            expect(page.get_by_label("候选变更预览")).to_contain_text(step["target"])
+            with page.expect_response(
+                lambda response: (
+                    response.request.method == "POST" and response.url.endswith("/api/v1/repairs")
+                )
+            ) as creation:
+                page.get_by_role("button", name="创建提案", exact=True).click()
+            assert creation.value.status == 201, creation.value.text()
+            proposal = creation.value.json()
             pid = proposal["proposal_id"]
             report["repair_proposal_id"] = pid
             for action, state in (("validate", "VALIDATED"), ("submit", "PENDING_APPROVAL")):
@@ -289,6 +296,17 @@ def test_explorer_repair_closed_loop():
                 (work / "candidates" / f"{candidate_id}.json").read_text(encoding="utf-8")
             )
             assert stored_candidate["source_exploration_id"] == exploration["exploration_id"]
+            candidate_tx = json.loads(
+                (work / "candidates" / "transactions" / f"{candidate_id}.json").read_bytes()
+            )
+            assert candidate_tx["stage"] == "DONE"
+            assert candidate_tx["after"] == stored_candidate
+            assert stored_candidate["review_transaction_id"] == candidate_tx["transaction_id"]
+            assert (
+                hashlib.sha256((work / "cases" / f"{case_id}.json").read_bytes()).hexdigest()
+                == candidate_tx["formal_sha256"]
+            )
+            report["candidate_transaction_id"] = candidate_tx["transaction_id"]
             snapshot = RepairStore(work / "benchmark" / "repairs.jsonl").latest()
             stored = next(p for p in snapshot["proposals"] if p["proposal_id"] == pid)
             assert stored["source_run_id"] == run_id

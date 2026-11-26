@@ -287,6 +287,10 @@ def test_one_client_disconnect_does_not_disturb_the_others(
         stop_when=lambda frames: any(f["payload"].get("tag") == tag for f in frames),
         max_seconds=60,
     )
+    # Prior collectors close the client before the server finishes unsubscribe.
+    # Wait for that cleanup before taking a baseline; otherwise an old queue
+    # can disappear while the two new streams subscribe, invalidating the count.
+    _wait_until(lambda: bus.subscriber_count == 0, 20, "previous streams unsubscribed")
     baseline = bus.subscriber_count
     staying.start()
     leaving.start()
@@ -304,6 +308,7 @@ def test_one_client_disconnect_does_not_disturb_the_others(
     assert staying.error is None, staying.error
     got = [f["payload"]["index"] for f in staying.frames if f["payload"].get("tag") == tag]
     assert got == list(range(6)), got
+    _wait_until(lambda: bus.subscriber_count == 0, 20, "both disconnected streams cleaned")
 
 
 # ------------------------------------------------------------------------- 4 & 5

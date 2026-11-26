@@ -1,0 +1,50 @@
+[
+  {
+    "scenario_id": "teamflow-login",
+    "historical_version": "2.0.0",
+    "historical_digest": "8d6adfa14b0dd93f6bcfa1e150399f81adfd0db608e2c820b55a58fc22387d30",
+    "current_digest": "8d6adfa14b0dd93f6bcfa1e150399f81adfd0db608e2c820b55a58fc22387d30",
+    "default_unchanged": true,
+    "opt_in_version": "2.1.0"
+  },
+  {
+    "scenario_id": "project-create",
+    "historical_version": "2.0.0",
+    "historical_digest": "e6acbbb7e158b28277ef32a4e4425ccdb5ae53cca17cff717bb3b5801687d826",
+    "current_digest": "e6acbbb7e158b28277ef32a4e4425ccdb5ae53cca17cff717bb3b5801687d826",
+    "default_unchanged": true,
+    "opt_in_version": "2.1.0"
+  },
+  {
+    "scenario_id": "project-query",
+    "historical_version": "2.0.0",
+    "historical_digest": "901435173065204fe484caf2a654f54102a44f182f40645d7dc6458b1fe8f179",
+    "current_digest": "901435173065204fe484caf2a654f54102a44f182f40645d7dc6458b1fe8f179",
+    "default_unchanged": true,
+    "opt_in_version": "2.1.0"
+  },
+  {
+    "scenario_id": "page-navigation",
+    "historical_version": "2.0.0",
+    "historical_digest": "add3d349dbe73bb74356346344f2a61513cec2468d0fd708f81e27d16abfa4d9",
+    "current_digest": "add3d349dbe73bb74356346344f2a61513cec2468d0fd708f81e27d16abfa4d9",
+    "default_unchanged": true,
+    "opt_in_version": "2.1.0"
+  },
+  {
+    "scenario_id": "project-edit",
+    "historical_version": "2.0.0",
+    "historical_digest": "a91d8119da924ba506c2ae61ce38aa7922ea86d5bde02b43217f69867c849509",
+    "current_digest": "a91d8119da924ba506c2ae61ce38aa7922ea86d5bde02b43217f69867c849509",
+    "default_unchanged": true,
+    "opt_in_version": "2.1.0"
+  },
+  {
+    "scenario_id": "form-validation",
+    "historical_version": "1.0.0",
+    "historical_digest": "e0fff7ae5b7b0c50d23182f04f0921139e1107d16e740163dbdc9101637399af",
+    "current_digest": "e0fff7ae5b7b0c50d23182f04f0921139e1107d16e740163dbdc9101637399af",
+    "default_unchanged": true,
+    "opt_in_version": "2.1.0"
+  }
+]

@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { api } from '../api/client'
 import { messageOf, useAsync } from '../composables/useAsync'
 import StateBlock from '../components/StateBlock.vue'
 import StatusPill from '../components/StatusPill.vue'
 import PageHeader from '../components/PageHeader.vue'
-import type { RepairProposal } from '../api/types'
+import type { Diagnosis, RepairProposal } from '../api/types'
 
 const state = useAsync(() => api.repairs())
 const busyId = ref('')
@@ -25,6 +25,58 @@ const createForm = reactive({
   diffJson: '[{"kind":"locator_update","target":"step-id","before":"old selector","after":"new selector"}]',
 })
 
+const diagnosis = ref<Diagnosis | null>(null)
+const diagnosisBusy = ref(false)
+const loadedCaseId = ref('')
+const edit = reactive({ stepId: '', target: '' })
+const previewDiff = computed(() => {
+  try {
+    const rows: unknown = JSON.parse(createForm.diffJson)
+    if (!Array.isArray(rows)) return []
+    return rows.filter((row): row is Record<string, unknown> => row !== null && typeof row === 'object').map(row => ({
+      kind: String(row.kind ?? ''), target: String(row.target ?? ''),
+      before: typeof row.before === 'string' ? row.before : JSON.stringify(row.before),
+      after: typeof row.after === 'string' ? row.after : JSON.stringify(row.after),
+    }))
+  } catch { return [] }
+})
+const formalSteps = computed(() => (sourceCase.value?.steps ?? []) as Array<Record<string, unknown>>)
+const supportedHypotheses = computed(() => diagnosis.value?.hypotheses.filter(h => ['SUPPORTED', 'CONFIRMED'].includes(h.status)) ?? [])
+watch(() => createForm.sourceRunId, () => { diagnosis.value = null })
+watch(() => createForm.caseId, () => { sourceCase.value = null; loadedCaseId.value = '' })
+watch(() => createForm.hypothesisId, id => {
+  const hypothesis = supportedHypotheses.value.find(h => h.hypothesis_id === id)
+  if (hypothesis) createForm.evidenceRefs = hypothesis.supporting.map(e => e.ref_id).join(', ')
+})
+async function loadDiagnosis(): Promise<void> {
+  if (diagnosisBusy.value) return
+  diagnosisBusy.value = true
+  createError.value = ''
+  try {
+    const requestedRun = createForm.sourceRunId.trim()
+    const result = await api.diagnosis(requestedRun)
+    if (requestedRun !== createForm.sourceRunId.trim()) return
+    diagnosis.value = result
+    createForm.hypothesisId = ''
+    createForm.evidenceRefs = ''
+  } catch (err) { createError.value = messageOf(err) }
+  finally { diagnosisBusy.value = false }
+}
+function applyLocatorEdit(): void {
+  const step = formalSteps.value.find(s => s.step_id === edit.stepId)
+  if (!sourceCase.value || !step || !edit.target.trim()) return
+  // A manual suggestion, always validated by the existing backend gate.
+  const candidate = JSON.parse(JSON.stringify(sourceCase.value)) as Record<string, unknown>
+  candidate.version = Number(candidate.version) + 1
+  const steps = candidate.steps as Array<Record<string, unknown>>
+  const selected = steps.find(s => s.step_id === edit.stepId)!
+  selected.target = edit.target.trim()
+  createForm.changeKind = 'locator_update'
+  createForm.candidateJson = JSON.stringify(candidate, null, 2)
+  createForm.diffJson = JSON.stringify([{ kind: 'locator_update', target: edit.stepId, before: step.target, after: selected.target }], null, 2)
+  createNotice.value = '已应用人工 Locator 编辑；仍须验证、人工批准、Sandbox 和人工晋升。'
+}
+
 // Per-proposal form state: multiple pending proposals must never share inputs.
 const forms = reactive<Record<string, { approver: string; record: string; reason: string; operator: string; promotionReason: string; rollbackTarget: number }>>({})
 
@@ -34,21 +86,27 @@ function formOf(id: string) {
 }
 
 async function loadFormalCase(): Promise<void> {
+  if (createBusy.value) return
+  createBusy.value = true
   createError.value = ''
   try {
-    const result = await api.repairFormalCase(createForm.caseId.trim())
+    const requestedCase = createForm.caseId.trim()
+    const result = await api.repairFormalCase(requestedCase)
+    if (requestedCase !== createForm.caseId.trim()) return
     sourceCase.value = result.case
+    loadedCaseId.value = createForm.caseId.trim()
     createForm.candidateJson = JSON.stringify(result.case, null, 2)
     createNotice.value = `已加载正式资产 ${result.source_file}；修改候选 JSON 后提交。`
   } catch (err) {
     createError.value = messageOf(err)
-  }
+  } finally { createBusy.value = false }
 }
 
 async function createProposal(): Promise<void> {
+  if (createBusy.value) return
   createError.value = ''
   createNotice.value = ''
-  if (!sourceCase.value) {
+  if (!sourceCase.value || loadedCaseId.value !== createForm.caseId.trim()) {
     createError.value = '请先加载正式用例。'
     return
   }
@@ -219,8 +277,28 @@ async function proposalAction(
           </select>
         </label>
       </div>
+      <div class="create-grid">
+        <button class="btn" type="button" :disabled="diagnosisBusy || !createForm.sourceRunId.trim()" @click="loadDiagnosis">加载来源诊断</button>
+        <label v-if="diagnosis" class="field">选择受支持假设
+          <select v-model="createForm.hypothesisId"><option value="">请选择</option><option v-for="h in supportedHypotheses" :key="h.hypothesis_id" :value="h.hypothesis_id">{{ h.statement }}</option></select>
+        </label>
+      </div>
+      <p v-if="diagnosis" class="small muted">{{ diagnosis.diagnosis_id }} · {{ diagnosis.diagnosis_status }} · 证据将随假设自动填写。{{ supportedHypotheses.length ? '' : '没有受支持假设，需要人工补充证据。' }}</p>
+      <details v-if="sourceCase"><summary>人工 Locator 编辑</summary>
+        <label class="field">步骤<select v-model="edit.stepId"><option value="">请选择</option><option v-for="s in formalSteps" :key="String(s.step_id)" :value="String(s.step_id)">{{ s.step_id }} · {{ s.action }} · {{ s.target }}</option></select></label>
+        <label class="field">新 Locator<input v-model="edit.target" /></label>
+        <p class="small muted">请依据来源证据填写；此操作会从已加载正式资产重建候选，并替换当前编辑内容。</p>
+        <button class="btn" type="button" :disabled="!edit.stepId || !edit.target.trim()" @click="applyLocatorEdit">应用编辑并生成 Diff</button>
+      </details>
       <label class="field">候选 TestCase JSON<textarea v-model="createForm.candidateJson" rows="10" spellcheck="false" /></label>
       <label class="field">变更 Diff JSON<textarea v-model="createForm.diffJson" rows="3" spellcheck="false" /></label>
+      <div v-if="previewDiff.length" class="diff" aria-label="候选变更预览">
+        <h3 class="small muted">候选变更预览</h3>
+        <div v-for="(d, i) in previewDiff" :key="i" class="diff-entry">
+          <p class="mono small">{{ d.kind }} · {{ d.target }}</p>
+          <div class="diff-cols"><pre class="before">- {{ d.before }}</pre><pre class="after">+ {{ d.after }}</pre></div>
+        </div>
+      </div>
       <p v-if="createError" class="error-text">{{ createError }}</p>
       <p v-if="createNotice" class="notice-text">{{ createNotice }}</p>
       <button class="btn primary" type="button" :disabled="createBusy || !sourceCase" @click="createProposal">创建提案</button>
@@ -230,7 +308,7 @@ async function proposalAction(
       :loading="state.loading.value"
       :error="state.error.value"
       :empty="!state.data.value?.length"
-      empty-hint="尚无修复提案。诊断确认测试资产问题后，Agent 可生成候选修复提案。"
+      empty-hint="尚无修复提案。加载来源诊断与正式资产后，可人工编辑候选并提交验证。"
       :retry="state.reload"
     >
       <div v-for="p in (state.data.value ?? []) as RepairProposal[]" :key="p.proposal_id" class="card">

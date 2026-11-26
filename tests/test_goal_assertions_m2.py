@@ -237,3 +237,211 @@ def test_missing_relation_and_evidence_capture_are_inconclusive() -> None:
     )
     assert report.verdict == "INCONCLUSIVE"
     assert [result.verdict for result in report.results] == ["INCONCLUSIVE", "INCONCLUSIVE"]
+
+
+@pytest.mark.parametrize(
+    "child",
+    [
+        {"kind": "page_state", "field": "text", "value": "missing-marker"},
+        {"kind": "dynamic_match", "pattern": "missing-marker"},
+    ],
+)
+def test_truncated_page_cannot_prove_negated_absence(child: dict[str, object]) -> None:
+    child = {**child, "name": "truncated-child"}
+    observation = {**OBS, "text_excerpt": "x" * 3000}
+    direct = evaluate_assertions([child], observation)
+    assert direct.verdict == "INCONCLUSIVE"
+    negated = evaluate_assertions(
+        [{"kind": "not", "name": "negated", "assertions": [child]}], observation
+    )
+    assert negated.verdict == "INCONCLUSIVE"
+    # Positive observations remain useful; structure is independent of excerpt length.
+    structured = evaluate_assertions(
+        [
+            {
+                "kind": "element_attr",
+                "name": "structured",
+                "testid": "project-link",
+                "attribute": "href",
+                "value": "/projects/42",
+            }
+        ],
+        observation,
+    )
+    assert structured.verdict == "VERIFIED"
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        {"kind": "url_exact", "value": "/projects"},
+        {"kind": "url_regex", "value": ".*"},
+        {"kind": "page_state", "field": "title", "value": "Project"},
+        {"kind": "page_state", "field": "text", "value": "Project"},
+        {"kind": "dynamic_match", "pattern": ".*"},
+    ],
+)
+def test_missing_specific_observation_field_is_inconclusive(spec: dict[str, object]) -> None:
+    spec = {**spec, "name": "missing-field"}
+    observation = {"visible_testids": ["unrelated"]}
+    assert evaluate_assertions([spec], observation).verdict == "INCONCLUSIVE"
+    assert (
+        evaluate_assertions(
+            [{"kind": "not", "name": "negative", "assertions": [spec]}], observation
+        ).verdict
+        == "INCONCLUSIVE"
+    )
+
+
+def test_regex_end_anchor_cannot_treat_excerpt_end_as_page_end() -> None:
+    report = evaluate_assertions(
+        [{"kind": "dynamic_match", "name": "end", "pattern": "x$"}],
+        {**OBS, "text_excerpt": "x" * 3000},
+    )
+    assert report.verdict == "INCONCLUSIVE"
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_multistep_reference_order_is_enforced(reverse: bool) -> None:
+    observations = [
+        {**OBS, "observation_ref": "first", "url_path": "/error"},
+        {**OBS, "observation_ref": "second", "url_path": "/success"},
+    ]
+    steps = [
+        {
+            "observation_ref": "first",
+            "assertion": {"kind": "url_exact", "name": "error", "value": "/error"},
+        },
+        {
+            "observation_ref": "second",
+            "assertion": {"kind": "url_exact", "name": "success", "value": "/success"},
+        },
+    ]
+    if reverse:
+        steps.reverse()
+    result = evaluate_assertions(
+        [{"kind": "multi_step_goal", "name": "ordered", "assertions": steps}],
+        observations[-1],
+        observations=observations,
+    )
+    assert result.verdict == ("NOT_VERIFIED" if reverse else "VERIFIED")
+
+
+def test_multistep_match_requires_actual_error_then_recovery() -> None:
+    spec = {
+        "kind": "multi_step_goal",
+        "name": "recovery",
+        "assertions": [
+            {
+                "match": "first_after_previous",
+                "assertion": {"kind": "url_exact", "name": "error", "value": "/error"},
+            },
+            {
+                "match": "first_after_previous",
+                "assertion": {"kind": "url_exact", "name": "success", "value": "/success"},
+            },
+        ],
+    }
+    observations = [
+        {**OBS, "observation_ref": "a", "url_path": "/error"},
+        {**OBS, "observation_ref": "b", "url_path": "/success"},
+    ]
+    report = evaluate_assertions([spec], observations[-1], observations=observations)
+    assert report.verdict == "VERIFIED"
+    assert len(set(report.results[0].evidence_refs)) == 2
+    # A success alone or observations in the wrong order cannot prove recovery.
+    assert (
+        evaluate_assertions([spec], observations[-1], observations=observations[1:]).verdict
+        == "INCONCLUSIVE"
+    )
+    assert (
+        evaluate_assertions([spec], observations[0], observations=observations[::-1]).verdict
+        == "INCONCLUSIVE"
+    )
+
+
+@pytest.mark.parametrize(
+    "child",
+    [
+        {"kind": "element_exists", "testid": "outside-sample"},
+        {"kind": "element_visible", "testid": "outside-sample"},
+        {"kind": "element_text", "testid": "outside-sample", "contains": "expected"},
+        {
+            "kind": "element_attr",
+            "testid": "outside-sample",
+            "attribute": "href",
+            "value": "/expected",
+        },
+        {"kind": "form_state", "testid": "outside-sample", "state": "absent"},
+    ],
+)
+def test_bounded_element_sample_does_not_prove_absence(child: dict[str, object]) -> None:
+    child = {**child, "name": "bounded"}
+    observation = {
+        **OBS,
+        "visible_elements": [{"testid": f"row-{i}", "tag": "a"} for i in range(40)],
+    }
+    assert evaluate_assertions([child], observation).verdict == "INCONCLUSIVE"
+    assert (
+        evaluate_assertions(
+            [{"kind": "not", "name": "negated", "assertions": [child]}], observation
+        ).verdict
+        == "INCONCLUSIVE"
+    )
+
+
+@pytest.mark.parametrize("composite", [False, True])
+def test_structured_count_and_composite_evidence_resolves(composite: bool) -> None:
+    import hashlib
+    import json
+
+    selector = 'table[data-testid="rows"] tr.active'
+    observation = {
+        "url_path": "/projects",
+        "step_id": "step-1",
+        "visible_testids": ["rows"],
+        "selector_counts": {selector: 2},
+        "dom_counts": {"table_row_count": 99},
+    }
+    canonical = json.dumps(observation, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    observation["observation_ref"] = "obs_" + hashlib.sha256(canonical.encode()).hexdigest()[:24]
+    predicate = {"kind": "table_row_count", "name": "selected", "selector": selector, "value": 2}
+    if composite:
+        predicate = {"kind": "all_of", "name": "composite", "assertions": [predicate]}
+        report = evaluate_assertions(
+            [
+                {
+                    "kind": "multi_step_goal",
+                    "name": "sequence",
+                    "assertions": [
+                        {"observation_ref": observation["observation_ref"], "assertion": predicate}
+                    ],
+                }
+            ],
+            observation,
+            observations=[observation],
+        )
+        reference = report.results[0].evidence_refs[0]
+        field_path = "composite"
+    else:
+        report = evaluate_assertions([predicate], observation)
+        reference = report.results[0].evidence_ref
+        field_path = report.results[0].field_path
+    assert report.verdict == "VERIFIED"
+    resolved = resolve_evidence_reference(
+        [observation],
+        step_id="step-1",
+        observation_ref=observation["observation_ref"],
+        field_path=field_path,
+        evidence_ref=reference,
+    )
+    assert resolved == (observation if composite else 2)
+    altered = {**observation, "selector_counts": {selector: 3}}
+    with pytest.raises(ValueError, match="stable reference"):
+        resolve_evidence_reference(
+            [altered],
+            step_id="step-1",
+            observation_ref=observation["observation_ref"],
+            field_path=field_path,
+            evidence_ref=reference,
+        )

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -44,6 +45,7 @@ from packages.agents.exploration import (
 from packages.agents.goal_assertions import evaluate_assertions, evaluate_test_case_verdict
 from packages.agents.scenarios import default_registry
 from packages.core.errors import ConflictError, NotFoundError, ValidationError
+from packages.execution.candidate_transaction import CandidateTransactions, atomic_write, json_bytes
 from packages.execution.formal_lock import case_lock
 from packages.execution.models import (
     AssertionSpec,
@@ -80,12 +82,15 @@ class CandidateStore:
         self.root.mkdir(parents=True, exist_ok=True)
         return self.root
 
-    def save(self, record: dict[str, Any]) -> None:
+    def save(self, record: dict[str, Any], *, hook: Callable[[str], None] | None = None) -> None:
         cid = str(record["candidate_id"])
         if not CANDIDATE_ID.fullmatch(cid):
             raise ValidationError(f"invalid candidate id: {cid}")
         path = self._dir() / f"{cid}.json"
-        path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+        atomic_write(path, json_bytes(record), hook=hook)
+
+    def lock(self, candidate_id: str) -> Any:
+        return case_lock(self.root, candidate_id)
 
     def get(self, candidate_id: str) -> dict[str, Any] | None:
         if not CANDIDATE_ID.fullmatch(candidate_id):
@@ -93,7 +98,13 @@ class CandidateStore:
         path = self.root / f"{candidate_id}.json"
         if not path.is_file():
             return None
-        return json.loads(path.read_text(encoding="utf-8"))
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(record, dict) or record.get("candidate_id") != candidate_id:
+                raise ValueError("candidate identity mismatch")
+            return record
+        except (ValueError, OSError) as exc:
+            raise ConflictError("candidate file is unreadable or corrupt; review BLOCKED") from exc
 
     def list(self) -> list[dict[str, Any]]:
         if not self.root.is_dir():
@@ -268,6 +279,7 @@ def _summary(record: dict[str, Any]) -> dict[str, Any]:
         "reviewer": record.get("reviewer", ""),
         "approval_record": record.get("approval_record", ""),
         "case_file": record.get("case_file", ""),
+        "review_transaction_id": record.get("review_transaction_id", ""),
     }
 
 
@@ -302,7 +314,11 @@ def list_candidates(request: Request) -> list[dict[str, Any]]:
 @router.get("/candidates/{candidate_id}")
 def get_candidate(request: Request, candidate_id: str) -> dict[str, Any]:
     store: CandidateStore = request.app.state.candidate_store
-    record = store.get(candidate_id)
+    if not CANDIDATE_ID.fullmatch(candidate_id):
+        raise NotFoundError(f"candidate not found: {candidate_id}")
+    with store.lock(candidate_id):
+        _transactions(request).recover(candidate_id)
+        record = store.get(candidate_id)
     if record is None:
         raise NotFoundError(f"candidate not found: {candidate_id}")
     return record
@@ -336,41 +352,50 @@ def compile_exploration(
         intent=intent,
     )
     store: CandidateStore = request.app.state.candidate_store
-    existing = store.get(candidate.candidate_id)
-    if existing is not None:
-        # The candidate id is derived from the trace hash, so recompiling one
-        # exploration maps to the same row. Overwriting it would silently erase
-        # a review decision: a rejected candidate would reappear as pending and
-        # an approved one would look unreviewed.
-        if existing.get("status") != PENDING:
-            raise ConflictError(
-                "this trace was already reviewed; start a new exploration to retry",
-                details={
-                    "candidate_id": candidate.candidate_id,
-                    "status": existing.get("status"),
-                    "reviewer": existing.get("reviewer", ""),
-                },
-            )
-        return _summary(existing)  # idempotent re-compile of a pending candidate
+    with store.lock(candidate.candidate_id):
+        _transactions(request).recover(candidate.candidate_id)
+        existing = store.get(candidate.candidate_id)
+        if existing is not None:
+            # The candidate id is derived from the trace hash, so recompiling one
+            # exploration maps to the same row. Overwriting it would silently erase
+            # a review decision: a rejected candidate would reappear as pending and
+            # an approved one would look unreviewed.
+            if existing.get("status") != PENDING:
+                raise ConflictError(
+                    "this trace was already reviewed; start a new exploration to retry",
+                    details={
+                        "candidate_id": candidate.candidate_id,
+                        "status": existing.get("status"),
+                        "reviewer": existing.get("reviewer", ""),
+                    },
+                )
+            return _summary(existing)  # idempotent re-compile of a pending candidate
 
-    payload: dict[str, Any] = {
-        **candidate.to_dict(),
-        "status": PENDING,
-        "compiled_from": f"exploration:{exploration_id}",
-        "case_file": "",
-        "reviewed_at": "",
-        "rejection_reason": "",
-        # Snapshot of the admission evidence at compile time; the approve route
-        # re-verifies all of it against the live exploration before promoting.
-        "trace_integrity_verified": True,
-        "reviewer_is_local_audit_field": True,
-    }
-    store.save(payload)
-    return _summary(payload)
+        payload: dict[str, Any] = {
+            **candidate.to_dict(),
+            "status": PENDING,
+            "compiled_from": f"exploration:{exploration_id}",
+            "case_file": "",
+            "reviewed_at": "",
+            "rejection_reason": "",
+            # Snapshot of the admission evidence at compile time; the approve route
+            # re-verifies all of it against the live exploration before promoting.
+            "trace_integrity_verified": True,
+            "reviewer_is_local_audit_field": True,
+        }
+        store.save(payload)
+        return _summary(payload)
 
 
 @router.post("/candidates/{candidate_id}/approve")
 def approve_candidate(request: Request, candidate_id: str, body: ReviewRequest) -> dict[str, Any]:
+    store: CandidateStore = request.app.state.candidate_store
+    with store.lock(candidate_id):
+        _transactions(request).recover(candidate_id)
+        return _approve_candidate(request, candidate_id, body)
+
+
+def _approve_candidate(request: Request, candidate_id: str, body: ReviewRequest) -> dict[str, Any]:
     if not body.reviewer.strip():
         raise ValidationError("reviewer is required to approve a candidate")
     if is_self_approver(body.reviewer):
@@ -470,17 +495,7 @@ def approve_candidate(request: Request, candidate_id: str, body: ReviewRequest) 
     )
     case_dir = _case_dir(request)
     target = case_dir / f"{formal.case_id}.json"
-    with case_lock(case_dir, formal.case_id):
-        if target.exists():
-            raise ConflictError(
-                "formal case file already exists; versions are append-only",
-                details={"case_id": formal.case_id, "file": target.name},
-            )
-        case_dir.mkdir(parents=True, exist_ok=True)
-        target.write_text(
-            json.dumps(formal.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-
+    before = dict(record)
     record.update(
         {
             "status": APPROVED,
@@ -496,12 +511,19 @@ def approve_candidate(request: Request, candidate_id: str, body: ReviewRequest) 
             "reviewer_is_local_audit_field": True,
         }
     )
-    store.save(record)
+    _transactions(request).commit(before, record, formal.to_dict())
     return _summary(record)
 
 
 @router.post("/candidates/{candidate_id}/reject")
 def reject_candidate(request: Request, candidate_id: str, body: ReviewRequest) -> dict[str, Any]:
+    store: CandidateStore = request.app.state.candidate_store
+    with store.lock(candidate_id):
+        _transactions(request).recover(candidate_id)
+        return _reject_candidate(request, candidate_id, body)
+
+
+def _reject_candidate(request: Request, candidate_id: str, body: ReviewRequest) -> dict[str, Any]:
     if not body.reviewer.strip():
         raise ValidationError("reviewer is required to reject a candidate")
     if is_self_approver(body.reviewer):
@@ -519,6 +541,7 @@ def reject_candidate(request: Request, candidate_id: str, body: ReviewRequest) -
             "candidate is not pending review",
             details={"candidate_id": candidate_id, "status": record.get("status")},
         )
+    before = dict(record)
     record.update(
         {
             "status": REJECTED,
@@ -528,11 +551,15 @@ def reject_candidate(request: Request, candidate_id: str, body: ReviewRequest) -
             "reviewer_is_local_audit_field": True,
         }
     )
-    store.save(record)
+    _transactions(request).commit(before, record)
     return _summary(record)
 
 
 # ----------------------------------------------------------------- helpers
+
+
+def _transactions(request: Request) -> CandidateTransactions:
+    return CandidateTransactions(request.app.state.candidate_store, _case_dir(request))
 
 
 def _case_dir(request: Request) -> Path:

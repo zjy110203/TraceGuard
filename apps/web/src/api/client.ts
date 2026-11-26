@@ -209,6 +209,8 @@ export const api = {
     required_assertions?: string[]
     constraints?: string[]
     scenario?: string
+    scenario_version?: string
+    path?: string
     base_url: string
     policy: string
     max_steps: number

@@ -1,0 +1,79 @@
+{
+  "status": "PASS",
+  "workspace": "D:\\桌面\\TraceGuard\\traceguard\\.traceguard-tmp\\r5\\f7-closed-loop\\8174c445bc284f2c9f48efcfd015e04f",
+  "explorer_id": "exp_ba60414439eb",
+  "candidate_id": "cand_45ecf64c08",
+  "candidate_transaction_id": "fc8e755fc93c45d596ddadec9994f2a3",
+  "candidate_reviewer": "journey-reviewer",
+  "candidate_approval_record": "REV-JOURNEY-001",
+  "runs_verified_from_sqlite_and_chain": {
+    "failed_run_id": {
+      "run_id": "run_20261126135420410854_7a0cf8",
+      "case_version": 1,
+      "test_verdict": "FAILED"
+    },
+    "regression_run_id": {
+      "run_id": "run_20261126135508267988_78ecb0",
+      "case_version": 2,
+      "test_verdict": "PASSED"
+    },
+    "rollback_run_id": {
+      "run_id": "run_20261126135512181421_93ab78",
+      "case_version": 3,
+      "test_verdict": "FAILED"
+    }
+  },
+  "oracle_and_assertions_unchanged": true,
+  "rollback_restores_v1_steps": true,
+  "restarts": [
+    {
+      "after_promotion": "PASS",
+      "file_hashes": {
+        "TC-CAND-8CD12D728F.json": "8de7c9b4596a4eeb1665a9240f9059351c7156080688a168c0fd68126b0e4fdd",
+        "TC-CAND-8CD12D728F.v2.json": "82a65433aa2454728bfcc0f3077db58d1decf9a5606201e3c06d510b639a17c5"
+      }
+    },
+    {
+      "after_rollback": "PASS",
+      "immutable_history": "PASS"
+    }
+  ],
+  "formal_sha256": {
+    "TC-CAND-8CD12D728F.json": "8de7c9b4596a4eeb1665a9240f9059351c7156080688a168c0fd68126b0e4fdd",
+    "TC-CAND-8CD12D728F.v2.json": "82a65433aa2454728bfcc0f3077db58d1decf9a5606201e3c06d510b639a17c5",
+    "TC-CAND-8CD12D728F.v3.json": "33acd7700bbeeb1652550b9db777efd5de7038662da776ac68bdc534abd38ce7"
+  },
+  "review_inputs": "isolated automated tests, not actual project owner sign-off",
+  "failed_run_attachment_sha256_verified": [
+    {
+      "evidence_id": "evd_efa890489cfa",
+      "sha256": "6e21221ca47488c141ea85bb9221c99f56a4ef646adfa3ccca47da32808cc16f",
+      "source": "D:\\桌面\\TraceGuard\\traceguard\\.traceguard-tmp\\r5\\f7-closed-loop\\8174c445bc284f2c9f48efcfd015e04f\\blobs\\6e\\21\\6e21221ca47488c141ea85bb9221c99f56a4ef646adfa3ccca47da32808cc16f"
+    },
+    {
+      "evidence_id": "evd_90915d992dfb",
+      "sha256": "a04d3fae13ac100356de783398558c26a3a920803081c3624b2e267ec74c836a",
+      "source": "D:\\桌面\\TraceGuard\\traceguard\\.traceguard-tmp\\r5\\f7-closed-loop\\8174c445bc284f2c9f48efcfd015e04f\\blobs\\a0\\4d\\a04d3fae13ac100356de783398558c26a3a920803081c3624b2e267ec74c836a"
+    },
+    {
+      "evidence_id": "evd_22beb02f5d9d",
+      "sha256": "ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff",
+      "source": "D:\\桌面\\TraceGuard\\traceguard\\.traceguard-tmp\\r5\\f7-closed-loop\\8174c445bc284f2c9f48efcfd015e04f\\blobs\\ab\\9e\\ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff"
+    },
+    {
+      "evidence_id": "evd_f09c76e3f49b",
+      "sha256": "ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff",
+      "source": "D:\\桌面\\TraceGuard\\traceguard\\.traceguard-tmp\\r5\\f7-closed-loop\\8174c445bc284f2c9f48efcfd015e04f\\blobs\\ab\\9e\\ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff"
+    },
+    {
+      "evidence_id": "evd_0953121fe412",
+      "sha256": "ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff",
+      "source": "D:\\桌面\\TraceGuard\\traceguard\\.traceguard-tmp\\r5\\f7-closed-loop\\8174c445bc284f2c9f48efcfd015e04f\\blobs\\ab\\9e\\ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff"
+    },
+    {
+      "evidence_id": "evd_38d6f9d3dbed",
+      "sha256": "ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff",
+      "source": "D:\\桌面\\TraceGuard\\traceguard\\.traceguard-tmp\\r5\\f7-closed-loop\\8174c445bc284f2c9f48efcfd015e04f\\blobs\\ab\\9e\\ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff"
+    }
+  ]
+}

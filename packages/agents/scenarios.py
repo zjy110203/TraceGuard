@@ -176,6 +176,10 @@ class Scenario:
             steps = spec["scripted_fixture"].get("steps")
         return tuple(steps) if isinstance(steps, list | tuple) else None
 
+    def goal_definition_for_path(self, path_kind: str) -> tuple[dict[str, Any], ...]:
+        spec = self.path_spec_for_path(path_kind) or {}
+        return tuple(spec.get("goal_definition", self.goal_definition))
+
     @property
     def digest(self) -> str:
         encoded = json.dumps(
@@ -307,8 +311,47 @@ class Scenario:
                         "expect",
                         "steps",
                         "scripted_fixture",
+                        "goal_definition",
+                        "intent_templates",
                     }:
                         problems.append(f"paths[{path_kind!r}] has unknown fields")
+                    if "goal_definition" in path or "intent_templates" in path:
+                        if tuple(int(x) for x in self.version.split(".")) < (2, 1, 0):
+                            problems.append("path goal overrides require scenario version >= 2.1.0")
+                        goals = path.get("goal_definition")
+                        if (
+                            not isinstance(goals, list)
+                            or not goals
+                            or not any(
+                                isinstance(a, dict) and a.get("required", True) for a in goals
+                            )
+                        ):
+                            problems.append("path goal_definition needs required assertions")
+                        else:
+                            for assertion in goals:
+                                if not isinstance(assertion, dict):
+                                    problems.append("path goal assertion must be an object")
+                                else:
+                                    problems.extend(validate_assertion(assertion))
+                        templates = path.get("intent_templates")
+                        if not isinstance(templates, dict) or set(templates) - {
+                            "goal",
+                            "target",
+                            "expected_outcomes",
+                            "required_assertions",
+                        }:
+                            problems.append("invalid path intent_templates")
+                        elif (
+                            not isinstance(templates.get("target"), str) or not templates["target"]
+                        ):
+                            problems.append("path intent_templates requires a target")
+                        else:
+                            for key in ("expected_outcomes", "required_assertions"):
+                                if key in templates and (
+                                    not isinstance(templates[key], list)
+                                    or any(not isinstance(x, str) for x in templates[key])
+                                ):
+                                    problems.append(f"path intent_templates.{key} must be strings")
                     if not str(path.get("path_id") or "").strip():
                         problems.append(f"paths[{path_kind!r}] requires path_id")
                     if path.get("expected_goal_status") not in {"VERIFIED", "NOT_VERIFIED"}:
@@ -409,8 +452,9 @@ class ScenarioRegistry:
 
     def __init__(self) -> None:
         self._scenarios: dict[tuple[str, str], Scenario] = {}
+        self._explicit_only: set[tuple[str, str]] = set()
 
-    def register(self, scenario: Scenario) -> Scenario:
+    def register(self, scenario: Scenario, *, explicit_only: bool = False) -> Scenario:
         if scenario.paths and any(not isinstance(path, dict) for path in scenario.paths.values()):
             upgraded_paths = {
                 path_id: (
@@ -431,12 +475,18 @@ class ScenarioRegistry:
         if key in self._scenarios:
             raise ValueError(f"scenario {key!r} is already registered")
         self._scenarios[key] = scenario
+        if explicit_only:
+            self._explicit_only.add(key)
         return scenario
 
     def get(self, scenario_id: str, version: str | None = None) -> Scenario | None:
         if version is not None:
             return self._scenarios.get((scenario_id, version))
-        matches = [s for (sid, _), s in self._scenarios.items() if sid == scenario_id]
+        matches = [
+            s
+            for key, s in self._scenarios.items()
+            if key[0] == scenario_id and key not in self._explicit_only
+        ]
         return max(matches, key=lambda s: tuple(int(x) for x in s.version.split(".")), default=None)
 
     def require(self, scenario_id: str, version: str | None = None) -> Scenario:
@@ -1389,6 +1439,9 @@ def build_default_registry() -> ScenarioRegistry:
         )
     )
 
+    from packages.agents.scenario_paths_v21 import add_opt_in_versions
+
+    add_opt_in_versions(registry)
     return registry
 
 

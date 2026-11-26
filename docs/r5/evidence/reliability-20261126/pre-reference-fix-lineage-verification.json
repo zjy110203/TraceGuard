@@ -1,0 +1,47 @@
+{
+  "status": "PASS",
+  "workspace": "D:\\桌面\\TraceGuard\\traceguard\\.traceguard-tmp\\r5\\f7-closed-loop\\4090d9d0f6c44f35b79e8655370ae6ef",
+  "explorer_id": "exp_0aa0784dd9cd",
+  "candidate_id": "cand_dbdef6d5b8",
+  "candidate_transaction_id": "1a9861d72db24d1e92f3229f63ab3463",
+  "candidate_reviewer": "journey-reviewer",
+  "candidate_approval_record": "REV-JOURNEY-001",
+  "runs_verified_from_sqlite_and_chain": {
+    "failed_run_id": {
+      "run_id": "run_20261126133841820541_7af77d",
+      "case_version": 1,
+      "test_verdict": "FAILED"
+    },
+    "regression_run_id": {
+      "run_id": "run_20261126133930792035_078e5f",
+      "case_version": 2,
+      "test_verdict": "PASSED"
+    },
+    "rollback_run_id": {
+      "run_id": "run_20261126133935227471_230308",
+      "case_version": 3,
+      "test_verdict": "FAILED"
+    }
+  },
+  "oracle_and_assertions_unchanged": true,
+  "rollback_restores_v1_steps": true,
+  "restarts": [
+    {
+      "after_promotion": "PASS",
+      "file_hashes": {
+        "TC-CAND-E78327A20A.json": "3c367c818676a0814ab0f950cde382092a9a5fd002feaa785b94eeeb0cc2443e",
+        "TC-CAND-E78327A20A.v2.json": "c002afe726b546524cca4ec74c26e2201d2787e1f752023607be21d855fba237"
+      }
+    },
+    {
+      "after_rollback": "PASS",
+      "immutable_history": "PASS"
+    }
+  ],
+  "formal_sha256": {
+    "TC-CAND-E78327A20A.json": "3c367c818676a0814ab0f950cde382092a9a5fd002feaa785b94eeeb0cc2443e",
+    "TC-CAND-E78327A20A.v2.json": "c002afe726b546524cca4ec74c26e2201d2787e1f752023607be21d855fba237",
+    "TC-CAND-E78327A20A.v3.json": "30ec36e6b4fcac608e53d53ed8ecd1e1e51f28311cb2de4a05c02b524d95658d"
+  },
+  "review_inputs": "isolated automated tests, not actual project owner sign-off"
+}

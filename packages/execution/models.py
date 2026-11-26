@@ -312,6 +312,7 @@ def _version_from_dict(item: dict[str, Any]) -> TestCaseVersion:
     data = dict(item)
     # Storage envelope metadata is not part of the active TestCase schema.
     data.pop("_repair_transaction", None)
+    data.pop("_candidate_transaction", None)
     data.pop("rollback_of_version", None)
     data["intent"] = TestIntent(**data["intent"])
     data["steps"] = tuple(TestStep(**s) for s in data["steps"])

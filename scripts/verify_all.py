@@ -727,6 +727,10 @@ def security_steps() -> list[Step]:
                 "tests/test_explorer_api.py",
                 "tests/test_goal_semantics.py",
                 "tests/test_trace_integrity_v2.py",
+                "tests/test_candidate_api.py",
+                "tests/test_candidate_transactions.py",
+                "tests/test_local_backup.py",
+                "tests/test_benchmark_gt_import.py",
             ],
             name="pytest-security",
         )

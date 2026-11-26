@@ -1,0 +1,3 @@
+# vue-tsc.cmd --noEmit
+exit=0 duration=2.2s
+

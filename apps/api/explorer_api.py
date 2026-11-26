@@ -582,6 +582,10 @@ def list_policies() -> dict[str, Any]:
         "active_policy": "scripted",
         "llm_blocked_reason": "真实模型调用未获批（D8）；本轮仅验证受控调用链。",
         "supported_scenarios": SUPPORTED_SCENARIOS,
+        "scenario_versions": {
+            sid: [s.version for s in SCENARIOS.all() if s.scenario_id == sid]
+            for sid in SUPPORTED_SCENARIOS
+        },
     }
 
 
@@ -625,7 +629,11 @@ def get_exploration(request: Request, exploration_id: str) -> dict[str, Any]:
         )
     if scenario_for_record and scenario_for_record.goal_definition:
         recomputed = evaluate_assertions(
-            list(scenario_for_record.goal_definition),
+            list(
+                scenario_for_record.goal_definition_for_path(
+                    str(record.get("scenario_path") or "normal")
+                )
+            ),
             dict((record.get("observations") or [{}])[-1] or {}),
             observations=list(record.get("observations") or []),
         )
@@ -675,7 +683,8 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
             f"scenario path {body.path!r} is not registered",
             details={"scenario_id": scenario.scenario_id, "scenario_version": scenario.version},
         )
-    execution_scenario = replace(scenario, steps=path_steps)
+    path_goals = scenario.goal_definition_for_path(body.path)
+    execution_scenario = replace(scenario, steps=path_steps, goal_definition=path_goals)
 
     parsed = urlsplit(body.base_url)
     host = (parsed.hostname or "").lower()
@@ -703,7 +712,7 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
             "scenario_digest": scenario.digest,
         },
         count_selectors=_selector_count_targets(
-            [*scenario.goal_definition, *list(path_spec.get("expect") or [])]
+            [*path_goals, *list(path_spec.get("expect") or [])]
         ),
         budget=Budget(
             max_steps=body.max_steps,
@@ -720,15 +729,26 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
     run_id = explorer.trace.exploration_id
     lease_token = lease_manager.setup(run_id, scenario.data_setup or {})
     lease_manager.start_heartbeat(run_id, lease_token)
+    # Only explicitly versioned path templates supply defaults. Legacy request
+    # semantics and all user-supplied non-empty requirements remain unchanged.
+    path_intent = path_spec.get("intent_templates") or {}
     test_intent: dict[str, Any] = {
         "intent_id": body.intent_ref or f"i-{explorer.trace.exploration_id}",
         "description": body.goal or body.intent_ref or scenario.description,
         "source_ref": body.intent_ref,
         "scenario": body.scenario,
-        "goal": body.goal,
-        "expected_outcomes": [str(o) for o in body.expected_outcomes if str(o).strip()],
-        "target": str(body.target or "").strip(),
-        "required_assertions": [str(a) for a in body.required_assertions if str(a).strip()],
+        "goal": body.goal or path_intent.get("goal", ""),
+        "expected_outcomes": [
+            str(o)
+            for o in (body.expected_outcomes or path_intent.get("expected_outcomes", []))
+            if str(o).strip()
+        ],
+        "target": str(body.target or path_intent.get("target", "")).strip(),
+        "required_assertions": [
+            str(a)
+            for a in (body.required_assertions or path_intent.get("required_assertions", []))
+            if str(a).strip()
+        ],
         "constraints": [
             str(c) for c in (body.constraints or scenario.constraints) if str(c).strip()
         ],
@@ -778,7 +798,7 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
     observations = list(payload.get("observations") or [])
     final_observation = dict((observations or [{}])[-1] or {})
     assertion_report = evaluate_assertions(
-        list(scenario.goal_definition), final_observation, observations=observations
+        list(path_goals), final_observation, observations=observations
     )
     explorer.trace.goal_assertions = assertion_report.to_dict()
     payload["goal_assertions"] = assertion_report.to_dict()

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { api } from '../api/client'
 import { messageOf } from '../composables/useAsync'
 import type { ExplorationSummary, ExplorationTrace, PolicyCatalogue } from '../api/types'
@@ -23,6 +23,9 @@ const detailError = ref('')
 const intentRef = ref('explore:teamflow-login')
 const baseUrl = ref('http://127.0.0.1:8001')
 const scenario = ref('teamflow-login')
+const scenarioVersion = ref('')
+const scenarioPath = ref('normal')
+watch(scenario, () => { scenarioVersion.value = ''; scenarioPath.value = 'normal' })
 const goal = ref('登录 TeamFlow 并进入项目列表')
 const expectedOutcomes = ref('项目列表页面可见\n登录表单不再显示')
 const target = ref('/projects')
@@ -110,6 +113,8 @@ async function run(): Promise<void> {
       required_assertions: lines(requiredAssertions.value),
       constraints: lines(constraints.value),
       scenario: scenario.value,
+      scenario_version: scenarioVersion.value || undefined,
+      path: scenarioPath.value,
       base_url: baseUrl.value.trim(),
       policy: policy.value,
       max_steps: Number(maxSteps.value),
@@ -222,6 +227,16 @@ function actionSummary(action: { tool?: string; args?: Record<string, unknown> }
               {{ id }}
             </option>
           </select>
+          <label for="exp-version">场景版本</label>
+          <select id="exp-version" v-model="scenarioVersion">
+            <option value="">保持现有默认版本</option>
+            <option v-for="version in policies?.scenario_versions?.[scenario] ?? []" :key="version" :value="version">{{ version }}{{ version === '2.1.0' ? '（新版路径目标，显式选择）' : '' }}</option>
+          </select>
+          <label for="exp-path">场景路径</label>
+          <select id="exp-path" v-model="scenarioPath">
+            <option value="normal">Normal</option><option value="exception">Exception</option><option value="boundary">Boundary</option><option value="recovery">Recovery</option>
+          </select>
+          <button v-if="scenarioVersion === '2.1.0'" class="btn" type="button" @click="goal = ''; target = ''; expectedOutcomes = ''; requiredAssertions = ''; maxSteps = 30">使用所选路径的内置目标</button>
           <p class="micro muted">{{ supportedScenarios[scenario] || '未注册场景将被拒绝（UNSUPPORTED_SCENARIO）' }}</p>
         </div>
         <div class="field">

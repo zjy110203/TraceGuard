@@ -1,0 +1,145 @@
+F                                                                        [100%]
+================================== FAILURES ===================================
+______________________ test_explorer_repair_closed_loop _______________________
+
+    def test_explorer_repair_closed_loop():
+        work = ROOT / ".traceguard-tmp" / "r5" / "f7-closed-loop" / uuid.uuid4().hex
+        work.mkdir(parents=True)
+        sut = build_teamflow(
+            Settings(app_env="test", database_url=f"sqlite:///{(work / 'teamflow.db').as_posix()}")
+        )
+        report = {"workspace": str(work), "stages": {}, "restarts": []}
+        report_path = work / "closed-loop-report.json"
+    
+        def save():
+            report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    
+        with serve_uvicorn(sut) as teamflow, sync_playwright() as pw:
+            platform = Platform(work, teamflow)
+            browser = pw.chromium.launch(channel=browser_channel(), headless=True)
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.set_default_timeout(20000)
+            try:
+                platform.start()
+                _initial_journey(page, platform.base, teamflow)
+                page.screenshot(path=str(work / "01-explorer-approved.png"), full_page=True)
+                exploration = platform.call("GET", "/api/v1/explorations")[0]
+                candidates = platform.call("GET", "/api/v1/candidates")
+                assert len(candidates) == 1
+                candidate = candidates[0]
+                candidate_id = candidate["candidate_id"]
+                candidate = platform.call("GET", f"/api/v1/candidates/{candidate_id}")
+                case_id = candidate["case_id"]
+                formal = platform.call("GET", f"/api/v1/repairs/cases/{case_id}/formal")["case"]
+                assert formal["version"] == 1
+                report.update(
+                    {
+                        "explorer_id": exploration["exploration_id"],
+                        "candidate_id": candidate_id,
+                        "testcase_id": case_id,
+                    }
+                )
+                report["stages"]["initial_run"] = "PASSED"
+                save()
+    
+                headers = {"X-Eval-Token": "local-dev-eval-token-change-me"}
+                changed = httpx.post(
+                    teamflow + "/__eval__/ui-revision",
+                    headers=headers,
+                    json={"revision": "v2"},
+                    trust_env=False,
+                )
+                assert changed.status_code == 200
+                page.goto(teamflow)
+                assert page.locator('[data-testid="login-submit-v2"]').count() == 1
+                assert page.locator('[data-testid="login-submit"]').count() == 0
+                page.screenshot(path=str(work / "02-real-ui-drift.png"))
+                failed = platform.call("POST", "/api/v1/chains", {"case_id": case_id})
+                assert failed["test_verdict"] == "FAILED", failed
+                run_id = failed["run_id"]
+                diagnosis = platform.call("GET", f"/api/v1/runs/{run_id}/diagnosis")
+                hypothesis = next(
+                    h for h in diagnosis["hypotheses"] if h["hypothesis_id"] == "h-locator-missing"
+                )
+                assert hypothesis["status"] == "SUPPORTED"
+                refs = [e["ref_id"] for e in hypothesis["supporting"]]
+                assert refs
+                report.update(
+                    {
+                        "failed_run_id": run_id,
+                        "diagnosis_id": diagnosis["diagnosis_id"],
+                        "hypothesis_id": hypothesis["hypothesis_id"],
+                        "evidence_refs": refs,
+                    }
+                )
+                report["stages"]["failed_run"] = failed["test_verdict"]
+                report["stages"]["diagnosis"] = diagnosis["diagnosis_status"]
+                save()
+    
+                repaired = json.loads(json.dumps(formal))
+                repaired["version"] = 2
+                step = next(s for s in repaired["steps"] if "login-submit" in s["target"])
+                before = step["target"]
+                step["target"] = '[data-testid="login-submit-v2"]'
+                # Exercise the manual structured workbench against this same diagnosis.
+                page.goto(platform.base + "/#/repairs")
+                page.get_by_label("��ʽ���� ID").fill(case_id)
+                page.get_by_role("button", name="������ʽ�ʲ�").click()
+>               page.get_by_text("�Ѽ�����ʽ�ʲ�", exact=False).wait_for()
+
+tests\e2e\test_explorer_repair_closed_loop.py:195: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\playwright\sync_api\_generated.py:13663: in wait_for
+    self._sync(
+.venv\Lib\site-packages\playwright\_impl\locator.py:943: in wait_for
+    await self._frame._channel.waitForSelector(
+.venv\Lib\site-packages\playwright\_impl\channel_owner.py:398: in _mapped
+    return mapper(await awaitable)
+                  ^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\playwright\_impl\channel_owner.py:387: in finish
+    raise e from None
+.venv\Lib\site-packages\playwright\_impl\channel_owner.py:352: in finish
+    result = await zone.run_async(lambda: awaitable)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <playwright._impl.utils.zones.Zone object at 0x0000027B5507C410>
+func = <function ChannelOwner._wrap_api_call.<locals>.finish.<locals>.<lambda> at 0x0000027B550A6F20>
+
+    async def run_async(self, func: Callable[[], Awaitable[R]]) -> R:
+        # Python: run() of an async function. The coroutine runs when it is awaited,
+        # so the zone must be current while it is awaited, not while it is created.
+        token = _async_local_storage.set(self)
+        try:
+>           return await func()
+                   ^^^^^^^^^^^^
+E           playwright._impl._errors.Error: Locator.wait_for: Error: strict mode violation: get_by_text("�Ѽ�����ʽ�ʲ�") resolved to 2 elements:
+E               1) <p data-v-5f09e2b5="" class="small muted">��������Դ֤����д���˲�������Ѽ�����ʽ�ʲ��ؽ���ѡ�����滻��ǰ�༭���ݡ�</p> aka get_by_text("��������Դ֤����д���˲�������Ѽ�����ʽ�ʲ��ؽ���ѡ�����滻��ǰ�༭���ݡ�")
+E               2) <p data-v-5f09e2b5="" class="notice-text">�Ѽ�����ʽ�ʲ� TC-CAND-F120D936B5.json���޸ĺ�ѡ JSON ���ύ��</p> aka get_by_text("�Ѽ�����ʽ�ʲ� TC-CAND-F120D936B5.")
+E           
+E           Call log:
+E             - waiting for get_by_text("�Ѽ�����ʽ�ʲ�") to be visible
+
+.venv\Lib\site-packages\playwright\_impl\utils\zones.py:58: Error
+---------------------------- Captured stdout call -----------------------------
+21:33:20 INFO     [tg.teamflow] teamflow_startup
+21:33:22 INFO     [httpx] HTTP Request: GET http://127.0.0.1:57672/health "HTTP/1.1 200 OK"
+21:33:24 INFO     [httpx] HTTP Request: GET http://127.0.0.1:57672/api/v1/explorations "HTTP/1.1 200 OK"
+21:33:24 INFO     [httpx] HTTP Request: GET http://127.0.0.1:57672/api/v1/explorations/exp_5ff40ee9227d "HTTP/1.1 200 OK"
+21:33:28 INFO     [httpx] HTTP Request: GET http://127.0.0.1:57672/api/v1/chains "HTTP/1.1 200 OK"
+21:33:28 INFO     [httpx] HTTP Request: GET http://127.0.0.1:57672/api/v1/chains/chain_20261126133325966462_TC-CAND-F120D936B5 "HTTP/1.1 200 OK"
+21:33:28 INFO     [httpx] HTTP Request: GET http://127.0.0.1:57672/api/v1/evidence/events?run_id=run_20261126133325921235_daccb8 "HTTP/1.1 200 OK"
+21:33:28 INFO     [httpx] HTTP Request: GET http://127.0.0.1:57672/api/v1/evidence/records?run_id=run_20261126133325921235_daccb8 "HTTP/1.1 200 OK"
+21:33:28 INFO     [httpx] HTTP Request: GET http://127.0.0.1:57672/api/v1/runs/run_20261126133325921235_daccb8/diagnosis "HTTP/1.1 200 OK"
+21:33:28 INFO     [httpx] HTTP Request: GET http://127.0.0.1:57672/api/v1/evidence/graph/nodes "HTTP/1.1 200 OK"
+21:33:29 INFO     [httpx] HTTP Request: GET http://127.0.0.1:57672/api/v1/explorations "HTTP/1.1 200 OK"
+21:33:29 INFO     [httpx] HTTP Request: GET http://127.0.0.1:57672/api/v1/candidates "HTTP/1.1 200 OK"
+21:33:29 INFO     [httpx] HTTP Request: GET http://127.0.0.1:57672/api/v1/candidates/cand_2bec91922c "HTTP/1.1 200 OK"
+21:33:29 INFO     [httpx] HTTP Request: GET http://127.0.0.1:57672/api/v1/repairs/cases/TC-CAND-F120D936B5/formal "HTTP/1.1 200 OK"
+21:33:29 INFO     [httpx] HTTP Request: POST http://127.0.0.1:57665/__eval__/ui-revision "HTTP/1.1 200 OK"
+21:33:51 INFO     [httpx] HTTP Request: POST http://127.0.0.1:57672/api/v1/chains "HTTP/1.1 201 Created"
+21:33:51 INFO     [httpx] HTTP Request: GET http://127.0.0.1:57672/api/v1/runs/run_20261126133329398160_cb9276/diagnosis "HTTP/1.1 200 OK"
+CLOSED_LOOP_REPORT=D:\����\TraceGuard\traceguard\.traceguard-tmp\r5\f7-closed-loop\afb823f4762b4b1c9c21686a2efadf5e\closed-loop-report.json
+=========================== short test summary info ===========================
+FAILED tests/e2e/test_explorer_repair_closed_loop.py::test_explorer_repair_closed_loop
+1 failed in 33.57s

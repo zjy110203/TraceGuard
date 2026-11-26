@@ -284,6 +284,16 @@ def resolve_evidence_reference(
         actual_ref = "obs_" + hashlib.sha256(canonical.encode()).hexdigest()[:24]
         if actual_ref != declared_ref:
             raise ValueError("observation content no longer matches its stable reference")
+    if field_path == "composite":
+        # Composite predicates read the whole immutable observation. Preserve
+        # their existing reference IDs while making that source resolvable.
+        return dict(record)
+    if field_path.startswith("selector_counts[") and field_path.endswith("]"):
+        selector = json.loads(field_path[len("selector_counts[") : -1])
+        counts = record.get("selector_counts") or {}
+        if not isinstance(selector, str) or selector not in counts:
+            raise ValueError("evidence selector count no longer resolves")
+        return counts[selector]
     current: Any = record
     for component in field_path.split("."):
         if component.startswith("visible_elements[testid=") and component.endswith("]"):
@@ -321,6 +331,8 @@ def _stable_field_path(spec: dict[str, Any], result: AssertionResult) -> str:
         }[kind]
         return f"visible_elements[testid={spec.get('testid', '')}].{field_name}"
     if kind in {"table_row_count", "list_item_count"}:
+        if spec.get("selector"):
+            return f"selector_counts[{json.dumps(str(spec['selector']), ensure_ascii=False)}]"
         return f"dom_counts.{kind}"
     if kind == "element_relation":
         return "dom_relations"
@@ -419,6 +431,16 @@ def validate_assertion(spec: dict[str, Any]) -> list[str]:
         children = spec.get("assertions")
         if not isinstance(children, list) or not children:
             problems.append("multi_step_goal needs a non-empty assertions list")
+        else:
+            for child in children:
+                if not isinstance(child, dict) or not isinstance(child.get("assertion"), dict):
+                    problems.append("multi_step_goal requires assertion objects")
+                    continue
+                if child.get("match") not in (None, "first_after_previous"):
+                    problems.append("unknown multi_step_goal match policy")
+                if not child.get("observation_ref") and not child.get("match"):
+                    problems.append("multi_step_goal requires an observation_ref or match policy")
+                problems.extend(validate_assertion(child["assertion"]))
     if kind == "evidence_complete" and not str(spec.get("evidence_ref") or "").strip():
         problems.append("evidence_complete needs an evidence_ref")
     if kind == "page_state" and str(spec.get("field") or "title") not in (
@@ -548,12 +570,26 @@ def evaluate_assertion(spec: dict[str, Any], view: _ObservationView) -> Assertio
             detail="the observation carries no DOM sample, so this cannot be decided",
         )
 
+    if (
+        kind in {"element_exists", "element_visible", "element_text", "element_attr", "form_state"}
+        and len(view.elements) >= 40
+        and view.element(str(spec.get("testid") or "")) is None
+    ):
+        return _result(
+            spec,
+            INCONCLUSIVE,
+            expected=str(spec.get("testid") or ""),
+            observed="element sample is bounded",
+            evidence="observations[-1].visible_elements",
+            detail="absence from a full bounded sample cannot prove absence from the page",
+        )
+
     if kind == "url_exact":
         expected = str(spec["value"])
         actual = view.url_path or view.url
         return _result(
             spec,
-            PASSED if actual == expected else FAILED,
+            INCONCLUSIVE if not actual else PASSED if actual == expected else FAILED,
             expected=expected,
             observed=actual,
             evidence="observations[-1].url_path",
@@ -564,7 +600,7 @@ def evaluate_assertion(spec: dict[str, Any], view: _ObservationView) -> Assertio
         actual = view.url_path or view.url
         return _result(
             spec,
-            PASSED if re.search(pattern, actual) else FAILED,
+            INCONCLUSIVE if not actual else PASSED if re.search(pattern, actual) else FAILED,
             expected=f"matches {pattern}",
             observed=actual,
             evidence="observations[-1].url_path",
@@ -635,6 +671,15 @@ def evaluate_assertion(spec: dict[str, Any], view: _ObservationView) -> Assertio
             )
         # The adapter records a bounded label (<=60 chars), never a field value.
         label = str(element.get("name") or "")
+        if len(label) >= 60 and needle not in label:
+            return _result(
+                spec,
+                INCONCLUSIVE,
+                expected=needle,
+                observed=label,
+                evidence="observations[-1].visible_elements.name",
+                detail="element label may be truncated; absence is not established",
+            )
         if not label:
             return _result(
                 spec,
@@ -702,7 +747,25 @@ def evaluate_assertion(spec: dict[str, Any], view: _ObservationView) -> Assertio
     if kind == "page_state":
         field_name = str(spec.get("field") or "title")
         needle = str(spec["value"])
+        source_key = "text_excerpt" if field_name == "text" else field_name
+        if source_key not in view.raw:
+            return _result(
+                spec,
+                INCONCLUSIVE,
+                expected=f"{field_name} contains {needle!r}",
+                observed="field unavailable",
+                evidence=f"observations[-1].{source_key}",
+            )
         source = {"title": view.title, "url_path": view.url_path, "text": view.text}[field_name]
+        if field_name == "text" and needle not in source and len(source) >= 3000:
+            return _result(
+                spec,
+                INCONCLUSIVE,
+                expected=f"text contains {needle!r}",
+                observed=source[:120],
+                evidence="observations[-1].text_excerpt",
+                detail="text excerpt may be truncated; absence cannot establish a negative",
+            )
         return _result(
             spec,
             PASSED if needle in source else FAILED,
@@ -823,13 +886,26 @@ def evaluate_assertion(spec: dict[str, Any], view: _ObservationView) -> Assertio
     if kind == "multi_step_goal":
         history = view.raw.get("observations")
         children = []
+        previous_index = -1
         if isinstance(history, list):
             for step in spec["assertions"]:
                 ref = str(step.get("observation_ref") or "")
-                target = next(
-                    (x for x in history if isinstance(x, dict) and x.get("observation_ref") == ref),
+                selected = next(
+                    (
+                        (index, row)
+                        for index, row in enumerate(history)
+                        if isinstance(row, dict)
+                        and (
+                            index > previous_index
+                            and evaluate_assertion(step["assertion"], _ObservationView(row)).verdict
+                            == PASSED
+                            if step.get("match") == "first_after_previous"
+                            else row.get("observation_ref") == ref
+                        )
+                    ),
                     None,
                 )
+                target = selected[1] if selected is not None else None
                 if target is None:
                     children.append(
                         _result(
@@ -840,7 +916,20 @@ def evaluate_assertion(spec: dict[str, Any], view: _ObservationView) -> Assertio
                             evidence="observations[*].observation_ref",
                         )
                     )
+                elif selected is not None and selected[0] <= previous_index:
+                    children.append(
+                        _result(
+                            step,
+                            FAILED,
+                            expected="strict observation order",
+                            observed=ref,
+                            evidence="observations[*].observation_ref",
+                            detail="multi-step observations are out of order or reused",
+                        )
+                    )
                 else:
+                    assert selected is not None
+                    previous_index = selected[0]
                     assertion = step.get("assertion", step)
                     target_view = _ObservationView(target)
                     child = evaluate_assertion(assertion, target_view)
@@ -890,6 +979,15 @@ def evaluate_assertion(spec: dict[str, Any], view: _ObservationView) -> Assertio
     if kind == "dynamic_match":
         pattern = str(spec["pattern"])
         matched = re.search(pattern, view.text) is not None
+        if "text_excerpt" not in view.raw or len(view.text) >= 3000:
+            return _result(
+                spec,
+                INCONCLUSIVE,
+                expected=f"matches {pattern}",
+                observed=view.text[:120],
+                evidence="observations[-1].text_excerpt",
+                detail="text excerpt may be truncated; use a structured element assertion",
+            )
         return _result(
             spec,
             PASSED if matched else FAILED,

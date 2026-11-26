@@ -1,0 +1,10 @@
+# npm.cmd ls --depth=0
+exit=0 duration=1.0s
+
+traceguard-web@0.1.0-m0 D:\桌面\TraceGuard\traceguard\apps\web
+├── @vitejs/plugin-vue@5.2.4
+├── typescript@5.9.3
+├── vite@6.4.6
+├── vue-tsc@2.2.12
+└── vue@3.5.45
+

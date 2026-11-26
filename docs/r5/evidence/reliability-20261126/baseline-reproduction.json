@@ -1,0 +1,10 @@
+{
+  "baseline": "f68de9b13aec7d553926385b5ae4b50833d59327",
+  "process_exit": 74,
+  "candidate_status": "PENDING_REVIEW",
+  "formal_files": [
+    "TC-CAND-263C99D1E8.json"
+  ],
+  "orphan_gap_reproduced": true,
+  "approval_inputs": "synthetic isolated test only"
+}

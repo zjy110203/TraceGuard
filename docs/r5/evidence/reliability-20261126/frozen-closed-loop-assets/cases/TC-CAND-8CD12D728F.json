@@ -1,0 +1,191 @@
+{
+  "case_id": "TC-CAND-8CD12D728F",
+  "version": 1,
+  "title": "compiled from exp_ba60414439eb",
+  "intent": {
+    "intent_id": "journey:login",
+    "description": "登录 TeamFlow 并进入项目列表",
+    "source_ref": "journey:login",
+    "goal": "登录 TeamFlow 并进入项目列表",
+    "expected_outcomes": [
+      "项目列表"
+    ],
+    "target": "/projects",
+    "required_assertions": [],
+    "constraints": [
+      "只允许访问 base_url 的 origin，禁止跳转到外部站点",
+      "凭据只从受信配置读取，动作记录必须脱敏",
+      "每次探索必须有步数与时长上限，超限即停止"
+    ]
+  },
+  "steps": [
+    {
+      "step_id": "s1",
+      "action": "navigate",
+      "target": "http://127.0.0.1:64191/",
+      "value": "",
+      "expected": "",
+      "value_ref": ""
+    },
+    {
+      "step_id": "s2",
+      "action": "fill",
+      "target": "[data-testid=username]",
+      "value": "tester",
+      "expected": "",
+      "value_ref": ""
+    },
+    {
+      "step_id": "s3",
+      "action": "fill",
+      "target": "[data-testid=password]",
+      "value": "",
+      "expected": "",
+      "value_ref": "teamflow.password"
+    },
+    {
+      "step_id": "s4",
+      "action": "click",
+      "target": "[data-testid=login-submit]",
+      "value": "",
+      "expected": "",
+      "value_ref": ""
+    },
+    {
+      "step_id": "s5",
+      "action": "assert_visible",
+      "target": "[data-testid=new-project-link]",
+      "value": "",
+      "expected": "",
+      "value_ref": ""
+    },
+    {
+      "step_id": "s6",
+      "action": "assert_not_visible",
+      "target": "[data-testid=login-submit]",
+      "value": "",
+      "expected": "",
+      "value_ref": ""
+    },
+    {
+      "step_id": "s7",
+      "action": "assert_text",
+      "target": "body",
+      "value": "项目列表",
+      "expected": "",
+      "value_ref": ""
+    }
+  ],
+  "assertions": [
+    {
+      "assertion_id": "a1",
+      "description": "页面到达目标路径 /projects",
+      "required": true,
+      "source_ref": "",
+      "notes": []
+    },
+    {
+      "assertion_id": "a2",
+      "description": "目标页面元素 new-project-link 可见",
+      "required": true,
+      "source_ref": "",
+      "notes": []
+    },
+    {
+      "assertion_id": "a3",
+      "description": "来源页面控件 login-submit 已不再显示（状态已完成切换）",
+      "required": true,
+      "source_ref": "",
+      "notes": []
+    },
+    {
+      "assertion_id": "a4",
+      "description": "页面显示预期结果：项目列表",
+      "required": true,
+      "source_ref": "",
+      "notes": []
+    }
+  ],
+  "oracle_bindings": [
+    {
+      "assertion_id": "a1",
+      "primary": {
+        "oracle_id": "o-url-path",
+        "source_type": "ui",
+        "source_ref": "ui.url_path",
+        "expected": "PASSED",
+        "version": "1.0.0",
+        "source": "intent.target (human-declared); observed in exp_ba60414439eb",
+        "approved_by": "journey-reviewer",
+        "approved": true,
+        "expected_value": "/projects"
+      },
+      "supporting": [],
+      "adjudication_rule": "frozen_fallback_inconclusive_on_conflict"
+    },
+    {
+      "assertion_id": "a2",
+      "primary": {
+        "oracle_id": "o-s5-visible",
+        "source_type": "ui",
+        "source_ref": "ui.s5.passed",
+        "expected": "PASSED",
+        "version": "1.0.0",
+        "source": "observed in trace exp_ba60414439eb after /projects",
+        "approved_by": "journey-reviewer",
+        "approved": true,
+        "expected_value": true
+      },
+      "supporting": [],
+      "adjudication_rule": "frozen_fallback_inconclusive_on_conflict"
+    },
+    {
+      "assertion_id": "a3",
+      "primary": {
+        "oracle_id": "o-s6-hidden",
+        "source_type": "ui",
+        "source_ref": "ui.s6.passed",
+        "expected": "PASSED",
+        "version": "1.0.0",
+        "source": "observed before/after transition in exp_ba60414439eb",
+        "approved_by": "journey-reviewer",
+        "approved": true,
+        "expected_value": true
+      },
+      "supporting": [],
+      "adjudication_rule": "frozen_fallback_inconclusive_on_conflict"
+    },
+    {
+      "assertion_id": "a4",
+      "primary": {
+        "oracle_id": "o-s7-text",
+        "source_type": "ui",
+        "source_ref": "ui.s7.passed",
+        "expected": "PASSED",
+        "version": "1.0.0",
+        "source": "intent.expected_outcomes (human) + observed text",
+        "approved_by": "journey-reviewer",
+        "approved": true,
+        "expected_value": true
+      },
+      "supporting": [],
+      "adjudication_rule": "frozen_fallback_inconclusive_on_conflict"
+    }
+  ],
+  "preconditions": [],
+  "postconditions": [],
+  "data_refs": [
+    {
+      "ref_id": "teamflow.password",
+      "locator": "[data-testid=password]",
+      "value": ""
+    }
+  ],
+  "cleanup": {
+    "strategy": "eval_reset",
+    "reset_endpoint": "/__eval__/data/reset"
+  },
+  "compiled_from": "compiler:1.2.0",
+  "approved_by": "journey-reviewer:REV-JOURNEY-001",
+  "_candidate_transaction": "fc8e755fc93c45d596ddadec9994f2a3"
+}

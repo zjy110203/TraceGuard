@@ -1,0 +1,77 @@
+# python.exe -m pytest -q --basetemp=D:\桌面\TraceGuard\traceguard\.traceguard-tmp\r5\verify\20261126-211640-all-27972\pytest-tmp
+exit=1 duration=871.0s
+
+........................................................................ [  8%]
+........................................................................ [ 16%]
+........................................................................ [ 24%]
+.....................F.................................................. [ 32%]
+........................................................................ [ 40%]
+.....................s.................................................. [ 48%]
+........................................................................ [ 56%]
+........................................................................ [ 64%]
+........................................................................ [ 72%]
+........................................................................ [ 80%]
+........................................................................ [ 88%]
+........................................................................ [ 96%]
+...................................                                      [100%]
+================================== FAILURES ===================================
+___________ test_one_client_disconnect_does_not_disturb_the_others ____________
+
+concurrent_platform = {'api': 'http://127.0.0.1:62518', 'app': <fastapi.applications.FastAPI object at 0x000001E636C020D0>, 'work': WindowsPath('D:/桌面/TraceGuard/traceguard/.traceguard-tmp/r5/verify/20261126-211640-all-27972/pytest-tmp/concurrency0')}
+
+    def test_one_client_disconnect_does_not_disturb_the_others(
+        concurrent_platform: dict[str, Any],
+    ) -> None:
+        """Losing one subscriber must not stall or truncate the surviving stream."""
+        api = concurrent_platform["api"]
+        bus = concurrent_platform["app"].state.orchestrator.bus
+        tag = f"disconnect-{time.time_ns()}"
+    
+        staying = _Recorder(
+            f"{api}/api/v1/events/stream",
+            stop_when=lambda frames: len([f for f in frames if f["payload"].get("tag") == tag]) >= 6,
+            max_seconds=60,
+        )
+        leaving = _Recorder(
+            f"{api}/api/v1/events/stream",
+            stop_when=lambda frames: any(f["payload"].get("tag") == tag for f in frames),
+            max_seconds=60,
+        )
+        baseline = bus.subscriber_count
+        staying.start()
+        leaving.start()
+        assert staying.ready.wait(20) and leaving.ready.wait(20)
+>       _wait_until(lambda: bus.subscriber_count >= baseline + 2, 20, "both clients subscribed")
+
+tests\test_concurrency_reliability.py:294: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+predicate = <function test_one_client_disconnect_does_not_disturb_the_others.<locals>.<lambda> at 0x000001E636FC4040>
+timeout = 20, what = 'both clients subscribed'
+
+    def _wait_until(predicate: Callable[[], bool], timeout: float, what: str) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():
+                return
+            time.sleep(0.05)
+>       raise AssertionError(f"timed out after {timeout}s waiting for {what}")
+E       AssertionError: timed out after 20s waiting for both clients subscribed
+
+tests\test_concurrency_reliability.py:63: AssertionError
+---------------------------- Captured stdout call -----------------------------
+21:21:15 INFO     [httpx] HTTP Request: GET http://127.0.0.1:62518/api/v1/events/stream "HTTP/1.1 200 OK"
+21:21:15 INFO     [httpx] HTTP Request: GET http://127.0.0.1:62518/api/v1/events/stream "HTTP/1.1 200 OK"
+------------------------------ Captured log call ------------------------------
+INFO     httpx:_client.py:1025 HTTP Request: GET http://127.0.0.1:62518/api/v1/events/stream "HTTP/1.1 200 OK"
+INFO     httpx:_client.py:1025 HTTP Request: GET http://127.0.0.1:62518/api/v1/events/stream "HTTP/1.1 200 OK"
+============================== warnings summary ===============================
+.venv\Lib\site-packages\fastapi\testclient.py:1
+  D:\桌面\TraceGuard\traceguard\.venv\Lib\site-packages\fastapi\testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+SKIPPED [1] tests\test_db_isolation.py:422: cannot create a symlink in this environment: OSError: [WinError 1314] 客户端没有所需的特权。: 'D:\\桌面\\TraceGuard\\traceguard\\data\\traceguard.db' -> 'D:\\桌面\\TraceGuard\\traceguard\\.traceguard-tmp\\r5\\verify\\20261126-211640-all-27972\\pytest-tmp\\test_symlink_into_data_is_reje0\\innocent.db'
+FAILED tests/test_concurrency_reliability.py::test_one_client_disconnect_does_not_disturb_the_others
+1 failed, 897 passed, 1 skipped, 1 warning in 868.16s (0:14:28)

@@ -1,0 +1,1144 @@
+{
+  "scenario_id": "TC-CAND-8CD12D728F",
+  "chain_id": "chain_20261126135512203599_TC-CAND-8CD12D728F",
+  "stages": [
+    {
+      "name": "testcase",
+      "status": "OK",
+      "detail": "TC-CAND-8CD12D728F v3, 4 assertion(s)",
+      "at": "2026-11-26T13:55:12.203660+00:00"
+    },
+    {
+      "name": "cleanup_pre",
+      "status": "OK",
+      "detail": "strategy=eval_reset: eval control plane reachable",
+      "at": "2026-11-26T13:55:12.268269+00:00"
+    },
+    {
+      "name": "execution",
+      "status": "OK",
+      "detail": "verdict=FAILED",
+      "at": "2026-11-26T13:55:33.474925+00:00"
+    },
+    {
+      "name": "verdict",
+      "status": "OK",
+      "detail": "FAILED/COMPLETED",
+      "at": "2026-11-26T13:55:33.481471+00:00"
+    },
+    {
+      "name": "graph",
+      "status": "OK",
+      "detail": "8 evidence nodes linked",
+      "at": "2026-11-26T13:55:33.532546+00:00"
+    },
+    {
+      "name": "diagnosis",
+      "status": "OK",
+      "detail": "PROBABLE/TEST_ASSET_ISSUE",
+      "at": "2026-11-26T13:55:33.538103+00:00"
+    },
+    {
+      "name": "repair",
+      "status": "OK",
+      "detail": "proposal_required=True",
+      "at": "2026-11-26T13:55:33.547733+00:00"
+    },
+    {
+      "name": "cleanup",
+      "status": "OK",
+      "detail": "/__eval__/data/reset -> 200",
+      "at": "2026-11-26T13:55:33.568275+00:00"
+    },
+    {
+      "name": "event_persistence",
+      "status": "OK",
+      "detail": "written=25 duplicates=0 failures=0",
+      "at": "2026-11-26T13:55:33.698299+00:00"
+    },
+    {
+      "name": "evidence_persistence",
+      "status": "OK",
+      "detail": "written=15 duplicates=0 failures=0",
+      "at": "2026-11-26T13:55:33.698307+00:00"
+    },
+    {
+      "name": "event_persistence",
+      "status": "OK",
+      "detail": "written=25 duplicates=0 failures=0",
+      "at": "2026-11-26T13:55:33.698315+00:00"
+    },
+    {
+      "name": "evidence_persistence",
+      "status": "OK",
+      "detail": "written=15 duplicates=0 failures=0",
+      "at": "2026-11-26T13:55:33.703811+00:00"
+    }
+  ],
+  "execution": {
+    "run_id": "run_20261126135512181421_93ab78",
+    "execution_status": "COMPLETED",
+    "test_verdict": "FAILED",
+    "evidence_count": 15,
+    "event_count": 25,
+    "failed_steps": [
+      "s4",
+      "s5",
+      "s7"
+    ],
+    "blocked": false,
+    "blocked_reason": ""
+  },
+  "diagnosis": {
+    "diagnosis_id": "dx-TC-CAND-8CD12D728F",
+    "run_id": "run_20261126135512181421_93ab78",
+    "symptom": "test_verdict=FAILED; assertions_failed=a1,a2,a4; steps_failed=s4,s5,s7",
+    "failure_domain": "TEST_ASSET",
+    "failure_mechanism": "LOCATOR",
+    "root_causes": [],
+    "contributing_factors": [],
+    "flaky_characteristic": "NOT_DETERMINED",
+    "diagnosis_status": "PROBABLE",
+    "disposition": "TEST_ASSET_ISSUE",
+    "hypotheses": [
+      {
+        "hypothesis_id": "h-locator-missing",
+        "statement": "failed selector has no matching node in the live DOM",
+        "failure_domain": "TEST_ASSET",
+        "failure_mechanism": "LOCATOR",
+        "status": "SUPPORTED",
+        "supporting": [
+          {
+            "ref_id": "evd_12fc4fb22ce8",
+            "source": "evidence",
+            "role": "support",
+            "detail": ""
+          },
+          {
+            "ref_id": "evd_b5f47891193e",
+            "source": "evidence",
+            "role": "support",
+            "detail": ""
+          }
+        ],
+        "contradicting": [],
+        "confirmation_rule": "R-LOC-002: failed step + timeout + zero DOM matches; supports locator drift, does not prove a product root cause"
+      }
+    ],
+    "notes": [
+      "diagnosis derived by deterministic rules; no LLM decided CONFIRMED",
+      "hypothesis_count=1 confirmed=0 supported=1"
+    ]
+  },
+  "probe_summary": {},
+  "disposition": "TEST_ASSET_ISSUE",
+  "repair": {
+    "proposal_required": true
+  },
+  "completed": true,
+  "cancelled": false,
+  "cleanup": {
+    "strategy": "eval_reset",
+    "endpoint": "/__eval__/data/reset",
+    "allowed": true,
+    "reason": "eval control plane reachable",
+    "done": true,
+    "applied": true,
+    "status_code": 200
+  },
+  "evidence": [
+    {
+      "evidence_id": "evd_97fe2cc770bb",
+      "evidence_type": "screenshot",
+      "raw": true,
+      "source": "browser:s1",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s1",
+      "recorded_at": "2026-11-26T13:55:13.122261+00:00",
+      "summary": "screenshot navigate (12188 bytes)",
+      "attachment_ref": "screenshots/run_20261126135512181421_93ab78_s1_navigate.png",
+      "integrity_check": "sha256:6e21221ca47488c141ea85bb9221c99f56a4ef646adfa3ccca47da32808cc16f",
+      "source_trust": "observed",
+      "derived_from": [],
+      "redacted": false,
+      "retention": "run_scoped",
+      "payload": {
+        "bytes": 12188,
+        "digest": "6e21221ca47488c141ea85bb9221c99f56a4ef646adfa3ccca47da32808cc16f",
+        "blob": {
+          "key": "6e21221ca47488c141ea85bb9221c99f56a4ef646adfa3ccca47da32808cc16f",
+          "size": 12188,
+          "sha256": "sha256:6e21221ca47488c141ea85bb9221c99f56a4ef646adfa3ccca47da32808cc16f"
+        },
+        "byte_length": 12188,
+        "binary_sha256": "sha256:6e21221ca47488c141ea85bb9221c99f56a4ef646adfa3ccca47da32808cc16f"
+      }
+    },
+    {
+      "evidence_id": "evd_3531e67cc627",
+      "evidence_type": "dom_snapshot",
+      "raw": true,
+      "source": "browser:s1",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s1",
+      "recorded_at": "2026-11-26T13:55:13.136085+00:00",
+      "summary": "DOM text snapshot (40 chars)",
+      "attachment_ref": "",
+      "integrity_check": "",
+      "source_trust": "observed",
+      "derived_from": [],
+      "redacted": false,
+      "retention": "run_scoped",
+      "payload": {
+        "text": "TeamFlow\n\n受控被测应用 · 项目协作最小闭环\n\n用户名 \n密码 \n登录"
+      }
+    },
+    {
+      "evidence_id": "evd_1f2594885eb7",
+      "evidence_type": "screenshot",
+      "raw": true,
+      "source": "browser:s2",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s2",
+      "recorded_at": "2026-11-26T13:55:13.167887+00:00",
+      "summary": "screenshot fill (12828 bytes)",
+      "attachment_ref": "screenshots/run_20261126135512181421_93ab78_s2_fill.png",
+      "integrity_check": "sha256:a04d3fae13ac100356de783398558c26a3a920803081c3624b2e267ec74c836a",
+      "source_trust": "observed",
+      "derived_from": [],
+      "redacted": false,
+      "retention": "run_scoped",
+      "payload": {
+        "bytes": 12828,
+        "digest": "a04d3fae13ac100356de783398558c26a3a920803081c3624b2e267ec74c836a",
+        "blob": {
+          "key": "a04d3fae13ac100356de783398558c26a3a920803081c3624b2e267ec74c836a",
+          "size": 12828,
+          "sha256": "sha256:a04d3fae13ac100356de783398558c26a3a920803081c3624b2e267ec74c836a"
+        },
+        "byte_length": 12828,
+        "binary_sha256": "sha256:a04d3fae13ac100356de783398558c26a3a920803081c3624b2e267ec74c836a"
+      }
+    },
+    {
+      "evidence_id": "evd_dd65efca2245",
+      "evidence_type": "dom_snapshot",
+      "raw": true,
+      "source": "browser:s2",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s2",
+      "recorded_at": "2026-11-26T13:55:13.169541+00:00",
+      "summary": "DOM text snapshot (40 chars)",
+      "attachment_ref": "",
+      "integrity_check": "",
+      "source_trust": "observed",
+      "derived_from": [],
+      "redacted": false,
+      "retention": "run_scoped",
+      "payload": {
+        "text": "TeamFlow\n\n受控被测应用 · 项目协作最小闭环\n\n用户名 \n密码 \n登录"
+      }
+    },
+    {
+      "evidence_id": "evd_b5d805732006",
+      "evidence_type": "screenshot",
+      "raw": true,
+      "source": "browser:s3",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s3",
+      "recorded_at": "2026-11-26T13:55:13.199297+00:00",
+      "summary": "screenshot fill (12779 bytes)",
+      "attachment_ref": "screenshots/run_20261126135512181421_93ab78_s3_fill.png",
+      "integrity_check": "sha256:ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff",
+      "source_trust": "observed",
+      "derived_from": [],
+      "redacted": false,
+      "retention": "run_scoped",
+      "payload": {
+        "bytes": 12779,
+        "digest": "ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff",
+        "blob": {
+          "key": "ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff",
+          "size": 12779,
+          "sha256": "sha256:ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff"
+        },
+        "byte_length": 12779,
+        "binary_sha256": "sha256:ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff"
+      }
+    },
+    {
+      "evidence_id": "evd_81c06d0c73ca",
+      "evidence_type": "dom_snapshot",
+      "raw": true,
+      "source": "browser:s3",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s3",
+      "recorded_at": "2026-11-26T13:55:13.201230+00:00",
+      "summary": "DOM text snapshot (40 chars)",
+      "attachment_ref": "",
+      "integrity_check": "",
+      "source_trust": "observed",
+      "derived_from": [],
+      "redacted": false,
+      "retention": "run_scoped",
+      "payload": {
+        "text": "TeamFlow\n\n受控被测应用 · 项目协作最小闭环\n\n用户名 \n密码 \n登录"
+      }
+    },
+    {
+      "evidence_id": "evd_12fc4fb22ce8",
+      "evidence_type": "locator_failure",
+      "raw": true,
+      "source": "browser:s4",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s4",
+      "recorded_at": "2026-11-26T13:55:23.207563+00:00",
+      "summary": "locator timeout: 0 matching nodes",
+      "attachment_ref": "",
+      "integrity_check": "",
+      "source_trust": "observed",
+      "derived_from": [],
+      "redacted": false,
+      "retention": "run_scoped",
+      "payload": {
+        "selector": "[data-testid=login-submit]",
+        "match_count": 0,
+        "error_type": "TimeoutError",
+        "error": "TimeoutError: Locator.click: Timeout 10000ms exceeded.\nCall log:\n  - waiting for locator(\"[data-testid=login-submit]\")\n"
+      }
+    },
+    {
+      "evidence_id": "evd_212db61a8e2f",
+      "evidence_type": "screenshot",
+      "raw": true,
+      "source": "browser:s4",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s4",
+      "recorded_at": "2026-11-26T13:55:23.244633+00:00",
+      "summary": "screenshot failure (12779 bytes)",
+      "attachment_ref": "screenshots/run_20261126135512181421_93ab78_s4_failure.png",
+      "integrity_check": "sha256:ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff",
+      "source_trust": "observed",
+      "derived_from": [],
+      "redacted": false,
+      "retention": "run_scoped",
+      "payload": {
+        "bytes": 12779,
+        "digest": "ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff",
+        "blob": {
+          "key": "ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff",
+          "size": 12779,
+          "sha256": "sha256:ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff"
+        },
+        "byte_length": 12779,
+        "binary_sha256": "sha256:ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff"
+      }
+    },
+    {
+      "evidence_id": "evd_35fb606a6a92",
+      "evidence_type": "dom_snapshot",
+      "raw": true,
+      "source": "browser:s4",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s4",
+      "recorded_at": "2026-11-26T13:55:23.246272+00:00",
+      "summary": "DOM text snapshot (40 chars)",
+      "attachment_ref": "",
+      "integrity_check": "",
+      "source_trust": "observed",
+      "derived_from": [],
+      "redacted": false,
+      "retention": "run_scoped",
+      "payload": {
+        "text": "TeamFlow\n\n受控被测应用 · 项目协作最小闭环\n\n用户名 \n密码 \n登录"
+      }
+    },
+    {
+      "evidence_id": "evd_b5f47891193e",
+      "evidence_type": "locator_failure",
+      "raw": true,
+      "source": "browser:s5",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s5",
+      "recorded_at": "2026-11-26T13:55:33.251572+00:00",
+      "summary": "locator timeout: 0 matching nodes",
+      "attachment_ref": "",
+      "integrity_check": "",
+      "source_trust": "observed",
+      "derived_from": [],
+      "redacted": false,
+      "retention": "run_scoped",
+      "payload": {
+        "selector": "[data-testid=new-project-link]",
+        "match_count": 0,
+        "error_type": "TimeoutError",
+        "error": "TimeoutError: Locator.wait_for: Timeout 10000ms exceeded.\nCall log:\n  - waiting for locator(\"[data-testid=new-project-link]\") to be visible\n"
+      }
+    },
+    {
+      "evidence_id": "evd_8b18a84ad9b4",
+      "evidence_type": "screenshot",
+      "raw": true,
+      "source": "browser:s5",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s5",
+      "recorded_at": "2026-11-26T13:55:33.291163+00:00",
+      "summary": "screenshot failure (12779 bytes)",
+      "attachment_ref": "screenshots/run_20261126135512181421_93ab78_s5_failure.png",
+      "integrity_check": "sha256:ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff",
+      "source_trust": "observed",
+      "derived_from": [],
+      "redacted": false,
+      "retention": "run_scoped",
+      "payload": {
+        "bytes": 12779,
+        "digest": "ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff",
+        "blob": {
+          "key": "ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff",
+          "size": 12779,
+          "sha256": "sha256:ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff"
+        },
+        "byte_length": 12779,
+        "binary_sha256": "sha256:ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff"
+      }
+    },
+    {
+      "evidence_id": "evd_4775c2c5c2ff",
+      "evidence_type": "dom_snapshot",
+      "raw": true,
+      "source": "browser:s5",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s5",
+      "recorded_at": "2026-11-26T13:55:33.293555+00:00",
+      "summary": "DOM text snapshot (40 chars)",
+      "attachment_ref": "",
+      "integrity_check": "",
+      "source_trust": "observed",
+      "derived_from": [],
+      "redacted": false,
+      "retention": "run_scoped",
+      "payload": {
+        "text": "TeamFlow\n\n受控被测应用 · 项目协作最小闭环\n\n用户名 \n密码 \n登录"
+      }
+    },
+    {
+      "evidence_id": "evd_58d54f7c5981",
+      "evidence_type": "screenshot",
+      "raw": true,
+      "source": "browser:s6",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s6",
+      "recorded_at": "2026-11-26T13:55:33.321057+00:00",
+      "summary": "screenshot assert_not_visible (12779 bytes)",
+      "attachment_ref": "screenshots/run_20261126135512181421_93ab78_s6_assert_not_visible.png",
+      "integrity_check": "sha256:ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff",
+      "source_trust": "observed",
+      "derived_from": [],
+      "redacted": false,
+      "retention": "run_scoped",
+      "payload": {
+        "bytes": 12779,
+        "digest": "ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff",
+        "blob": {
+          "key": "ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff",
+          "size": 12779,
+          "sha256": "sha256:ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff"
+        },
+        "byte_length": 12779,
+        "binary_sha256": "sha256:ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff"
+      }
+    },
+    {
+      "evidence_id": "evd_a08437b322d1",
+      "evidence_type": "dom_snapshot",
+      "raw": true,
+      "source": "browser:s6",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s6",
+      "recorded_at": "2026-11-26T13:55:33.322689+00:00",
+      "summary": "DOM text snapshot (40 chars)",
+      "attachment_ref": "",
+      "integrity_check": "",
+      "source_trust": "observed",
+      "derived_from": [],
+      "redacted": false,
+      "retention": "run_scoped",
+      "payload": {
+        "text": "TeamFlow\n\n受控被测应用 · 项目协作最小闭环\n\n用户名 \n密码 \n登录"
+      }
+    },
+    {
+      "evidence_id": "evd_6a4ec9fb69a4",
+      "evidence_type": "network_response",
+      "raw": true,
+      "source": "browser:network",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": null,
+      "recorded_at": "2026-11-26T13:55:33.324945+00:00",
+      "summary": "0 API responses observed",
+      "attachment_ref": "",
+      "integrity_check": "",
+      "source_trust": "observed",
+      "derived_from": [],
+      "redacted": false,
+      "retention": "run_scoped",
+      "payload": {
+        "responses": []
+      }
+    }
+  ],
+  "events": [
+    {
+      "event_id": "evt_3ed0ef00f2f2",
+      "event_type": "run.started",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": null,
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_c800c889",
+      "sequence": 1,
+      "occurred_at": "2026-11-26T13:55:12.274617+00:00",
+      "recorded_at": "2026-11-26T13:55:12.274617+00:00",
+      "idempotency_key": "run_20261126135512181421_93ab78:local_runner_c800c889:1",
+      "correlation_id": "",
+      "payload": {
+        "case": "TC-CAND-8CD12D728F",
+        "version": 3
+      }
+    },
+    {
+      "event_id": "evt_7a9815f78bde",
+      "event_type": "step.started",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s1",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_c800c889",
+      "sequence": 2,
+      "occurred_at": "2026-11-26T13:55:12.745538+00:00",
+      "recorded_at": "2026-11-26T13:55:12.745538+00:00",
+      "idempotency_key": "run_20261126135512181421_93ab78:local_runner_c800c889:2",
+      "correlation_id": "",
+      "payload": {
+        "action": "navigate",
+        "target": "http://127.0.0.1:64191/"
+      }
+    },
+    {
+      "event_id": "evt_016471288de6",
+      "event_type": "evidence.screenshot.captured",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s1",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_c800c889",
+      "sequence": 3,
+      "occurred_at": "2026-11-26T13:55:13.122283+00:00",
+      "recorded_at": "2026-11-26T13:55:13.122283+00:00",
+      "idempotency_key": "run_20261126135512181421_93ab78:local_runner_c800c889:3",
+      "correlation_id": "",
+      "payload": {
+        "evidence_id": "evd_97fe2cc770bb",
+        "integrity_check": "sha256:6e21221ca47488c141ea85bb9221c99f56a4ef646adfa3ccca47da32808cc16f"
+      }
+    },
+    {
+      "event_id": "evt_4a4296c78e1d",
+      "event_type": "step.completed",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s1",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_c800c889",
+      "sequence": 4,
+      "occurred_at": "2026-11-26T13:55:13.136106+00:00",
+      "recorded_at": "2026-11-26T13:55:13.136106+00:00",
+      "idempotency_key": "run_20261126135512181421_93ab78:local_runner_c800c889:4",
+      "correlation_id": "",
+      "payload": {
+        "action": "navigate",
+        "evidence_ids": [
+          "evd_97fe2cc770bb",
+          "evd_3531e67cc627"
+        ]
+      }
+    },
+    {
+      "event_id": "evt_e5e0a8958719",
+      "event_type": "step.started",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s2",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_c800c889",
+      "sequence": 5,
+      "occurred_at": "2026-11-26T13:55:13.136704+00:00",
+      "recorded_at": "2026-11-26T13:55:13.136704+00:00",
+      "idempotency_key": "run_20261126135512181421_93ab78:local_runner_c800c889:5",
+      "correlation_id": "",
+      "payload": {
+        "action": "fill",
+        "target": "[data-testid=username]"
+      }
+    },
+    {
+      "event_id": "evt_df232366a55d",
+      "event_type": "evidence.screenshot.captured",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s2",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_c800c889",
+      "sequence": 6,
+      "occurred_at": "2026-11-26T13:55:13.167907+00:00",
+      "recorded_at": "2026-11-26T13:55:13.167907+00:00",
+      "idempotency_key": "run_20261126135512181421_93ab78:local_runner_c800c889:6",
+      "correlation_id": "",
+      "payload": {
+        "evidence_id": "evd_1f2594885eb7",
+        "integrity_check": "sha256:a04d3fae13ac100356de783398558c26a3a920803081c3624b2e267ec74c836a"
+      }
+    },
+    {
+      "event_id": "evt_2aa9f9d53213",
+      "event_type": "step.completed",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s2",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_c800c889",
+      "sequence": 7,
+      "occurred_at": "2026-11-26T13:55:13.169560+00:00",
+      "recorded_at": "2026-11-26T13:55:13.169560+00:00",
+      "idempotency_key": "run_20261126135512181421_93ab78:local_runner_c800c889:7",
+      "correlation_id": "",
+      "payload": {
+        "action": "fill",
+        "evidence_ids": [
+          "evd_1f2594885eb7",
+          "evd_dd65efca2245"
+        ]
+      }
+    },
+    {
+      "event_id": "evt_a9b88f2205c5",
+      "event_type": "step.started",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s3",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_c800c889",
+      "sequence": 8,
+      "occurred_at": "2026-11-26T13:55:13.170092+00:00",
+      "recorded_at": "2026-11-26T13:55:13.170092+00:00",
+      "idempotency_key": "run_20261126135512181421_93ab78:local_runner_c800c889:8",
+      "correlation_id": "",
+      "payload": {
+        "action": "fill",
+        "target": "[data-testid=password]"
+      }
+    },
+    {
+      "event_id": "evt_301b0a4bb4b6",
+      "event_type": "evidence.screenshot.captured",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s3",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_c800c889",
+      "sequence": 9,
+      "occurred_at": "2026-11-26T13:55:13.199321+00:00",
+      "recorded_at": "2026-11-26T13:55:13.199321+00:00",
+      "idempotency_key": "run_20261126135512181421_93ab78:local_runner_c800c889:9",
+      "correlation_id": "",
+      "payload": {
+        "evidence_id": "evd_b5d805732006",
+        "integrity_check": "sha256:ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff"
+      }
+    },
+    {
+      "event_id": "evt_ec849bf17d12",
+      "event_type": "step.completed",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s3",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_c800c889",
+      "sequence": 10,
+      "occurred_at": "2026-11-26T13:55:13.201248+00:00",
+      "recorded_at": "2026-11-26T13:55:13.201248+00:00",
+      "idempotency_key": "run_20261126135512181421_93ab78:local_runner_c800c889:10",
+      "correlation_id": "",
+      "payload": {
+        "action": "fill",
+        "evidence_ids": [
+          "evd_b5d805732006",
+          "evd_81c06d0c73ca"
+        ]
+      }
+    },
+    {
+      "event_id": "evt_075892d011e1",
+      "event_type": "step.started",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s4",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_c800c889",
+      "sequence": 11,
+      "occurred_at": "2026-11-26T13:55:13.201903+00:00",
+      "recorded_at": "2026-11-26T13:55:13.201903+00:00",
+      "idempotency_key": "run_20261126135512181421_93ab78:local_runner_c800c889:11",
+      "correlation_id": "",
+      "payload": {
+        "action": "click",
+        "target": "[data-testid=login-submit]"
+      }
+    },
+    {
+      "event_id": "evt_90b3db70f8df",
+      "event_type": "evidence.screenshot.captured",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s4",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_c800c889",
+      "sequence": 12,
+      "occurred_at": "2026-11-26T13:55:23.244655+00:00",
+      "recorded_at": "2026-11-26T13:55:23.244655+00:00",
+      "idempotency_key": "run_20261126135512181421_93ab78:local_runner_c800c889:12",
+      "correlation_id": "",
+      "payload": {
+        "evidence_id": "evd_212db61a8e2f",
+        "integrity_check": "sha256:ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff"
+      }
+    },
+    {
+      "event_id": "evt_4eff54bf5ea0",
+      "event_type": "step.error",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s4",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_c800c889",
+      "sequence": 13,
+      "occurred_at": "2026-11-26T13:55:23.246289+00:00",
+      "recorded_at": "2026-11-26T13:55:23.246289+00:00",
+      "idempotency_key": "run_20261126135512181421_93ab78:local_runner_c800c889:13",
+      "correlation_id": "",
+      "payload": {
+        "action": "click",
+        "error": "TimeoutError: Locator.click: Timeout 10000ms exceeded.\nCall log:\n  - waiting for locator(\"[data-testid=login-submit]\")\n",
+        "target_gone": false
+      }
+    },
+    {
+      "event_id": "evt_8576f3bcb688",
+      "event_type": "step.started",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s5",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_c800c889",
+      "sequence": 14,
+      "occurred_at": "2026-11-26T13:55:23.246923+00:00",
+      "recorded_at": "2026-11-26T13:55:23.246923+00:00",
+      "idempotency_key": "run_20261126135512181421_93ab78:local_runner_c800c889:14",
+      "correlation_id": "",
+      "payload": {
+        "action": "assert_visible",
+        "target": "[data-testid=new-project-link]"
+      }
+    },
+    {
+      "event_id": "evt_727ffd39116b",
+      "event_type": "evidence.screenshot.captured",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s5",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_c800c889",
+      "sequence": 15,
+      "occurred_at": "2026-11-26T13:55:33.291181+00:00",
+      "recorded_at": "2026-11-26T13:55:33.291181+00:00",
+      "idempotency_key": "run_20261126135512181421_93ab78:local_runner_c800c889:15",
+      "correlation_id": "",
+      "payload": {
+        "evidence_id": "evd_8b18a84ad9b4",
+        "integrity_check": "sha256:ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff"
+      }
+    },
+    {
+      "event_id": "evt_66dab45f3abc",
+      "event_type": "step.error",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s5",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_c800c889",
+      "sequence": 16,
+      "occurred_at": "2026-11-26T13:55:33.293574+00:00",
+      "recorded_at": "2026-11-26T13:55:33.293574+00:00",
+      "idempotency_key": "run_20261126135512181421_93ab78:local_runner_c800c889:16",
+      "correlation_id": "",
+      "payload": {
+        "action": "assert_visible",
+        "error": "TimeoutError: Locator.wait_for: Timeout 10000ms exceeded.\nCall log:\n  - waiting for locator(\"[data-testid=new-project-link]\") to be visible\n",
+        "target_gone": false
+      }
+    },
+    {
+      "event_id": "evt_a82ce52bf368",
+      "event_type": "step.started",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s6",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_c800c889",
+      "sequence": 17,
+      "occurred_at": "2026-11-26T13:55:33.294409+00:00",
+      "recorded_at": "2026-11-26T13:55:33.294409+00:00",
+      "idempotency_key": "run_20261126135512181421_93ab78:local_runner_c800c889:17",
+      "correlation_id": "",
+      "payload": {
+        "action": "assert_not_visible",
+        "target": "[data-testid=login-submit]"
+      }
+    },
+    {
+      "event_id": "evt_6ca5e6c4bf4b",
+      "event_type": "evidence.screenshot.captured",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s6",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_c800c889",
+      "sequence": 18,
+      "occurred_at": "2026-11-26T13:55:33.321077+00:00",
+      "recorded_at": "2026-11-26T13:55:33.321077+00:00",
+      "idempotency_key": "run_20261126135512181421_93ab78:local_runner_c800c889:18",
+      "correlation_id": "",
+      "payload": {
+        "evidence_id": "evd_58d54f7c5981",
+        "integrity_check": "sha256:ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff"
+      }
+    },
+    {
+      "event_id": "evt_9ec8c375b325",
+      "event_type": "step.completed",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s6",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_c800c889",
+      "sequence": 19,
+      "occurred_at": "2026-11-26T13:55:33.322705+00:00",
+      "recorded_at": "2026-11-26T13:55:33.322705+00:00",
+      "idempotency_key": "run_20261126135512181421_93ab78:local_runner_c800c889:19",
+      "correlation_id": "",
+      "payload": {
+        "action": "assert_not_visible",
+        "evidence_ids": [
+          "evd_58d54f7c5981",
+          "evd_a08437b322d1"
+        ]
+      }
+    },
+    {
+      "event_id": "evt_73a0bfd7c76d",
+      "event_type": "step.started",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s7",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_c800c889",
+      "sequence": 20,
+      "occurred_at": "2026-11-26T13:55:33.323626+00:00",
+      "recorded_at": "2026-11-26T13:55:33.323626+00:00",
+      "idempotency_key": "run_20261126135512181421_93ab78:local_runner_c800c889:20",
+      "correlation_id": "",
+      "payload": {
+        "action": "assert_text",
+        "target": "body"
+      }
+    },
+    {
+      "event_id": "evt_b772f0702611",
+      "event_type": "step.assertion.failed",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "s7",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_c800c889",
+      "sequence": 21,
+      "occurred_at": "2026-11-26T13:55:33.324915+00:00",
+      "recorded_at": "2026-11-26T13:55:33.324915+00:00",
+      "idempotency_key": "run_20261126135512181421_93ab78:local_runner_c800c889:21",
+      "correlation_id": "",
+      "payload": {
+        "detail": "expected '项目列表' in 'TeamFlow\n\n受控被测应用 · 项目协作最小闭环\n\n用户名 \n密码 \n登录'"
+      }
+    },
+    {
+      "event_id": "evt_08c860d78333",
+      "event_type": "oracle.evaluated",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "a1",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_c800c889",
+      "sequence": 22,
+      "occurred_at": "2026-11-26T13:55:33.461820+00:00",
+      "recorded_at": "2026-11-26T13:55:33.461820+00:00",
+      "idempotency_key": "run_20261126135512181421_93ab78:local_runner_c800c889:22",
+      "correlation_id": "",
+      "payload": {
+        "verdict": "FAILED",
+        "notes": [
+          "all oracle sources agree: FAILED"
+        ]
+      }
+    },
+    {
+      "event_id": "evt_5a233506bc58",
+      "event_type": "oracle.evaluated",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "a2",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_c800c889",
+      "sequence": 23,
+      "occurred_at": "2026-11-26T13:55:33.461866+00:00",
+      "recorded_at": "2026-11-26T13:55:33.461866+00:00",
+      "idempotency_key": "run_20261126135512181421_93ab78:local_runner_c800c889:23",
+      "correlation_id": "",
+      "payload": {
+        "verdict": "FAILED",
+        "notes": [
+          "all oracle sources agree: FAILED"
+        ]
+      }
+    },
+    {
+      "event_id": "evt_6673e13c4914",
+      "event_type": "oracle.evaluated",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "a3",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_c800c889",
+      "sequence": 24,
+      "occurred_at": "2026-11-26T13:55:33.461882+00:00",
+      "recorded_at": "2026-11-26T13:55:33.461882+00:00",
+      "idempotency_key": "run_20261126135512181421_93ab78:local_runner_c800c889:24",
+      "correlation_id": "",
+      "payload": {
+        "verdict": "PASSED",
+        "notes": [
+          "all oracle sources agree: PASSED"
+        ]
+      }
+    },
+    {
+      "event_id": "evt_5577bf605577",
+      "event_type": "oracle.evaluated",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135512181421_93ab78",
+      "step_id": "a4",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_c800c889",
+      "sequence": 25,
+      "occurred_at": "2026-11-26T13:55:33.461894+00:00",
+      "recorded_at": "2026-11-26T13:55:33.461894+00:00",
+      "idempotency_key": "run_20261126135512181421_93ab78:local_runner_c800c889:25",
+      "correlation_id": "",
+      "payload": {
+        "verdict": "FAILED",
+        "notes": [
+          "all oracle sources agree: FAILED"
+        ]
+      }
+    }
+  ],
+  "steps": [
+    {
+      "step_id": "s1",
+      "action": "navigate",
+      "ok": true,
+      "detail": "navigated to http://127.0.0.1:64191/",
+      "evidence_ids": [
+        "evd_97fe2cc770bb",
+        "evd_3531e67cc627"
+      ]
+    },
+    {
+      "step_id": "s2",
+      "action": "fill",
+      "ok": true,
+      "detail": "filled [data-testid=username]",
+      "evidence_ids": [
+        "evd_1f2594885eb7",
+        "evd_dd65efca2245"
+      ]
+    },
+    {
+      "step_id": "s3",
+      "action": "fill",
+      "ok": true,
+      "detail": "filled [data-testid=password]",
+      "evidence_ids": [
+        "evd_b5d805732006",
+        "evd_81c06d0c73ca"
+      ]
+    },
+    {
+      "step_id": "s4",
+      "action": "click",
+      "ok": false,
+      "detail": "TimeoutError: Locator.click: Timeout 10000ms exceeded.\nCall log:\n  - waiting for locator(\"[data-testid=login-submit]\")\n",
+      "evidence_ids": [
+        "evd_12fc4fb22ce8",
+        "evd_212db61a8e2f",
+        "evd_35fb606a6a92"
+      ]
+    },
+    {
+      "step_id": "s5",
+      "action": "assert_visible",
+      "ok": false,
+      "detail": "TimeoutError: Locator.wait_for: Timeout 10000ms exceeded.\nCall log:\n  - waiting for locator(\"[data-testid=new-project-link]\") to be visible\n",
+      "evidence_ids": [
+        "evd_b5f47891193e",
+        "evd_8b18a84ad9b4",
+        "evd_4775c2c5c2ff"
+      ]
+    },
+    {
+      "step_id": "s6",
+      "action": "assert_not_visible",
+      "ok": true,
+      "detail": "not visible: [data-testid=login-submit]",
+      "evidence_ids": [
+        "evd_58d54f7c5981",
+        "evd_a08437b322d1"
+      ]
+    },
+    {
+      "step_id": "s7",
+      "action": "assert_text",
+      "ok": false,
+      "detail": "expected '项目列表' in 'TeamFlow\n\n受控被测应用 · 项目协作最小闭环\n\n用户名 \n密码 \n登录'",
+      "evidence_ids": []
+    }
+  ],
+  "assertion_results": [
+    {
+      "assertion_id": "a1",
+      "required": true,
+      "verdict": "FAILED",
+      "oracle_available": true,
+      "oracle_conflict": false,
+      "evaluated": true,
+      "evidence_refs": [],
+      "reason": "all oracle sources agree: FAILED"
+    },
+    {
+      "assertion_id": "a2",
+      "required": true,
+      "verdict": "FAILED",
+      "oracle_available": true,
+      "oracle_conflict": false,
+      "evaluated": true,
+      "evidence_refs": [],
+      "reason": "all oracle sources agree: FAILED"
+    },
+    {
+      "assertion_id": "a3",
+      "required": true,
+      "verdict": "PASSED",
+      "oracle_available": true,
+      "oracle_conflict": false,
+      "evaluated": true,
+      "evidence_refs": [],
+      "reason": "all oracle sources agree: PASSED"
+    },
+    {
+      "assertion_id": "a4",
+      "required": true,
+      "verdict": "FAILED",
+      "oracle_available": true,
+      "oracle_conflict": false,
+      "evaluated": true,
+      "evidence_refs": [],
+      "reason": "all oracle sources agree: FAILED"
+    }
+  ],
+  "observations": {
+    "ui": {
+      "s1.passed": true,
+      "s2.passed": true,
+      "s3.passed": true,
+      "s4.passed": false,
+      "s5.passed": false,
+      "s6.passed": true,
+      "s7.passed": false,
+      "url_path": "/",
+      "final_url": "http://127.0.0.1:64191/",
+      "page_title": "TeamFlow 登录"
+    },
+    "independent_state": {
+      "source": "teamflow.db/tf_project",
+      "workspace_id": "ws-default",
+      "project_count": 0,
+      "projects": []
+    }
+  },
+  "persisted": {
+    "events": {
+      "status": "OK",
+      "written": 25,
+      "duplicates": 0,
+      "counts": {
+        "WRITTEN": 25
+      },
+      "failures": []
+    },
+    "evidence": {
+      "status": "OK",
+      "written": 15,
+      "duplicates": 0,
+      "counts": {
+        "WRITTEN": 15
+      },
+      "failures": []
+    },
+    "status": "OK",
+    "stages": [
+      {
+        "name": "event_persistence",
+        "status": "OK",
+        "detail": "written=25 duplicates=0 failures=0"
+      },
+      {
+        "name": "evidence_persistence",
+        "status": "OK",
+        "detail": "written=15 duplicates=0 failures=0"
+      }
+    ]
+  },
+  "graph_errors": [
+    "edge run_20261126135512181421_93ab78:h-locator-missing:sup:evd_12fc4fb22ce8: ValidationError: edge endpoints unknown: evd_12fc4fb22ce8 -> run_20261126135512181421_93ab78:h-locator-missing",
+    "edge run_20261126135512181421_93ab78:h-locator-missing:sup:evd_b5f47891193e: ValidationError: edge endpoints unknown: evd_b5f47891193e -> run_20261126135512181421_93ab78:h-locator-missing"
+  ],
+  "case_id": "TC-CAND-8CD12D728F",
+  "case_version": 3,
+  "approved_by": "journey-reviewer:REV-JOURNEY-001",
+  "run_id": "run_20261126135512181421_93ab78",
+  "run_status": "COMPLETED",
+  "workspace_id": "ws-default",
+  "started_at": "2026-11-26T13:55:12.183757+00:00",
+  "duration_s": 21.54,
+  "persistence_status": "OK",
+  "graph_status": "PARTIAL",
+  "chain_status": "OK"
+}

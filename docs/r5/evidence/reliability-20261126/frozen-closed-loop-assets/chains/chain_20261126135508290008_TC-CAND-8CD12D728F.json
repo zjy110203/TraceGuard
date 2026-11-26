@@ -1,0 +1,1152 @@
+{
+  "scenario_id": "TC-CAND-8CD12D728F",
+  "chain_id": "chain_20261126135508290008_TC-CAND-8CD12D728F",
+  "stages": [
+    {
+      "name": "testcase",
+      "status": "OK",
+      "detail": "TC-CAND-8CD12D728F v2, 4 assertion(s)",
+      "at": "2026-11-26T13:55:08.290049+00:00"
+    },
+    {
+      "name": "cleanup_pre",
+      "status": "OK",
+      "detail": "strategy=eval_reset: eval control plane reachable",
+      "at": "2026-11-26T13:55:08.381117+00:00"
+    },
+    {
+      "name": "execution",
+      "status": "OK",
+      "detail": "verdict=PASSED",
+      "at": "2026-11-26T13:55:09.644074+00:00"
+    },
+    {
+      "name": "verdict",
+      "status": "OK",
+      "detail": "PASSED/COMPLETED",
+      "at": "2026-11-26T13:55:09.651240+00:00"
+    },
+    {
+      "name": "graph",
+      "status": "OK",
+      "detail": "8 evidence nodes linked",
+      "at": "2026-11-26T13:55:09.704022+00:00"
+    },
+    {
+      "name": "diagnosis",
+      "status": "OK",
+      "detail": "CONFIRMED/MANUAL_REVIEW",
+      "at": "2026-11-26T13:55:09.710219+00:00"
+    },
+    {
+      "name": "repair",
+      "status": "OK",
+      "detail": "proposal_required=False",
+      "at": "2026-11-26T13:55:09.718600+00:00"
+    },
+    {
+      "name": "cleanup",
+      "status": "OK",
+      "detail": "/__eval__/data/reset -> 200",
+      "at": "2026-11-26T13:55:09.756090+00:00"
+    },
+    {
+      "name": "event_persistence",
+      "status": "OK",
+      "detail": "written=26 duplicates=0 failures=0",
+      "at": "2026-11-26T13:55:09.888773+00:00"
+    },
+    {
+      "name": "evidence_persistence",
+      "status": "OK",
+      "detail": "written=15 duplicates=0 failures=0",
+      "at": "2026-11-26T13:55:09.888780+00:00"
+    },
+    {
+      "name": "event_persistence",
+      "status": "OK",
+      "detail": "written=26 duplicates=0 failures=0",
+      "at": "2026-11-26T13:55:09.888789+00:00"
+    },
+    {
+      "name": "evidence_persistence",
+      "status": "OK",
+      "detail": "written=15 duplicates=0 failures=0",
+      "at": "2026-11-26T13:55:09.895094+00:00"
+    }
+  ],
+  "execution": {
+    "run_id": "run_20261126135508267988_78ecb0",
+    "execution_status": "COMPLETED",
+    "test_verdict": "PASSED",
+    "evidence_count": 15,
+    "event_count": 26,
+    "failed_steps": [],
+    "blocked": false,
+    "blocked_reason": ""
+  },
+  "diagnosis": {
+    "diagnosis_id": "dx-TC-CAND-8CD12D728F",
+    "run_id": "run_20261126135508267988_78ecb0",
+    "symptom": "none",
+    "failure_domain": "PRODUCT",
+    "failure_mechanism": "UNKNOWN",
+    "root_causes": [],
+    "contributing_factors": [],
+    "flaky_characteristic": "NOT_DETERMINED",
+    "diagnosis_status": "CONFIRMED",
+    "disposition": "MANUAL_REVIEW",
+    "hypotheses": [
+      {
+        "hypothesis_id": "h-healthy",
+        "statement": "no failure observed; verdict PASSED",
+        "failure_domain": "PRODUCT",
+        "failure_mechanism": "UNKNOWN",
+        "status": "CONFIRMED",
+        "supporting": [],
+        "contradicting": [],
+        "confirmation_rule": "R-HEALTHY: verdict PASSED with no failed required assertion"
+      }
+    ],
+    "notes": [
+      "healthy run; no disposition action required (MANUAL_REVIEW=no-op)"
+    ]
+  },
+  "probe_summary": {},
+  "disposition": "MANUAL_REVIEW",
+  "repair": {
+    "proposal_required": false
+  },
+  "completed": true,
+  "cancelled": false,
+  "cleanup": {
+    "strategy": "eval_reset",
+    "endpoint": "/__eval__/data/reset",
+    "allowed": true,
+    "reason": "eval control plane reachable",
+    "done": true,
+    "applied": true,
+    "status_code": 200
+  },
+  "evidence": [
+    {
+      "evidence_id": "evd_a9dff9097644",
+      "evidence_type": "screenshot",
+      "raw": true,
+      "source": "browser:s1",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s1",
+      "recorded_at": "2026-11-26T13:55:09.201319+00:00",
+      "summary": "screenshot navigate (12188 bytes)",
+      "attachment_ref": "screenshots/run_20261126135508267988_78ecb0_s1_navigate.png",
+      "integrity_check": "sha256:6e21221ca47488c141ea85bb9221c99f56a4ef646adfa3ccca47da32808cc16f",
+      "source_trust": "observed",
+      "derived_from": [],
+      "redacted": false,
+      "retention": "run_scoped",
+      "payload": {
+        "bytes": 12188,
+        "digest": "6e21221ca47488c141ea85bb9221c99f56a4ef646adfa3ccca47da32808cc16f",
+        "blob": {
+          "key": "6e21221ca47488c141ea85bb9221c99f56a4ef646adfa3ccca47da32808cc16f",
+          "size": 12188,
+          "sha256": "sha256:6e21221ca47488c141ea85bb9221c99f56a4ef646adfa3ccca47da32808cc16f"
+        },
+        "byte_length": 12188,
+        "binary_sha256": "sha256:6e21221ca47488c141ea85bb9221c99f56a4ef646adfa3ccca47da32808cc16f"
+      }
+    },
+    {
+      "evidence_id": "evd_f554481c8a01",
+      "evidence_type": "dom_snapshot",
+      "raw": true,
+      "source": "browser:s1",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s1",
+      "recorded_at": "2026-11-26T13:55:09.215816+00:00",
+      "summary": "DOM text snapshot (40 chars)",
+      "attachment_ref": "",
+      "integrity_check": "",
+      "source_trust": "observed",
+      "derived_from": [],
+      "redacted": false,
+      "retention": "run_scoped",
+      "payload": {
+        "text": "TeamFlow\n\n受控被测应用 · 项目协作最小闭环\n\n用户名 \n密码 \n登录"
+      }
+    },
+    {
+      "evidence_id": "evd_381a60eb374d",
+      "evidence_type": "screenshot",
+      "raw": true,
+      "source": "browser:s2",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s2",
+      "recorded_at": "2026-11-26T13:55:09.284313+00:00",
+      "summary": "screenshot fill (12828 bytes)",
+      "attachment_ref": "screenshots/run_20261126135508267988_78ecb0_s2_fill.png",
+      "integrity_check": "sha256:a04d3fae13ac100356de783398558c26a3a920803081c3624b2e267ec74c836a",
+      "source_trust": "observed",
+      "derived_from": [],
+      "redacted": false,
+      "retention": "run_scoped",
+      "payload": {
+        "bytes": 12828,
+        "digest": "a04d3fae13ac100356de783398558c26a3a920803081c3624b2e267ec74c836a",
+        "blob": {
+          "key": "a04d3fae13ac100356de783398558c26a3a920803081c3624b2e267ec74c836a",
+          "size": 12828,
+          "sha256": "sha256:a04d3fae13ac100356de783398558c26a3a920803081c3624b2e267ec74c836a"
+        },
+        "byte_length": 12828,
+        "binary_sha256": "sha256:a04d3fae13ac100356de783398558c26a3a920803081c3624b2e267ec74c836a"
+      }
+    },
+    {
+      "evidence_id": "evd_27f6ab205684",
+      "evidence_type": "dom_snapshot",
+      "raw": true,
+      "source": "browser:s2",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s2",
+      "recorded_at": "2026-11-26T13:55:09.286423+00:00",
+      "summary": "DOM text snapshot (40 chars)",
+      "attachment_ref": "",
+      "integrity_check": "",
+      "source_trust": "observed",
+      "derived_from": [],
+      "redacted": false,
+      "retention": "run_scoped",
+      "payload": {
+        "text": "TeamFlow\n\n受控被测应用 · 项目协作最小闭环\n\n用户名 \n密码 \n登录"
+      }
+    },
+    {
+      "evidence_id": "evd_2ffb9f6aa47e",
+      "evidence_type": "screenshot",
+      "raw": true,
+      "source": "browser:s3",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s3",
+      "recorded_at": "2026-11-26T13:55:09.314249+00:00",
+      "summary": "screenshot fill (12779 bytes)",
+      "attachment_ref": "screenshots/run_20261126135508267988_78ecb0_s3_fill.png",
+      "integrity_check": "sha256:ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff",
+      "source_trust": "observed",
+      "derived_from": [],
+      "redacted": false,
+      "retention": "run_scoped",
+      "payload": {
+        "bytes": 12779,
+        "digest": "ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff",
+        "blob": {
+          "key": "ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff",
+          "size": 12779,
+          "sha256": "sha256:ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff"
+        },
+        "byte_length": 12779,
+        "binary_sha256": "sha256:ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff"
+      }
+    },
+    {
+      "evidence_id": "evd_2ccff032ea31",
+      "evidence_type": "dom_snapshot",
+      "raw": true,
+      "source": "browser:s3",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s3",
+      "recorded_at": "2026-11-26T13:55:09.316420+00:00",
+      "summary": "DOM text snapshot (40 chars)",
+      "attachment_ref": "",
+      "integrity_check": "",
+      "source_trust": "observed",
+      "derived_from": [],
+      "redacted": false,
+      "retention": "run_scoped",
+      "payload": {
+        "text": "TeamFlow\n\n受控被测应用 · 项目协作最小闭环\n\n用户名 \n密码 \n登录"
+      }
+    },
+    {
+      "evidence_id": "evd_e116ebef4f7b",
+      "evidence_type": "screenshot",
+      "raw": true,
+      "source": "browser:s4",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s4",
+      "recorded_at": "2026-11-26T13:55:09.381399+00:00",
+      "summary": "screenshot click (9033 bytes)",
+      "attachment_ref": "screenshots/run_20261126135508267988_78ecb0_s4_click.png",
+      "integrity_check": "sha256:58ce09a1c2fab6ebe1b9d675ee728703be27e9de0cc887b16b9ef2693ab8e2b7",
+      "source_trust": "observed",
+      "derived_from": [],
+      "redacted": false,
+      "retention": "run_scoped",
+      "payload": {
+        "bytes": 9033,
+        "digest": "58ce09a1c2fab6ebe1b9d675ee728703be27e9de0cc887b16b9ef2693ab8e2b7",
+        "blob": {
+          "key": "58ce09a1c2fab6ebe1b9d675ee728703be27e9de0cc887b16b9ef2693ab8e2b7",
+          "size": 9033,
+          "sha256": "sha256:58ce09a1c2fab6ebe1b9d675ee728703be27e9de0cc887b16b9ef2693ab8e2b7"
+        },
+        "byte_length": 9033,
+        "binary_sha256": "sha256:58ce09a1c2fab6ebe1b9d675ee728703be27e9de0cc887b16b9ef2693ab8e2b7"
+      }
+    },
+    {
+      "evidence_id": "evd_b54f936f36d9",
+      "evidence_type": "dom_snapshot",
+      "raw": true,
+      "source": "browser:s4",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s4",
+      "recorded_at": "2026-11-26T13:55:09.392980+00:00",
+      "summary": "DOM text snapshot (14 chars)",
+      "attachment_ref": "",
+      "integrity_check": "",
+      "source_trust": "observed",
+      "derived_from": [],
+      "redacted": false,
+      "retention": "run_scoped",
+      "payload": {
+        "text": "项目列表\n新建项目 | 退出"
+      }
+    },
+    {
+      "evidence_id": "evd_6e297d7afd6d",
+      "evidence_type": "screenshot",
+      "raw": true,
+      "source": "browser:s5",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s5",
+      "recorded_at": "2026-11-26T13:55:09.435284+00:00",
+      "summary": "screenshot assert_visible (9033 bytes)",
+      "attachment_ref": "screenshots/run_20261126135508267988_78ecb0_s5_assert_visible.png",
+      "integrity_check": "sha256:58ce09a1c2fab6ebe1b9d675ee728703be27e9de0cc887b16b9ef2693ab8e2b7",
+      "source_trust": "observed",
+      "derived_from": [],
+      "redacted": false,
+      "retention": "run_scoped",
+      "payload": {
+        "bytes": 9033,
+        "digest": "58ce09a1c2fab6ebe1b9d675ee728703be27e9de0cc887b16b9ef2693ab8e2b7",
+        "blob": {
+          "key": "58ce09a1c2fab6ebe1b9d675ee728703be27e9de0cc887b16b9ef2693ab8e2b7",
+          "size": 9033,
+          "sha256": "sha256:58ce09a1c2fab6ebe1b9d675ee728703be27e9de0cc887b16b9ef2693ab8e2b7"
+        },
+        "byte_length": 9033,
+        "binary_sha256": "sha256:58ce09a1c2fab6ebe1b9d675ee728703be27e9de0cc887b16b9ef2693ab8e2b7"
+      }
+    },
+    {
+      "evidence_id": "evd_097a5063c667",
+      "evidence_type": "dom_snapshot",
+      "raw": true,
+      "source": "browser:s5",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s5",
+      "recorded_at": "2026-11-26T13:55:09.437008+00:00",
+      "summary": "DOM text snapshot (14 chars)",
+      "attachment_ref": "",
+      "integrity_check": "",
+      "source_trust": "observed",
+      "derived_from": [],
+      "redacted": false,
+      "retention": "run_scoped",
+      "payload": {
+        "text": "项目列表\n新建项目 | 退出"
+      }
+    },
+    {
+      "evidence_id": "evd_6ea21deb587b",
+      "evidence_type": "screenshot",
+      "raw": true,
+      "source": "browser:s6",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s6",
+      "recorded_at": "2026-11-26T13:55:09.459937+00:00",
+      "summary": "screenshot assert_not_visible (9033 bytes)",
+      "attachment_ref": "screenshots/run_20261126135508267988_78ecb0_s6_assert_not_visible.png",
+      "integrity_check": "sha256:58ce09a1c2fab6ebe1b9d675ee728703be27e9de0cc887b16b9ef2693ab8e2b7",
+      "source_trust": "observed",
+      "derived_from": [],
+      "redacted": false,
+      "retention": "run_scoped",
+      "payload": {
+        "bytes": 9033,
+        "digest": "58ce09a1c2fab6ebe1b9d675ee728703be27e9de0cc887b16b9ef2693ab8e2b7",
+        "blob": {
+          "key": "58ce09a1c2fab6ebe1b9d675ee728703be27e9de0cc887b16b9ef2693ab8e2b7",
+          "size": 9033,
+          "sha256": "sha256:58ce09a1c2fab6ebe1b9d675ee728703be27e9de0cc887b16b9ef2693ab8e2b7"
+        },
+        "byte_length": 9033,
+        "binary_sha256": "sha256:58ce09a1c2fab6ebe1b9d675ee728703be27e9de0cc887b16b9ef2693ab8e2b7"
+      }
+    },
+    {
+      "evidence_id": "evd_93edccabbaee",
+      "evidence_type": "dom_snapshot",
+      "raw": true,
+      "source": "browser:s6",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s6",
+      "recorded_at": "2026-11-26T13:55:09.461969+00:00",
+      "summary": "DOM text snapshot (14 chars)",
+      "attachment_ref": "",
+      "integrity_check": "",
+      "source_trust": "observed",
+      "derived_from": [],
+      "redacted": false,
+      "retention": "run_scoped",
+      "payload": {
+        "text": "项目列表\n新建项目 | 退出"
+      }
+    },
+    {
+      "evidence_id": "evd_419b4d25e3a9",
+      "evidence_type": "screenshot",
+      "raw": true,
+      "source": "browser:s7",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s7",
+      "recorded_at": "2026-11-26T13:55:09.483461+00:00",
+      "summary": "screenshot assert_text (9033 bytes)",
+      "attachment_ref": "screenshots/run_20261126135508267988_78ecb0_s7_assert_text.png",
+      "integrity_check": "sha256:58ce09a1c2fab6ebe1b9d675ee728703be27e9de0cc887b16b9ef2693ab8e2b7",
+      "source_trust": "observed",
+      "derived_from": [],
+      "redacted": false,
+      "retention": "run_scoped",
+      "payload": {
+        "bytes": 9033,
+        "digest": "58ce09a1c2fab6ebe1b9d675ee728703be27e9de0cc887b16b9ef2693ab8e2b7",
+        "blob": {
+          "key": "58ce09a1c2fab6ebe1b9d675ee728703be27e9de0cc887b16b9ef2693ab8e2b7",
+          "size": 9033,
+          "sha256": "sha256:58ce09a1c2fab6ebe1b9d675ee728703be27e9de0cc887b16b9ef2693ab8e2b7"
+        },
+        "byte_length": 9033,
+        "binary_sha256": "sha256:58ce09a1c2fab6ebe1b9d675ee728703be27e9de0cc887b16b9ef2693ab8e2b7"
+      }
+    },
+    {
+      "evidence_id": "evd_e0f58d55d6cf",
+      "evidence_type": "dom_snapshot",
+      "raw": true,
+      "source": "browser:s7",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s7",
+      "recorded_at": "2026-11-26T13:55:09.485141+00:00",
+      "summary": "DOM text snapshot (14 chars)",
+      "attachment_ref": "",
+      "integrity_check": "",
+      "source_trust": "observed",
+      "derived_from": [],
+      "redacted": false,
+      "retention": "run_scoped",
+      "payload": {
+        "text": "项目列表\n新建项目 | 退出"
+      }
+    },
+    {
+      "evidence_id": "evd_3a781645267a",
+      "evidence_type": "network_response",
+      "raw": true,
+      "source": "browser:network",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": null,
+      "recorded_at": "2026-11-26T13:55:09.485177+00:00",
+      "summary": "0 API responses observed",
+      "attachment_ref": "",
+      "integrity_check": "",
+      "source_trust": "observed",
+      "derived_from": [],
+      "redacted": false,
+      "retention": "run_scoped",
+      "payload": {
+        "responses": []
+      }
+    }
+  ],
+  "events": [
+    {
+      "event_id": "evt_b78679c87b06",
+      "event_type": "run.started",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": null,
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_8036250d",
+      "sequence": 1,
+      "occurred_at": "2026-11-26T13:55:08.387511+00:00",
+      "recorded_at": "2026-11-26T13:55:08.387511+00:00",
+      "idempotency_key": "run_20261126135508267988_78ecb0:local_runner_8036250d:1",
+      "correlation_id": "",
+      "payload": {
+        "case": "TC-CAND-8CD12D728F",
+        "version": 2
+      }
+    },
+    {
+      "event_id": "evt_6a86046ee1d2",
+      "event_type": "step.started",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s1",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_8036250d",
+      "sequence": 2,
+      "occurred_at": "2026-11-26T13:55:08.838338+00:00",
+      "recorded_at": "2026-11-26T13:55:08.838338+00:00",
+      "idempotency_key": "run_20261126135508267988_78ecb0:local_runner_8036250d:2",
+      "correlation_id": "",
+      "payload": {
+        "action": "navigate",
+        "target": "http://127.0.0.1:64191/"
+      }
+    },
+    {
+      "event_id": "evt_078bb84781f1",
+      "event_type": "evidence.screenshot.captured",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s1",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_8036250d",
+      "sequence": 3,
+      "occurred_at": "2026-11-26T13:55:09.201341+00:00",
+      "recorded_at": "2026-11-26T13:55:09.201341+00:00",
+      "idempotency_key": "run_20261126135508267988_78ecb0:local_runner_8036250d:3",
+      "correlation_id": "",
+      "payload": {
+        "evidence_id": "evd_a9dff9097644",
+        "integrity_check": "sha256:6e21221ca47488c141ea85bb9221c99f56a4ef646adfa3ccca47da32808cc16f"
+      }
+    },
+    {
+      "event_id": "evt_f2e47a1658f9",
+      "event_type": "step.completed",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s1",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_8036250d",
+      "sequence": 4,
+      "occurred_at": "2026-11-26T13:55:09.215837+00:00",
+      "recorded_at": "2026-11-26T13:55:09.215837+00:00",
+      "idempotency_key": "run_20261126135508267988_78ecb0:local_runner_8036250d:4",
+      "correlation_id": "",
+      "payload": {
+        "action": "navigate",
+        "evidence_ids": [
+          "evd_a9dff9097644",
+          "evd_f554481c8a01"
+        ]
+      }
+    },
+    {
+      "event_id": "evt_d3b790daad30",
+      "event_type": "step.started",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s2",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_8036250d",
+      "sequence": 5,
+      "occurred_at": "2026-11-26T13:55:09.216410+00:00",
+      "recorded_at": "2026-11-26T13:55:09.216410+00:00",
+      "idempotency_key": "run_20261126135508267988_78ecb0:local_runner_8036250d:5",
+      "correlation_id": "",
+      "payload": {
+        "action": "fill",
+        "target": "[data-testid=username]"
+      }
+    },
+    {
+      "event_id": "evt_405c9870fb19",
+      "event_type": "evidence.screenshot.captured",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s2",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_8036250d",
+      "sequence": 6,
+      "occurred_at": "2026-11-26T13:55:09.284334+00:00",
+      "recorded_at": "2026-11-26T13:55:09.284334+00:00",
+      "idempotency_key": "run_20261126135508267988_78ecb0:local_runner_8036250d:6",
+      "correlation_id": "",
+      "payload": {
+        "evidence_id": "evd_381a60eb374d",
+        "integrity_check": "sha256:a04d3fae13ac100356de783398558c26a3a920803081c3624b2e267ec74c836a"
+      }
+    },
+    {
+      "event_id": "evt_34742b228310",
+      "event_type": "step.completed",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s2",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_8036250d",
+      "sequence": 7,
+      "occurred_at": "2026-11-26T13:55:09.286450+00:00",
+      "recorded_at": "2026-11-26T13:55:09.286450+00:00",
+      "idempotency_key": "run_20261126135508267988_78ecb0:local_runner_8036250d:7",
+      "correlation_id": "",
+      "payload": {
+        "action": "fill",
+        "evidence_ids": [
+          "evd_381a60eb374d",
+          "evd_27f6ab205684"
+        ]
+      }
+    },
+    {
+      "event_id": "evt_9b1681e5c1d5",
+      "event_type": "step.started",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s3",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_8036250d",
+      "sequence": 8,
+      "occurred_at": "2026-11-26T13:55:09.287061+00:00",
+      "recorded_at": "2026-11-26T13:55:09.287061+00:00",
+      "idempotency_key": "run_20261126135508267988_78ecb0:local_runner_8036250d:8",
+      "correlation_id": "",
+      "payload": {
+        "action": "fill",
+        "target": "[data-testid=password]"
+      }
+    },
+    {
+      "event_id": "evt_6cbd2ca681e5",
+      "event_type": "evidence.screenshot.captured",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s3",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_8036250d",
+      "sequence": 9,
+      "occurred_at": "2026-11-26T13:55:09.314273+00:00",
+      "recorded_at": "2026-11-26T13:55:09.314273+00:00",
+      "idempotency_key": "run_20261126135508267988_78ecb0:local_runner_8036250d:9",
+      "correlation_id": "",
+      "payload": {
+        "evidence_id": "evd_2ffb9f6aa47e",
+        "integrity_check": "sha256:ab9ed6dea163dafbb80a9e1053497f84b9e9dc2842c12623215303a3c6619cff"
+      }
+    },
+    {
+      "event_id": "evt_8c348be68c58",
+      "event_type": "step.completed",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s3",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_8036250d",
+      "sequence": 10,
+      "occurred_at": "2026-11-26T13:55:09.316444+00:00",
+      "recorded_at": "2026-11-26T13:55:09.316444+00:00",
+      "idempotency_key": "run_20261126135508267988_78ecb0:local_runner_8036250d:10",
+      "correlation_id": "",
+      "payload": {
+        "action": "fill",
+        "evidence_ids": [
+          "evd_2ffb9f6aa47e",
+          "evd_2ccff032ea31"
+        ]
+      }
+    },
+    {
+      "event_id": "evt_99c5263850ed",
+      "event_type": "step.started",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s4",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_8036250d",
+      "sequence": 11,
+      "occurred_at": "2026-11-26T13:55:09.317062+00:00",
+      "recorded_at": "2026-11-26T13:55:09.317062+00:00",
+      "idempotency_key": "run_20261126135508267988_78ecb0:local_runner_8036250d:11",
+      "correlation_id": "",
+      "payload": {
+        "action": "click",
+        "target": "[data-testid=\"login-submit-v2\"]"
+      }
+    },
+    {
+      "event_id": "evt_37777c3947dd",
+      "event_type": "evidence.screenshot.captured",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s4",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_8036250d",
+      "sequence": 12,
+      "occurred_at": "2026-11-26T13:55:09.381420+00:00",
+      "recorded_at": "2026-11-26T13:55:09.381420+00:00",
+      "idempotency_key": "run_20261126135508267988_78ecb0:local_runner_8036250d:12",
+      "correlation_id": "",
+      "payload": {
+        "evidence_id": "evd_e116ebef4f7b",
+        "integrity_check": "sha256:58ce09a1c2fab6ebe1b9d675ee728703be27e9de0cc887b16b9ef2693ab8e2b7"
+      }
+    },
+    {
+      "event_id": "evt_fdb1ab57171e",
+      "event_type": "step.completed",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s4",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_8036250d",
+      "sequence": 13,
+      "occurred_at": "2026-11-26T13:55:09.393000+00:00",
+      "recorded_at": "2026-11-26T13:55:09.393000+00:00",
+      "idempotency_key": "run_20261126135508267988_78ecb0:local_runner_8036250d:13",
+      "correlation_id": "",
+      "payload": {
+        "action": "click",
+        "evidence_ids": [
+          "evd_e116ebef4f7b",
+          "evd_b54f936f36d9"
+        ]
+      }
+    },
+    {
+      "event_id": "evt_436d1e5dec60",
+      "event_type": "step.started",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s5",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_8036250d",
+      "sequence": 14,
+      "occurred_at": "2026-11-26T13:55:09.393601+00:00",
+      "recorded_at": "2026-11-26T13:55:09.393601+00:00",
+      "idempotency_key": "run_20261126135508267988_78ecb0:local_runner_8036250d:14",
+      "correlation_id": "",
+      "payload": {
+        "action": "assert_visible",
+        "target": "[data-testid=new-project-link]"
+      }
+    },
+    {
+      "event_id": "evt_1a0df01ff1fd",
+      "event_type": "evidence.screenshot.captured",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s5",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_8036250d",
+      "sequence": 15,
+      "occurred_at": "2026-11-26T13:55:09.435304+00:00",
+      "recorded_at": "2026-11-26T13:55:09.435304+00:00",
+      "idempotency_key": "run_20261126135508267988_78ecb0:local_runner_8036250d:15",
+      "correlation_id": "",
+      "payload": {
+        "evidence_id": "evd_6e297d7afd6d",
+        "integrity_check": "sha256:58ce09a1c2fab6ebe1b9d675ee728703be27e9de0cc887b16b9ef2693ab8e2b7"
+      }
+    },
+    {
+      "event_id": "evt_99412bbd464a",
+      "event_type": "step.completed",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s5",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_8036250d",
+      "sequence": 16,
+      "occurred_at": "2026-11-26T13:55:09.437028+00:00",
+      "recorded_at": "2026-11-26T13:55:09.437028+00:00",
+      "idempotency_key": "run_20261126135508267988_78ecb0:local_runner_8036250d:16",
+      "correlation_id": "",
+      "payload": {
+        "action": "assert_visible",
+        "evidence_ids": [
+          "evd_6e297d7afd6d",
+          "evd_097a5063c667"
+        ]
+      }
+    },
+    {
+      "event_id": "evt_25c82a36a5c2",
+      "event_type": "step.started",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s6",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_8036250d",
+      "sequence": 17,
+      "occurred_at": "2026-11-26T13:55:09.437647+00:00",
+      "recorded_at": "2026-11-26T13:55:09.437647+00:00",
+      "idempotency_key": "run_20261126135508267988_78ecb0:local_runner_8036250d:17",
+      "correlation_id": "",
+      "payload": {
+        "action": "assert_not_visible",
+        "target": "[data-testid=login-submit]"
+      }
+    },
+    {
+      "event_id": "evt_e97ddfef8501",
+      "event_type": "evidence.screenshot.captured",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s6",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_8036250d",
+      "sequence": 18,
+      "occurred_at": "2026-11-26T13:55:09.459959+00:00",
+      "recorded_at": "2026-11-26T13:55:09.459959+00:00",
+      "idempotency_key": "run_20261126135508267988_78ecb0:local_runner_8036250d:18",
+      "correlation_id": "",
+      "payload": {
+        "evidence_id": "evd_6ea21deb587b",
+        "integrity_check": "sha256:58ce09a1c2fab6ebe1b9d675ee728703be27e9de0cc887b16b9ef2693ab8e2b7"
+      }
+    },
+    {
+      "event_id": "evt_27b84e13cc7a",
+      "event_type": "step.completed",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s6",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_8036250d",
+      "sequence": 19,
+      "occurred_at": "2026-11-26T13:55:09.461992+00:00",
+      "recorded_at": "2026-11-26T13:55:09.461992+00:00",
+      "idempotency_key": "run_20261126135508267988_78ecb0:local_runner_8036250d:19",
+      "correlation_id": "",
+      "payload": {
+        "action": "assert_not_visible",
+        "evidence_ids": [
+          "evd_6ea21deb587b",
+          "evd_93edccabbaee"
+        ]
+      }
+    },
+    {
+      "event_id": "evt_be8b3da5e951",
+      "event_type": "step.started",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s7",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_8036250d",
+      "sequence": 20,
+      "occurred_at": "2026-11-26T13:55:09.462552+00:00",
+      "recorded_at": "2026-11-26T13:55:09.462552+00:00",
+      "idempotency_key": "run_20261126135508267988_78ecb0:local_runner_8036250d:20",
+      "correlation_id": "",
+      "payload": {
+        "action": "assert_text",
+        "target": "body"
+      }
+    },
+    {
+      "event_id": "evt_b106f1d216ff",
+      "event_type": "evidence.screenshot.captured",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s7",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_8036250d",
+      "sequence": 21,
+      "occurred_at": "2026-11-26T13:55:09.483479+00:00",
+      "recorded_at": "2026-11-26T13:55:09.483479+00:00",
+      "idempotency_key": "run_20261126135508267988_78ecb0:local_runner_8036250d:21",
+      "correlation_id": "",
+      "payload": {
+        "evidence_id": "evd_419b4d25e3a9",
+        "integrity_check": "sha256:58ce09a1c2fab6ebe1b9d675ee728703be27e9de0cc887b16b9ef2693ab8e2b7"
+      }
+    },
+    {
+      "event_id": "evt_a8f17dcea0b1",
+      "event_type": "step.completed",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "s7",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_8036250d",
+      "sequence": 22,
+      "occurred_at": "2026-11-26T13:55:09.485158+00:00",
+      "recorded_at": "2026-11-26T13:55:09.485158+00:00",
+      "idempotency_key": "run_20261126135508267988_78ecb0:local_runner_8036250d:22",
+      "correlation_id": "",
+      "payload": {
+        "action": "assert_text",
+        "evidence_ids": [
+          "evd_419b4d25e3a9",
+          "evd_e0f58d55d6cf"
+        ]
+      }
+    },
+    {
+      "event_id": "evt_f48dce957c9d",
+      "event_type": "oracle.evaluated",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "a1",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_8036250d",
+      "sequence": 23,
+      "occurred_at": "2026-11-26T13:55:09.611084+00:00",
+      "recorded_at": "2026-11-26T13:55:09.611084+00:00",
+      "idempotency_key": "run_20261126135508267988_78ecb0:local_runner_8036250d:23",
+      "correlation_id": "",
+      "payload": {
+        "verdict": "PASSED",
+        "notes": [
+          "all oracle sources agree: PASSED"
+        ]
+      }
+    },
+    {
+      "event_id": "evt_b4532ccf2b11",
+      "event_type": "oracle.evaluated",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "a2",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_8036250d",
+      "sequence": 24,
+      "occurred_at": "2026-11-26T13:55:09.611131+00:00",
+      "recorded_at": "2026-11-26T13:55:09.611131+00:00",
+      "idempotency_key": "run_20261126135508267988_78ecb0:local_runner_8036250d:24",
+      "correlation_id": "",
+      "payload": {
+        "verdict": "PASSED",
+        "notes": [
+          "all oracle sources agree: PASSED"
+        ]
+      }
+    },
+    {
+      "event_id": "evt_7bf3ce163835",
+      "event_type": "oracle.evaluated",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "a3",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_8036250d",
+      "sequence": 25,
+      "occurred_at": "2026-11-26T13:55:09.611150+00:00",
+      "recorded_at": "2026-11-26T13:55:09.611150+00:00",
+      "idempotency_key": "run_20261126135508267988_78ecb0:local_runner_8036250d:25",
+      "correlation_id": "",
+      "payload": {
+        "verdict": "PASSED",
+        "notes": [
+          "all oracle sources agree: PASSED"
+        ]
+      }
+    },
+    {
+      "event_id": "evt_e63b183b0c91",
+      "event_type": "oracle.evaluated",
+      "schema_version": "1.0.0-illustrative",
+      "run_id": "run_20261126135508267988_78ecb0",
+      "step_id": "a4",
+      "producer_id": "local_runner",
+      "producer_instance_id": "local_runner_8036250d",
+      "sequence": 26,
+      "occurred_at": "2026-11-26T13:55:09.611165+00:00",
+      "recorded_at": "2026-11-26T13:55:09.611165+00:00",
+      "idempotency_key": "run_20261126135508267988_78ecb0:local_runner_8036250d:26",
+      "correlation_id": "",
+      "payload": {
+        "verdict": "PASSED",
+        "notes": [
+          "all oracle sources agree: PASSED"
+        ]
+      }
+    }
+  ],
+  "steps": [
+    {
+      "step_id": "s1",
+      "action": "navigate",
+      "ok": true,
+      "detail": "navigated to http://127.0.0.1:64191/",
+      "evidence_ids": [
+        "evd_a9dff9097644",
+        "evd_f554481c8a01"
+      ]
+    },
+    {
+      "step_id": "s2",
+      "action": "fill",
+      "ok": true,
+      "detail": "filled [data-testid=username]",
+      "evidence_ids": [
+        "evd_381a60eb374d",
+        "evd_27f6ab205684"
+      ]
+    },
+    {
+      "step_id": "s3",
+      "action": "fill",
+      "ok": true,
+      "detail": "filled [data-testid=password]",
+      "evidence_ids": [
+        "evd_2ffb9f6aa47e",
+        "evd_2ccff032ea31"
+      ]
+    },
+    {
+      "step_id": "s4",
+      "action": "click",
+      "ok": true,
+      "detail": "clicked [data-testid=\"login-submit-v2\"]",
+      "evidence_ids": [
+        "evd_e116ebef4f7b",
+        "evd_b54f936f36d9"
+      ]
+    },
+    {
+      "step_id": "s5",
+      "action": "assert_visible",
+      "ok": true,
+      "detail": "visible: [data-testid=new-project-link]",
+      "evidence_ids": [
+        "evd_6e297d7afd6d",
+        "evd_097a5063c667"
+      ]
+    },
+    {
+      "step_id": "s6",
+      "action": "assert_not_visible",
+      "ok": true,
+      "detail": "not visible: [data-testid=login-submit]",
+      "evidence_ids": [
+        "evd_6ea21deb587b",
+        "evd_93edccabbaee"
+      ]
+    },
+    {
+      "step_id": "s7",
+      "action": "assert_text",
+      "ok": true,
+      "detail": "text matched: 项目列表",
+      "evidence_ids": [
+        "evd_419b4d25e3a9",
+        "evd_e0f58d55d6cf"
+      ]
+    }
+  ],
+  "assertion_results": [
+    {
+      "assertion_id": "a1",
+      "required": true,
+      "verdict": "PASSED",
+      "oracle_available": true,
+      "oracle_conflict": false,
+      "evaluated": true,
+      "evidence_refs": [],
+      "reason": "all oracle sources agree: PASSED"
+    },
+    {
+      "assertion_id": "a2",
+      "required": true,
+      "verdict": "PASSED",
+      "oracle_available": true,
+      "oracle_conflict": false,
+      "evaluated": true,
+      "evidence_refs": [],
+      "reason": "all oracle sources agree: PASSED"
+    },
+    {
+      "assertion_id": "a3",
+      "required": true,
+      "verdict": "PASSED",
+      "oracle_available": true,
+      "oracle_conflict": false,
+      "evaluated": true,
+      "evidence_refs": [],
+      "reason": "all oracle sources agree: PASSED"
+    },
+    {
+      "assertion_id": "a4",
+      "required": true,
+      "verdict": "PASSED",
+      "oracle_available": true,
+      "oracle_conflict": false,
+      "evaluated": true,
+      "evidence_refs": [],
+      "reason": "all oracle sources agree: PASSED"
+    }
+  ],
+  "observations": {
+    "ui": {
+      "s1.passed": true,
+      "s2.passed": true,
+      "s3.passed": true,
+      "s4.passed": true,
+      "s5.passed": true,
+      "s6.passed": true,
+      "s7.passed": true,
+      "url_path": "/projects",
+      "final_url": "http://127.0.0.1:64191/projects",
+      "page_title": "项目列表 · TeamFlow"
+    },
+    "independent_state": {
+      "source": "teamflow.db/tf_project",
+      "workspace_id": "ws-default",
+      "project_count": 0,
+      "projects": []
+    }
+  },
+  "persisted": {
+    "events": {
+      "status": "OK",
+      "written": 26,
+      "duplicates": 0,
+      "counts": {
+        "WRITTEN": 26
+      },
+      "failures": []
+    },
+    "evidence": {
+      "status": "OK",
+      "written": 15,
+      "duplicates": 0,
+      "counts": {
+        "WRITTEN": 15
+      },
+      "failures": []
+    },
+    "status": "OK",
+    "stages": [
+      {
+        "name": "event_persistence",
+        "status": "OK",
+        "detail": "written=26 duplicates=0 failures=0"
+      },
+      {
+        "name": "evidence_persistence",
+        "status": "OK",
+        "detail": "written=15 duplicates=0 failures=0"
+      }
+    ]
+  },
+  "graph_errors": [],
+  "case_id": "TC-CAND-8CD12D728F",
+  "case_version": 2,
+  "approved_by": "journey-reviewer:REV-JOURNEY-001",
+  "run_id": "run_20261126135508267988_78ecb0",
+  "run_status": "COMPLETED",
+  "workspace_id": "ws-default",
+  "started_at": "2026-11-26T13:55:08.269755+00:00",
+  "duration_s": 1.64,
+  "persistence_status": "OK",
+  "graph_status": "OK",
+  "chain_status": "OK"
+}
