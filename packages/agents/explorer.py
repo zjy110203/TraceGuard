@@ -409,6 +409,8 @@ class Explorer:
                 if pending_observation is not None:
                     observation = pending_observation
                     pending_observation = None
+                    if observation.url and not observation.url.startswith("about:"):
+                        self.trace.page_state_ref = sanitize_url(observation.url)
                 else:
                     observation = adapter.observe(gateway.steps)
                     if observation.url and not observation.url.startswith("about:"):
