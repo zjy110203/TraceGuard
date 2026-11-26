@@ -1,0 +1,59 @@
+{
+  "workspace": "D:\\桌面\\TraceGuard\\traceguard\\.traceguard-tmp\\r5\\f7-closed-loop\\dcd8f4bdac314cc1afca9226f71b6ea6",
+  "stages": {
+    "initial_run": "PASSED",
+    "failed_run": "FAILED",
+    "diagnosis": "PROBABLE",
+    "validate": "VALIDATED",
+    "submit": "PENDING_APPROVAL",
+    "replay": "PASSED",
+    "promotion": "PROMOTED",
+    "regression": "PASSED",
+    "rollback": "ROLLED_BACK",
+    "rollback_execution": "FAILED (expected: v1 selector under v2 UI)"
+  },
+  "restarts": [
+    {
+      "after_promotion": "PASS",
+      "file_hashes": {
+        "TC-CAND-CE3F2DDE97.json": "ca6bddc94ec56566ce576d8769d290840fa6863534d293b8add3bd3c81effc37",
+        "TC-CAND-CE3F2DDE97.v2.json": "7f711b9293fedf846f2e4a2a4d5e7168d9dfd8a5e88a99274169e0d37c69d4d3"
+      }
+    },
+    {
+      "after_rollback": "PASS",
+      "immutable_history": "PASS"
+    }
+  ],
+  "explorer_id": "exp_b62a0741d78f",
+  "candidate_id": "cand_141e5b5154",
+  "testcase_id": "TC-CAND-CE3F2DDE97",
+  "failed_run_id": "run_20261126113958903500_830c7b",
+  "diagnosis_id": "dg_run_20261126113958903500_830c7b",
+  "hypothesis_id": "h-locator-missing",
+  "evidence_refs": [
+    "evd_6af97f75d4a4",
+    "evd_cc366035b306"
+  ],
+  "repair_proposal_id": "rp_968164f1ec90",
+  "replay_id": "replay_9bdcdbba70944d39832c0873fb7fdf0a",
+  "promotion_id": "promotion_0700d093f7414b4baf318e81901a41b6",
+  "regression_run_id": "run_20261126114047586888_ea393a",
+  "rollback_id": "rollback_63f4d15fac3546c98112fd4785024d3a",
+  "rollback_run_id": "run_20261126114052120785_c783b2",
+  "persistent_hashes": {
+    "cases\\TC-CAND-CE3F2DDE97.json": "ca6bddc94ec56566ce576d8769d290840fa6863534d293b8add3bd3c81effc37",
+    "cases\\TC-CAND-CE3F2DDE97.v2.json": "7f711b9293fedf846f2e4a2a4d5e7168d9dfd8a5e88a99274169e0d37c69d4d3",
+    "cases\\TC-CAND-CE3F2DDE97.v3.json": "70d5edeea263a3d67d9c51dad2777655726898d68115f7a54bddbd4fb3d3790f",
+    "candidates\\cand_141e5b5154.json": "6fb09c2da04bc90a7a282840976e6e91f03c5eee977989bd99f3f2ee39a56b3e",
+    "chains\\chain_20261126113955566334_TC-CAND-CE3F2DDE97.json": "1ab58a59f4e352fdbf97609da9afbab66a1b286abf57895f25eb0241d1071bfb",
+    "chains\\chain_20261126113958939378_TC-CAND-CE3F2DDE97.json": "db155ed5e540d916582b61c5f72121ff45570dc7211fe632c7f7eba458bf20e7",
+    "chains\\chain_20261126114047612234_TC-CAND-CE3F2DDE97.json": "7fa5ce73a6ffa0150435272be01bbd0153becafb93140e78af1aa3154e1283a9",
+    "chains\\chain_20261126114052143110_TC-CAND-CE3F2DDE97.json": "02989a9ba5ca783f8363e858f9311fe90f9ddcdacc40fee3e560669c80aab854",
+    "explorations\\exp_b62a0741d78f.json": "e3765516de7da9a7441512d03bb0d619ae3e64f9f31f2b0c351d885f5ad2c4cf",
+    "benchmark\\repairs.jsonl": "dfaf4c9b6adf8c666878d727f0456313a96189adf2ce9b5cfa2c0e0d01da44df",
+    "benchmark\\diagnoses\\dg_run_20261126113955530321_129690.json": "a10ff350a68a19dc5f614973d64077956a9d6550caf4e3f90328692f0bea2cd0",
+    "benchmark\\diagnoses\\dg_run_20261126113958903500_830c7b.json": "be00629a2659dac7693ad1f1cf24a3057c1c5409d3ff21056565fba36b007a3d"
+  },
+  "status": "PASS"
+}
