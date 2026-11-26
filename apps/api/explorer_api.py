@@ -356,10 +356,14 @@ def build_policy(
             seed_values=seed_values,
             use_secret_refs=True,
         )
+        return (
+            ScriptedAgentPolicy(steps, goal=scenario.description),
+            "scripted-agent-1.0.0-NOT-REAL-INFERENCE",
+        )
     if policy_id == "mock-agent":
         if not run_id or test_intent is None or budget is None:
             raise ValidationError("mock-agent requires a run-bound intent and budget")
-        steps = tuple(
+        mock_steps = tuple(
             {
                 "tool": str(step["tool"]),
                 "args": _scenario_tool_args(
@@ -371,17 +375,13 @@ def build_policy(
         )
         return (
             PlannerPolicy(
-                planner=MockProvider(steps=steps),
+                planner=MockProvider(steps=mock_steps),
                 scenario=scenario.to_dict(),
                 test_intent=test_intent,
                 budget=budget,
                 run_id=run_id,
             ),
             "mock-agent-1.0.0-NOT-REAL-MODEL",
-        )
-        return (
-            ScriptedAgentPolicy(steps, goal=scenario.description),
-            "scripted-agent-1.0.0-NOT-REAL-INFERENCE",
         )
     raise ConflictError(
         "policy is not available in this build",

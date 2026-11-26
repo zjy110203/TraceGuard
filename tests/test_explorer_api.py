@@ -59,6 +59,24 @@ def test_policies_state_llm_is_not_available(client: TestClient) -> None:
     assert body["llm_blocked_reason"]
 
 
+def test_scripted_agent_policy_builder_returns_the_declared_policy() -> None:
+    from apps.api.explorer_api import build_policy
+    from packages.agents.scripted_agent import ScriptedAgentPolicy
+
+    settings = Settings(app_env="test")
+    scenario = default_registry().require("teamflow-login")
+    policy, version = build_policy(
+        "scripted-agent",
+        settings,
+        "http://127.0.0.1:8001",
+        scenario,
+        run_id="run-policy-test",
+        test_intent={"goal": "reach project list", "target": "/projects"},
+    )
+    assert isinstance(policy, ScriptedAgentPolicy)
+    assert version == "scripted-agent-1.0.0-NOT-REAL-INFERENCE"
+
+
 def test_llm_policy_is_refused_with_conflict(client: TestClient) -> None:
     resp = client.post("/api/v1/explorations", json={"policy": "llm"})
     assert resp.status_code == 409

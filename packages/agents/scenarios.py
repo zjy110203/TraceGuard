@@ -395,7 +395,8 @@ class Scenario:
             tool = str(step.get("tool") or "")
             if tool not in self.allowed_actions:
                 problems.append(f"steps[{index}] uses {tool!r} outside allowed_actions")
-            args = step.get("args") if isinstance(step.get("args", {}), dict) else {}
+            raw_args = step.get("args", {})
+            args = raw_args if isinstance(raw_args, dict) else {}
             if args.get("secret_ref") not in (None, "teamflow.password"):
                 problems.append(f"steps[{index}] uses an unapproved secret_ref")
             if args.get("secret_ref") and "value" in args:

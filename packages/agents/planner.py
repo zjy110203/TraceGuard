@@ -57,7 +57,7 @@ class MockProvider:
                 # Observation changed away from the expected control: stop the
                 # proposal stream instead of blindly replaying a stale action.
                 return None
-            body: dict[str, Any] = {
+            step_body: dict[str, Any] = {
                 "action_type": str(step["tool"]),
                 "arguments": dict(step.get("args") or {}),
                 "expected_outcome": str(step.get("expected_outcome") or ""),
@@ -71,14 +71,14 @@ class MockProvider:
                 "prop_"
                 + hashlib.sha256(
                     json.dumps(
-                        {"context_id": context.context_id, **body},
+                        {"context_id": context.context_id, **step_body},
                         sort_keys=True,
                         ensure_ascii=False,
                         separators=(",", ":"),
                     ).encode()
                 ).hexdigest()[:24]
             )
-            return ActionProposal(proposal_id=proposal_id, **body)
+            return ActionProposal(proposal_id=proposal_id, **step_body)
         keys = (
             str(context.observation.get("state_summary") or ""),
             str(context.observation.get("url_path") or ""),

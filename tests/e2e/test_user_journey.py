@@ -289,9 +289,10 @@ def test_negative_scenario_without_goal_cannot_compile(
         trust_env=False,
     )
     assert compile_resp.status_code == 409
-    assert "scenario test-case verdict does not admit compilation" in compile_resp.json()["error"][
-        "message"
-    ]
+    assert (
+        "scenario test-case verdict does not admit compilation"
+        in compile_resp.json()["error"]["message"]
+    )
 
 
 def test_unsupported_scenario_is_rejected_by_the_api(platform: str) -> None:
