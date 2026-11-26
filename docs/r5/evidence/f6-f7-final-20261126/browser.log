@@ -1,0 +1,155 @@
+
+=== R5 browser acceptance ===
+pre                        platform /health reachable         PASS
+/#/overview                not blank                          PASS
+/#/overview                no console error                   PASS
+/#/overview                no page error                      PASS
+/#/overview                no API 4xx/5xx                     PASS
+/#/intents                 not blank                          PASS
+/#/intents                 no console error                   PASS
+/#/intents                 no page error                      PASS
+/#/intents                 no API 4xx/5xx                     PASS
+/#/candidates              not blank                          PASS
+/#/candidates              no console error                   PASS
+/#/candidates              no page error                      PASS
+/#/candidates              no API 4xx/5xx                     PASS
+/#/cases                   not blank                          PASS
+/#/cases                   no console error                   PASS
+/#/cases                   no page error                      PASS
+/#/cases                   no API 4xx/5xx                     PASS
+/#/explorer                not blank                          PASS
+/#/explorer                no console error                   PASS
+/#/explorer                no page error                      PASS
+/#/explorer                no API 4xx/5xx                     PASS
+/#/tasks                   not blank                          PASS
+/#/tasks                   no console error                   PASS
+/#/tasks                   no page error                      PASS
+/#/tasks                   no API 4xx/5xx                     PASS
+/#/runs                    not blank                          PASS
+/#/runs                    no console error                   PASS
+/#/runs                    no page error                      PASS
+/#/runs                    no API 4xx/5xx                     PASS
+/#/events                  not blank                          PASS
+/#/events                  no console error                   PASS
+/#/events                  no page error                      PASS
+/#/events                  no API 4xx/5xx                     PASS
+/#/evidence                not blank                          PASS
+/#/evidence                no console error                   PASS
+/#/evidence                no page error                      PASS
+/#/evidence                no API 4xx/5xx                     PASS
+/#/graph                   not blank                          PASS
+/#/graph                   no console error                   PASS
+/#/graph                   no page error                      PASS
+/#/graph                   no API 4xx/5xx                     PASS
+/#/diagnosis               not blank                          PASS
+/#/diagnosis               no console error                   PASS
+/#/diagnosis               no page error                      PASS
+/#/diagnosis               no API 4xx/5xx                     PASS
+/#/probes                  not blank                          PASS
+/#/probes                  no console error                   PASS
+/#/probes                  no page error                      PASS
+/#/probes                  no API 4xx/5xx                     PASS
+/#/repairs                 not blank                          PASS
+/#/repairs                 no console error                   PASS
+/#/repairs                 no page error                      PASS
+/#/repairs                 no API 4xx/5xx                     PASS
+/#/benchmark               not blank                          PASS
+/#/benchmark               no console error                   PASS
+/#/benchmark               no page error                      PASS
+/#/benchmark               no API 4xx/5xx                     PASS
+/#/system                  not blank                          PASS
+/#/system                  no console error                   PASS
+/#/system                  no page error                      PASS
+/#/system                  no API 4xx/5xx                     PASS
+overview                   metric card navigates              PASS
+breadcrumb                 crumbs rendered                    PASS
+graph                      node click shows detail panel      PASS
+benchmark                  empty/blocked state visible        PASS
+repairs                    page reachable                     PASS
+explorer                   explorer page reachable            PASS
+deep-link                  run detail shows step rows         PASS
+deep-link                  run detail -> diagnosis tab        PASS
+deep-link                  diagnosis page renders verdict     PASS
+deep-link                  diagnosis -> evidence filtered     PASS
+deep-link                  evidence -> run detail             PASS
+deep-link                  diagnosis?run= prefills input      PASS
+deep-link                  diagnosis?run= auto-loads          PASS
+1920x1080 /#/overview      no horizontal overflow             PASS
+1920x1080 /#/intents       no horizontal overflow             PASS
+1920x1080 /#/candidates    no horizontal overflow             PASS
+1920x1080 /#/cases         no horizontal overflow             PASS
+1920x1080 /#/explorer      no horizontal overflow             PASS
+1920x1080 /#/tasks         no horizontal overflow             PASS
+1920x1080 /#/runs          no horizontal overflow             PASS
+1920x1080 /#/events        no horizontal overflow             PASS
+1920x1080 /#/evidence      no horizontal overflow             PASS
+1920x1080 /#/graph         no horizontal overflow             PASS
+1920x1080 /#/diagnosis     no horizontal overflow             PASS
+1920x1080 /#/probes        no horizontal overflow             PASS
+1920x1080 /#/repairs       no horizontal overflow             PASS
+1920x1080 /#/benchmark     no horizontal overflow             PASS
+1920x1080 /#/system        no horizontal overflow             PASS
+1440x900 /#/overview       no horizontal overflow             PASS
+1440x900 /#/intents        no horizontal overflow             PASS
+1440x900 /#/candidates     no horizontal overflow             PASS
+1440x900 /#/cases          no horizontal overflow             PASS
+1440x900 /#/explorer       no horizontal overflow             PASS
+1440x900 /#/tasks          no horizontal overflow             PASS
+1440x900 /#/runs           no horizontal overflow             PASS
+1440x900 /#/events         no horizontal overflow             PASS
+1440x900 /#/evidence       no horizontal overflow             PASS
+1440x900 /#/graph          no horizontal overflow             PASS
+1440x900 /#/diagnosis      no horizontal overflow             PASS
+1440x900 /#/probes         no horizontal overflow             PASS
+1440x900 /#/repairs        no horizontal overflow             PASS
+1440x900 /#/benchmark      no horizontal overflow             PASS
+1440x900 /#/system         no horizontal overflow             PASS
+1024x768 /#/overview       no horizontal overflow             PASS
+1024x768 /#/intents        no horizontal overflow             PASS
+1024x768 /#/candidates     no horizontal overflow             PASS
+1024x768 /#/cases          no horizontal overflow             PASS
+1024x768 /#/explorer       no horizontal overflow             PASS
+1024x768 /#/tasks          no horizontal overflow             PASS
+1024x768 /#/runs           no horizontal overflow             PASS
+1024x768 /#/events         no horizontal overflow             PASS
+1024x768 /#/evidence       no horizontal overflow             PASS
+1024x768 /#/graph          no horizontal overflow             PASS
+1024x768 /#/diagnosis      no horizontal overflow             PASS
+1024x768 /#/probes         no horizontal overflow             PASS
+1024x768 /#/repairs        no horizontal overflow             PASS
+1024x768 /#/benchmark      no horizontal overflow             PASS
+1024x768 /#/system         no horizontal overflow             PASS
+768x1024 /#/overview       no horizontal overflow             PASS
+768x1024 /#/intents        no horizontal overflow             PASS
+768x1024 /#/candidates     no horizontal overflow             PASS
+768x1024 /#/cases          no horizontal overflow             PASS
+768x1024 /#/explorer       no horizontal overflow             PASS
+768x1024 /#/tasks          no horizontal overflow             PASS
+768x1024 /#/runs           no horizontal overflow             PASS
+768x1024 /#/events         no horizontal overflow             PASS
+768x1024 /#/evidence       no horizontal overflow             PASS
+768x1024 /#/graph          no horizontal overflow             PASS
+768x1024 /#/diagnosis      no horizontal overflow             PASS
+768x1024 /#/probes         no horizontal overflow             PASS
+768x1024 /#/repairs        no horizontal overflow             PASS
+768x1024 /#/benchmark      no horizontal overflow             PASS
+768x1024 /#/system         no horizontal overflow             PASS
+390x844 /#/overview        no horizontal overflow             PASS
+390x844 /#/intents         no horizontal overflow             PASS
+390x844 /#/candidates      no horizontal overflow             PASS
+390x844 /#/cases           no horizontal overflow             PASS
+390x844 /#/explorer        no horizontal overflow             PASS
+390x844 /#/tasks           no horizontal overflow             PASS
+390x844 /#/runs            no horizontal overflow             PASS
+390x844 /#/events          no horizontal overflow             PASS
+390x844 /#/evidence        no horizontal overflow             PASS
+390x844 /#/graph           no horizontal overflow             PASS
+390x844 /#/diagnosis       no horizontal overflow             PASS
+390x844 /#/probes          no horizontal overflow             PASS
+390x844 /#/repairs         no horizontal overflow             PASS
+390x844 /#/benchmark       no horizontal overflow             PASS
+390x844 /#/system          no horizontal overflow             PASS
+a11y                       Tab moves focus into document      PASS
+
+total=150 passed=150 failures=0 skipped=0
+summary -> D:\桌面\TraceGuard\traceguard\.traceguard-tmp\r5\verify\20261126-195754-all-41256\browser\e2e-summary.json

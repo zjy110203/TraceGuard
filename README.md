@@ -5,7 +5,7 @@ Event/Evidence 证据链 + 多假设诊断 + 证据图 + Oracle 保护的自愈�
 UI-FaultBench 评测 + 产品级 Vue3 工作台。
 
 > 设计依据：`docs/design/`（11 篇规格）+ `docs/roadmap/`（十四阶段实施路线）。
-> 当前状态（2026-11-26）：F6 并发 CAS、进程中断恢复、正式不可变 Rollback，以及同一 Explorer 来源的真实 Chromium Repair/Promotion/Regression/Rollback E2E 已通过专项验证。完整 `verify_all --mode all` 与最新 CI 正在执行，整体收口仍 PARTIAL。见 [最终攻坚验收记录](docs/r5/R5-5.3-F6-F7-最终攻坚验收记录.md)。
+> 当前状态（2026-11-26）：R5-5.3 产品级集成闭环在 Windows 本机冻结范围完成。F6 并发 CAS、中断恢复、正式不可变 Rollback 和同源 Chromium F7 E2E PASS；最终完整 aggregate PASS（Python 852 passed / 1 skipped、Security 101、Product 24、Browser 150），验收代码 `ef49bc7` CI 5/5 success。单进程/单 Worker；D8 BLOCKED、M4 NOT_RUN。见 [最终验收记录](docs/r5/R5-5.3-F6-F7-最终攻坚验收记录.md)。
 > 历史门禁快照：此前 802 passed / 1 skipped、Security 100、Product 24、Browser 142 / 2 个条件 SKIP 的记录保留在 [F1–F7 历史报告](docs/r5/R5-5.3-F1-F7-实施补充与验收状态.md)，不当作当前完整 aggregate 结果。
 > 以下 Git 起点及历史 CI 为历史快照；当前工作分支为 `r5-5-product-integration-closure`。
 > **Git 状态（三基线分列，不得混用）**：

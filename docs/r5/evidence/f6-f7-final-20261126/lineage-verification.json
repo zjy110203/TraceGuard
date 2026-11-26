@@ -1,0 +1,34 @@
+{
+  "explorer_status": "COMPLETED",
+  "goal_status": "VERIFIED",
+  "candidate_status": "APPROVED",
+  "candidate_reviewer": "journey-reviewer",
+  "repair_approved_by": "closed-loop-reviewer",
+  "approval_record": "F7-review",
+  "proposal_states_in_journal": [
+    "DRAFT",
+    "VALIDATED",
+    "PENDING_APPROVAL",
+    "APPROVED",
+    "PROMOTED",
+    "ROLLED_BACK"
+  ],
+  "replay_status": "PASSED",
+  "ui_revision": "v2",
+  "promotion_operator": "closed-loop-operator",
+  "rollback_operator": "closed-loop-operator",
+  "restarts": [
+    {
+      "after_promotion": "PASS",
+      "file_hashes": {
+        "TC-CAND-0A6DA4FA18.json": "2580fe671cbe14c3b8e69eab6e877dcdeb34fe5e247fd1e05e8bf21a8b2b687d",
+        "TC-CAND-0A6DA4FA18.v2.json": "907c641f10842b14f1e69dfca0f676f91c585ca6bac1b0097804a95e63d7bc4b"
+      }
+    },
+    {
+      "after_rollback": "PASS",
+      "immutable_history": "PASS"
+    }
+  ],
+  "all_lineage_checks": "PASS"
+}

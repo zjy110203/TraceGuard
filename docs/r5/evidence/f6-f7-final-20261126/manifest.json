@@ -1,0 +1,122 @@
+[
+  {
+    "original": ".traceguard-tmp\\r5\\verify\\20261126-195754-all-41256\\browser.log",
+    "archived": "docs\\r5\\evidence\\f6-f7-final-20261126\\browser.log",
+    "sha256": "a95a13d61ffd45ad263afe1b00d3c5c219806a7a0efe137258bbd2cd39f36623"
+  },
+  {
+    "original": ".traceguard-tmp\\r5\\verify\\20261126-195754-all-41256\\mypy.log",
+    "archived": "docs\\r5\\evidence\\f6-f7-final-20261126\\mypy.log",
+    "sha256": "1a581cd0b3832c2025bf09c1a8d665657953c41cdaf6e612d7dd2cf094349460"
+  },
+  {
+    "original": ".traceguard-tmp\\r5\\verify\\20261126-195754-all-41256\\npm-ls.log",
+    "archived": "docs\\r5\\evidence\\f6-f7-final-20261126\\npm-ls.log",
+    "sha256": "6298e4f8e0010d394be4bc1edc708ae9c02261625c6dc3a5a81f6bb03e33642e"
+  },
+  {
+    "original": ".traceguard-tmp\\r5\\verify\\20261126-195754-all-41256\\product-e2e.log",
+    "archived": "docs\\r5\\evidence\\f6-f7-final-20261126\\product-e2e.log",
+    "sha256": "9bd34506350aedc23efd0dc2016827bba50c1d4d39a6c6ce6baaadd392320097"
+  },
+  {
+    "original": ".traceguard-tmp\\r5\\verify\\20261126-195754-all-41256\\pytest-security.log",
+    "archived": "docs\\r5\\evidence\\f6-f7-final-20261126\\pytest-security.log",
+    "sha256": "4cec546195bffa1e25547994dec0f36b85d6fbfe8aaa15397cf658cce6ec2264"
+  },
+  {
+    "original": ".traceguard-tmp\\r5\\verify\\20261126-195754-all-41256\\pytest.log",
+    "archived": "docs\\r5\\evidence\\f6-f7-final-20261126\\pytest.log",
+    "sha256": "ba20ce6535e4b68609d45c30b90a059cebe988f39a1077b1cda51064844d2142"
+  },
+  {
+    "original": ".traceguard-tmp\\r5\\verify\\20261126-195754-all-41256\\ruff-check.log",
+    "archived": "docs\\r5\\evidence\\f6-f7-final-20261126\\ruff-check.log",
+    "sha256": "9f634fc4c70950621dab51efb766f249327e58844dae0eb7950d6208077c19dc"
+  },
+  {
+    "original": ".traceguard-tmp\\r5\\verify\\20261126-195754-all-41256\\ruff-format-check.log",
+    "archived": "docs\\r5\\evidence\\f6-f7-final-20261126\\ruff-format-check.log",
+    "sha256": "9bf55566a232f2d721b5fec82cc5cc689d79c9aa63e5012b5ea89afa2b100a1d"
+  },
+  {
+    "original": ".traceguard-tmp\\r5\\verify\\20261126-195754-all-41256\\vite-build.log",
+    "archived": "docs\\r5\\evidence\\f6-f7-final-20261126\\vite-build.log",
+    "sha256": "b4c1356b211b6ddc2acd06643b4004a0bde6e26ba661f6bb9b8a0ee1337a19c0"
+  },
+  {
+    "original": ".traceguard-tmp\\r5\\verify\\20261126-195754-all-41256\\vue-tsc.log",
+    "archived": "docs\\r5\\evidence\\f6-f7-final-20261126\\vue-tsc.log",
+    "sha256": "d08c025f101e84ad41cd24a8e6fef3bf7866905e8c58bc7c815f9376832bcf0f"
+  },
+  {
+    "original": ".traceguard-tmp\\r5\\verify\\20261126-195754-all-41256\\report.json",
+    "archived": "docs\\r5\\evidence\\f6-f7-final-20261126\\report.json",
+    "sha256": "940016d0ced37d22a020955ef478e4237330cf1198c1ab4fdbf1f4da54a9afbf"
+  },
+  {
+    "original": ".traceguard-tmp\\r5\\verify\\20261126-195754-all-41256\\report.md",
+    "archived": "docs\\r5\\evidence\\f6-f7-final-20261126\\report.md",
+    "sha256": "e7085132a4a9ab5f2ef861ccc1ddf8c298d2fb123708e0c8c1ef090b1e15cb3e"
+  },
+  {
+    "original": ".traceguard-tmp\\r5\\verify\\20261126-195754-all-41256\\product-e2e.json",
+    "archived": "docs\\r5\\evidence\\f6-f7-final-20261126\\product-e2e.json",
+    "sha256": "d1e74d7490f0ec88fdb351682c26785b7c33aafff8f673b44452c6af15551801"
+  },
+  {
+    "original": ".traceguard-tmp\\r5\\f6-final\\ci-ef49.json",
+    "archived": "docs\\r5\\evidence\\f6-f7-final-20261126\\ci-code.json",
+    "sha256": "040ea3a5d35750348769a659d7259a19123bf930c7862980035c28973052db6f"
+  },
+  {
+    "original": ".traceguard-tmp\\r5\\f7-closed-loop\\cb96beb79ea34b1aa0855b191e84bf30\\closed-loop-report.json",
+    "archived": "docs\\r5\\evidence\\f6-f7-final-20261126\\closed-loop-report.json",
+    "sha256": "0b08538ce783ecafe09dab99ff5eea5ad01e53643ff027c0439eec8c3bc87f77"
+  },
+  {
+    "original": ".traceguard-tmp\\r5\\f7-closed-loop\\cb96beb79ea34b1aa0855b191e84bf30\\01-explorer-approved.png",
+    "archived": "docs\\r5\\evidence\\f6-f7-final-20261126\\01-explorer-approved.png",
+    "sha256": "e2f3b36fa9781edbb7d72443e57137b87beca8654329f6bb2b9494124e83991e"
+  },
+  {
+    "original": ".traceguard-tmp\\r5\\f7-closed-loop\\cb96beb79ea34b1aa0855b191e84bf30\\02-real-ui-drift.png",
+    "archived": "docs\\r5\\evidence\\f6-f7-final-20261126\\02-real-ui-drift.png",
+    "sha256": "91ec1753af4916d18af40a1fc93c74d9cd927968c63370dd38e539a9ddd78525"
+  },
+  {
+    "original": ".traceguard-tmp\\r5\\f7-closed-loop\\cb96beb79ea34b1aa0855b191e84bf30\\03-promoted-repair.png",
+    "archived": "docs\\r5\\evidence\\f6-f7-final-20261126\\03-promoted-repair.png",
+    "sha256": "db0714d938b34804ab9d1e723f9b0f6afa45ff802181c252fbf15cdb12346189"
+  },
+  {
+    "original": ".traceguard-tmp\\r5\\f7-closed-loop\\cb96beb79ea34b1aa0855b191e84bf30\\04-rollback-history.png",
+    "archived": "docs\\r5\\evidence\\f6-f7-final-20261126\\04-rollback-history.png",
+    "sha256": "ed56e6230ce522fe7359ae0ffb4b980754c5007f7a6b00e5be3f0497c8cc34b2"
+  },
+  {
+    "original": ".traceguard-tmp\\r5\\f6-final\\aggregate-first-full-pytest.log",
+    "archived": "docs\\r5\\evidence\\f6-f7-final-20261126\\preliminary\\aggregate-first-full-pytest.log",
+    "sha256": "a789eb883637b327e13393247d77d9afe9de8eaba8d5bbee7747d0508cbdd62e"
+  },
+  {
+    "original": ".traceguard-tmp\\r5\\f6-final\\aggregate-second-full-pytest.log",
+    "archived": "docs\\r5\\evidence\\f6-f7-final-20261126\\preliminary\\aggregate-second-full-pytest.log",
+    "sha256": "6b0f578d8bab4e86149e2602657cd943e3ce99080ea3655243064078c217de9f"
+  },
+  {
+    "original": ".traceguard-tmp\\r5\\f6-final\\aggregate-first.log",
+    "archived": "docs\\r5\\evidence\\f6-f7-final-20261126\\preliminary\\aggregate-first.log",
+    "sha256": "c98c586750fd86ee93e5b145143aded536c0fe74739b41e2085fef78abb53c8e"
+  },
+  {
+    "original": ".traceguard-tmp\\r5\\f6-final\\aggregate-final.log",
+    "archived": "docs\\r5\\evidence\\f6-f7-final-20261126\\preliminary\\aggregate-final.log",
+    "sha256": "3882d75ab31e27e60fe0460a8c2a914981cfb5cfa685e677f0831456d7cc21d0"
+  },
+  {
+    "original": ".traceguard-tmp\\r5\\f6-final\\ci-python-attempt1.log",
+    "archived": "docs\\r5\\evidence\\f6-f7-final-20261126\\preliminary\\ci-python-attempt1.log",
+    "sha256": "847d3ae3ecca1fb5867b8b49580b432b5f0ac707a1eeb27cbf0cabb689076b14"
+  }
+]
