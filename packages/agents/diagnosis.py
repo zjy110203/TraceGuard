@@ -165,7 +165,7 @@ class DiagnosisService:
     def diagnose(self, diagnosis_id: str, run_id: str, bundle: dict[str, Any]) -> Diagnosis:
         verdict = str(bundle.get("test_verdict", ""))
         failed_steps = list(bundle.get("failed_step_ids", []))
-        evidence = list(bundle.get("evidence", []))
+        evidence = [e for e in bundle.get("evidence", []) if e.get("run_id", run_id) == run_id]
         events = list(bundle.get("events", []))
         # Only real fault signals count as divergence. The eval EventLog also
         # records CLEARED/DISARMED bookkeeping and business events (e.g.
@@ -413,6 +413,30 @@ class DiagnosisService:
         locator_evidence = [
             e for e in evidence if "locator" in str(e.get("evidence_type", "")).lower()
         ]
+        missing_locator = [
+            e
+            for e in locator_evidence
+            if e.get("step_id") in failed_steps
+            and e.get("source_trust") == "observed"
+            and e.get("payload", {}).get("match_count") == 0
+            and e.get("payload", {}).get("error_type") == "TimeoutError"
+        ]
+        if missing_locator:
+            hyp.append(
+                Hypothesis(
+                    "h-locator-missing",
+                    "failed selector has no matching node in the live DOM",
+                    "TEST_ASSET",
+                    "LOCATOR",
+                    status="SUPPORTED",
+                    supporting=[
+                        EvidenceRef(str(e["evidence_id"]), "evidence", EvidenceRole.SUPPORT)
+                        for e in missing_locator
+                    ],
+                    confirmation_rule="R-LOC-002: failed step + timeout + zero DOM matches; "
+                    "supports locator drift, does not prove a product root cause",
+                )
+            )
         if repeated and len(set(repeated)) > 1 and locator_evidence:
             hyp.append(
                 Hypothesis(
@@ -449,6 +473,8 @@ class DiagnosisService:
         # supporting evidence and NO contradicting evidence is CONFIRMED; those
         # with both sides are SUPPORTED (contradiction prevents confirmation).
         for h in hyp:
+            if h.hypothesis_id in {"h-locator-missing", "h-unknown"}:
+                continue  # absence supports drift; it cannot establish the root cause
             if not h.supporting:
                 continue
             if h.contradicting:

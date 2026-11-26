@@ -300,7 +300,7 @@ def test_real_concurrent_cas_and_idempotency(tmp_path, identical) -> None:
 
     from packages.execution.models import load_case
 
-    svc = RepairService(case_dir=tmp_path)
+    svc = RepairService()
     base = _base()
     path = tmp_path / "v1.json"
     path.write_text(json.dumps(base.to_dict()), encoding="utf-8")
@@ -325,9 +325,11 @@ def test_real_concurrent_cas_and_idempotency(tmp_path, identical) -> None:
     def run(pid):
         barrier.wait()
         return svc.promote(
-            pid, current_formal=base,
+            pid,
+            current_formal=base,
             read_formal=lambda: load_case(tmp_path / ("v2.json" if writes else "v1.json")),
-            persist_formal=write, sandbox_replay=lambda _: True,
+            persist_formal=write,
+            sandbox_replay=lambda _: True,
         )[0].state
 
     with ThreadPoolExecutor(2) as pool:
@@ -336,7 +338,9 @@ def test_real_concurrent_cas_and_idempotency(tmp_path, identical) -> None:
     winner = "a" if results[0] == "PROMOTED" else "b"
     loser = "b" if winner == "a" else "a"
     assert len(writes) == 1
-    assert load_case(tmp_path / "v2.json").to_dict() == writes[0]
+    assert json.loads((tmp_path / "v2.json").read_text(encoding="utf-8")) == json.loads(
+        json.dumps(writes[0])
+    )
     assert svc.formal_version(base.case_id).version == 2
     assert svc.get(loser)["promotion_record"] == {}
     assert svc.get_replay(loser)["proposal_id"] == loser
@@ -373,4 +377,4 @@ def test_rollback_records_target_reason_operator() -> None:
     assert rolled.promotion_record["rolled_back_to"] == 1
     assert rolled.promotion_record["rollback_reason"] == "regression"
     assert rolled.promotion_record["rollback_operator"] == "ops"
-    assert svc.formal_version("TC-REPAIR").version == 1
+    assert svc.formal_version("TC-REPAIR").version == 3

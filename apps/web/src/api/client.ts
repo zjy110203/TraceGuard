@@ -167,6 +167,11 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  rollbackRepair: (id: string, body: { target_version: number; operator: string; reason: string }) =>
+    request<RepairProposal>(`/repairs/${encodeURIComponent(id)}/rollback`, {
+      method: 'POST', body: JSON.stringify(body),
+    }),
+
   benchmarkDatasets: () => request<DatasetRow[]>('/benchmark/datasets'),
   benchmarkExperiments: () => request<ExperimentRow[]>('/benchmark/experiments'),
 

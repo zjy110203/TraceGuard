@@ -40,6 +40,7 @@ def client(tmp_path: Path) -> Any:
     app = build_app(
         Settings(
             app_env="test",
+            case_dir=str(cases),
             database_url="sqlite:///" + db.replace("\\", "/"),
             # benchmark store must be empty for the start-empty assertions
             benchmark_data_dir=str(tmp_path / "bdata"),
@@ -300,7 +301,7 @@ def test_repair_api_requires_supported_evidence_and_advances_review_state(
 
 
 def test_repair_api_replays_and_promotes_append_only_version(
-    client: Any, monkeypatch: pytest.MonkeyPatch
+    client: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     import apps.api.extensions as extensions
 
@@ -358,7 +359,15 @@ def test_repair_api_replays_and_promotes_append_only_version(
         ).status_code
         == 200
     )
-    replay = client.post(f"/api/v1/repairs/{proposal_id}/sandbox-replay")
+    from apps.teamflow.main import build_app as build_teamflow
+    from tests.netutil import serve_uvicorn
+
+    target = build_teamflow(
+        Settings(app_env="test", database_url=f"sqlite:///{(tmp_path / 'sut.db').as_posix()}")
+    )
+    with serve_uvicorn(target) as base_url:
+        client.app.state.teamflow_base_url = base_url
+        replay = client.post(f"/api/v1/repairs/{proposal_id}/sandbox-replay")
     assert replay.status_code == 200, replay.text
     assert replay.json()["sandbox_replay"]["status"] == "PASSED"
     promoted = client.post(
@@ -371,6 +380,26 @@ def test_repair_api_replays_and_promotes_append_only_version(
     detail = client.get(f"/api/v1/cases/{case_id}").json()
     assert detail["version"] == 2
     assert detail["versions"][-1]["file"] == f"{case_id}.v2.json"
+    repeated = client.post(
+        f"/api/v1/repairs/{proposal_id}/promote",
+        json={"operator": "release-operator", "reason": "retry"},
+    )
+    assert repeated.json()["promotion_record"] == promoted.json()["promotion_record"]
+    for actor in ("", "agent", "system", "mock"):
+        refused = client.post(
+            f"/api/v1/repairs/{proposal_id}/rollback",
+            json={"target_version": 1, "operator": actor, "reason": "undo"},
+        )
+        assert refused.status_code == 422
+    rolled = client.post(
+        f"/api/v1/repairs/{proposal_id}/rollback",
+        json={"target_version": 1, "operator": "release-operator", "reason": "undo"},
+    )
+    assert rolled.status_code == 200, rolled.text
+    assert rolled.json()["state"] == "ROLLED_BACK"
+    assert client.get(f"/api/v1/cases/{case_id}").json()["version"] == 3
+    assert rolled.json()["promotion_record"]["rollback_id"]
+    assert (client.app.state.case_dir / f"{case_id}.v2.json").exists()
 
 
 def test_dispatch_status_exposes_broker_semantics(client: Any) -> None:
@@ -379,6 +408,79 @@ def test_dispatch_status_exposes_broker_semantics(client: Any) -> None:
     assert data["dead_letters"] == []
     assert data["workers"] >= 1
     assert "handled" in data["dispatcher"]
+
+
+def test_repair_http_race_persisted_audit_and_same_candidate(client: Any) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from packages.execution.models import load_case
+    from packages.execution.repair import RepairService
+    from tests.test_repair_transactions import prepared
+
+    root = client.app.state.case_dir
+    prepared(root, "a")
+    service = prepared(root, "b")
+    client.app.state.repair_service = service
+    barrier = Barrier(2)
+
+    def run(pid):
+        barrier.wait()
+        return client.post(
+            f"/api/v1/repairs/{pid}/promote", json={"operator": "ops", "reason": "race"}
+        )
+
+    with ThreadPoolExecutor(2) as pool:
+        results = list(pool.map(run, ["a", "b"]))
+    assert sorted(r.status_code for r in results) == [200, 409]
+    winner = "a" if results[0].status_code == 200 else "b"
+    loser = "b" if winner == "a" else "a"
+    restored = RepairService(root / "repairs.jsonl", case_dir=root)
+    assert restored.get(winner)["state"] == "PROMOTED"
+    assert restored.get(loser)["state"] == "PROMOTION_FAILED"
+    assert restored.get(loser)["promotion_record"] == {}
+    assert restored.get_replay(loser)["status"] == "PASSED"
+    assert restored._disk_current("TC-REPAIR").version == 2
+    assert load_case(root / "TC-REPAIR.v2.json").steps == restored._candidates[winner].steps
+    audit = client.get("/api/v1/repairs/audit").json()
+    assert sum(bool(row["promotion_record"]) for row in audit) == 1
+    assert sum(len(row["transactions"]) for row in audit) == 1
+    again = client.post(
+        f"/api/v1/repairs/{winner}/promote", json={"operator": "ops", "reason": "retry"}
+    )
+    assert again.json()["promotion_record"] == restored.get(winner)["promotion_record"]
+    assert client.get("/api/v1/repairs/audit").json() == audit
+
+
+def test_rollback_file_failure_retries_durable_intent(client: Any, monkeypatch) -> None:
+    import packages.execution.repair as repair
+    from tests.test_repair_transactions import prepared, promote
+
+    svc = prepared(client.app.state.case_dir)
+    client.app.state.repair_service = svc
+    promote(svc)
+    before = (svc.case_dir / "TC-REPAIR.v2.json").read_bytes()
+
+    def fail_replace(*args):
+        raise OSError("injected Windows replace failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(repair.os, "replace", fail_replace)
+        response = client.post(
+            "/api/v1/repairs/p/rollback",
+            json={"target_version": 1, "operator": "ops", "reason": "undo"},
+        )
+        assert response.status_code == 422
+    assert svc.get("p")["state"] == "PROMOTED"
+    assert (svc.case_dir / "TC-REPAIR.v2.json").read_bytes() == before
+    assert not (svc.case_dir / "TC-REPAIR.v3.json").exists()
+    assert svc.transactions("p")[-1]["status"] == "INTENT"
+    response = client.post(
+        "/api/v1/repairs/p/rollback",
+        json={"target_version": 1, "operator": "ops", "reason": "undo"},
+    )
+    assert response.status_code == 200, response.text
+    assert svc._disk_current("TC-REPAIR").version == 3
 
 
 def test_register_workbench_publishes_eval_plane_settings(client: Any) -> None:

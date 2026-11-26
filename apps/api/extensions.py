@@ -15,9 +15,7 @@ from __future__ import annotations
 
 import enum
 import json
-import os
 import re
-import tempfile
 import uuid
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime, timedelta
@@ -32,6 +30,7 @@ from benchmark.engine import DatasetManager, ExperimentManager, GroundTruthManag
 from packages.agents.diagnosis import DiagnosisService
 from packages.agents.probe_catalog import build_default_engine, specs_as_dicts
 from packages.core.errors import ConflictError, NotFoundError, ValidationError
+from packages.execution.formal_lock import case_lock
 from packages.execution.models import (
     TestCaseVersion,
     case_from_dict,
@@ -364,6 +363,10 @@ def _versions_for(case_dir: Path, case_id: str) -> list[dict[str, Any]]:
 def run_diagnosis(run_id: str, request: Request) -> dict[str, Any]:
     orch = request.app.state.orchestrator
     report = orch.runs.report(run_id)
+    diagnosis_dir = request.app.state.repair_service.store_path.parent / "diagnoses"
+    diagnosis_path = diagnosis_dir / f"dg_{run_id}.json"
+    if diagnosis_path.exists():
+        return json.loads(diagnosis_path.read_text(encoding="utf-8"))
     steps = report.get("steps", [])
     bundle = {
         "test_verdict": report.get("test_verdict", ""),
@@ -379,6 +382,8 @@ def run_diagnosis(run_id: str, request: Request) -> dict[str, Any]:
         ),
     }
     diagnosis = DiagnosisService().diagnose(f"dg_{run_id}", run_id, bundle)
+    diagnosis_dir.mkdir(parents=True, exist_ok=True)
+    diagnosis_path.write_text(json.dumps(diagnosis.to_dict(), ensure_ascii=False), encoding="utf-8")
     return diagnosis.to_dict()
 
 
@@ -432,6 +437,7 @@ def _repair_view(request: Request, proposal_id: str) -> dict[str, Any]:
         raise NotFoundError(str(exc)) from exc
     replay = request.app.state.repair_service.get_replay(proposal_id)
     record["sandbox_replay"] = replay
+    record["transactions"] = service.transactions(proposal_id)
     return record
 
 
@@ -461,25 +467,26 @@ def create_repair(body: CreateRepairBody, request: Request) -> dict[str, Any]:
     supporting = {str(item.get("ref_id") or "") for item in hypothesis.get("supporting", [])}
     if not set(body.evidence_refs) <= supporting:
         raise ValidationError("repair evidence refs must cite supporting diagnosis evidence")
-    base, _ = _find_case(_case_dir(request), body.case_id)
-    candidate = case_from_dict(body.candidate)
-    if candidate.case_id != body.case_id:
-        raise ValidationError("candidate case_id does not match selected formal case")
-    proposal_id = f"rp_{uuid.uuid4().hex[:12]}"
-    diff = [DiffEntry(**item) for item in body.diff]
-    try:
-        proposal = request.app.state.repair_service.create_proposal(
-            proposal_id,
-            base,
-            candidate,
-            change_kinds=tuple(body.change_kinds),
-            diff=diff,
-            source_run_id=body.source_run_id,
-            source_hypothesis_id=body.hypothesis_id,
-            source_evidence_refs=tuple(body.evidence_refs),
-        )
-    except ConflictError as exc:
-        raise ValidationError(str(exc)) from exc
+    with request.app.state.repair_service._lock, case_lock(_case_dir(request), body.case_id):
+        base, _ = _find_case(_case_dir(request), body.case_id)
+        candidate = case_from_dict(body.candidate)
+        if candidate.case_id != body.case_id:
+            raise ValidationError("candidate case_id does not match selected formal case")
+        proposal_id = f"rp_{uuid.uuid4().hex[:12]}"
+        diff = [DiffEntry(**item) for item in body.diff]
+        try:
+            proposal = request.app.state.repair_service.create_proposal(
+                proposal_id,
+                base,
+                candidate,
+                change_kinds=tuple(body.change_kinds),
+                diff=diff,
+                source_run_id=body.source_run_id,
+                source_hypothesis_id=body.hypothesis_id,
+                source_evidence_refs=tuple(body.evidence_refs),
+            )
+        except ConflictError as exc:
+            raise ValidationError(str(exc)) from exc
     return {**proposal.to_dict(), "sandbox_replay": None}
 
 
@@ -506,6 +513,7 @@ def repair_audit(request: Request) -> list[dict[str, Any]]:
             "source_hypothesis_id": row.get("source_hypothesis_id", ""),
             "source_evidence_refs": row.get("source_evidence_refs", []),
             "promotion_record": row["promotion_record"],
+            "transactions": request.app.state.repair_service.transactions(row["proposal_id"]),
         }
         for row in rows
     ]
@@ -574,15 +582,26 @@ def sandbox_repair(proposal_id: str, request: Request) -> dict[str, Any]:
     if record["state"] != "APPROVED":
         raise ValidationError("sandbox replay requires human approval")
     base, candidate = service._candidate_pair(proposal_id)
-    root = Path(tempfile.gettempdir()) / "traceguard-repair-sandboxes"
+    root = Path(".traceguard-tmp") / "r5" / "repair-sandboxes"
+    revision = httpx.get(
+        f"{request.app.state.teamflow_base_url}/__eval__/ui-revision",
+        headers={"X-Eval-Token": request.app.state.eval_token},
+        timeout=5,
+        trust_env=False,
+    )
+    revision.raise_for_status()
     result = RepairSandbox(
         proposal_id=proposal_id,
         base_case=base,
         candidate=candidate,
         on_evidence=None,
         root=root,
+        ui_revision=revision.json()["revision"],
+        source_base_url=request.app.state.teamflow_base_url,
+        data_provider=request.app.state.orchestrator.data_provider,
     ).run()
     replay = {
+        "replay_id": f"replay_{uuid.uuid4().hex}",
         "proposal_id": proposal_id,
         "candidate_digest": service.case_digest(candidate),
         "base_version": record["base_testcase_version"],
@@ -610,39 +629,51 @@ def promote_repair(proposal_id: str, body: RepairOperatorBody, request: Request)
         raise ValidationError("promotion requires a named human operator")
     if not body.reason.strip():
         raise ValidationError("promotion reason is required for audit")
-    if is_self_approver(body.operator):
+    if is_self_approver(body.operator) or body.operator.strip().casefold() == "mock":
         raise ValidationError("automated actors cannot promote repair assets")
     record = _repair_view(request, proposal_id)
     case_id = str(record["case_id"])
-    target_path = _case_dir(request) / f"{case_id}.v{record['candidate_testcase_version']}.json"
-
-    def persist_formal(version: Any) -> None:
-        if target_path.exists():
-            raise ConflictError("formal version file already exists; refusing overwrite")
-        temp_path = target_path.with_name(f".{target_path.name}.{uuid.uuid4().hex}.tmp")
-        with temp_path.open("w", encoding="utf-8") as stream:
-            stream.write(json.dumps(version.to_dict(), ensure_ascii=False, indent=2) + "\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temp_path, target_path)
-
     try:
         promoted, version = request.app.state.repair_service.promote(
             proposal_id,
-            current_formal=case_from_dict(request.app.state.repair_service._candidates[
-                f"__base__{proposal_id}"
-            ].to_dict()),
+            current_formal=case_from_dict(
+                request.app.state.repair_service._candidates[f"__base__{proposal_id}"].to_dict()
+            ),
             read_formal=lambda: _find_case(_case_dir(request), case_id)[0],
             sandbox_replay=lambda _candidate: True,
             operator=body.operator.strip(),
             promotion_reason=body.reason.strip(),
-            persist_formal=persist_formal,
-
         )
     except OSError as exc:
         raise ValidationError(f"promotion asset write failed: {type(exc).__name__}") from exc
     if promoted.state != "PROMOTED":
         raise ConflictError(promoted.failure_reason or "formal version changed during promotion")
+    return _repair_view(request, proposal_id)
+
+
+class RollbackBody(RepairOperatorBody):
+    target_version: int
+
+
+@router.post("/repairs/{proposal_id}/rollback")
+def rollback_repair(proposal_id: str, body: RollbackBody, request: Request) -> dict[str, Any]:
+    record = _repair_view(request, proposal_id)
+    case_id = record["case_id"]
+    versions = [
+        load_case(_case_dir(request) / row["file"])
+        for row in _versions_for(_case_dir(request), case_id)
+    ]
+    target = next(
+        (v for v in versions if v.case_id == case_id and v.version == body.target_version), None
+    )
+    if target is None:
+        raise NotFoundError("rollback target version not found")
+    try:
+        request.app.state.repair_service.rollback(
+            proposal_id, target_version=target, reason=body.reason, operator=body.operator
+        )
+    except OSError as exc:
+        raise ValidationError(f"rollback asset write failed: {type(exc).__name__}") from exc
     return _repair_view(request, proposal_id)
 
 

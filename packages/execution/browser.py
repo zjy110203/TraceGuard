@@ -628,6 +628,41 @@ class BrowserManager:
             target_gone = self._is_target_gone(exc)
             if target_gone:
                 self._mark_page_lost(detail)
+            failure_evidence: list[str] = []
+            if (
+                not target_gone
+                and type(exc).__name__ == "TimeoutError"
+                and step.action in {"click", "fill", "assert_visible", "assert_text"}
+            ):
+                # Read the live DOM after the timeout. A timeout alone is not
+                # enough to blame a locator (the node may exist but be disabled).
+                try:
+                    selector = self._target(step.target)
+                    count = page.locator(selector).count()
+                    ev = EvidenceRecord.create(
+                        evidence_type="locator_failure",
+                        source=f"browser:{step.step_id}",
+                        run_id=run_id,
+                        step_id=step.step_id,
+                        summary=f"locator timeout: {count} matching nodes",
+                        source_trust="observed",
+                        payload={
+                            "selector": selector,
+                            "match_count": count,
+                            "error_type": "TimeoutError",
+                            "error": detail,
+                        },
+                    )
+                    self._evidence.append(ev)
+                    failure_evidence.append(ev.evidence_id)
+                    for eid in (
+                        self._capture_screenshot(run_id, step.step_id, "failure"),
+                        self._capture_dom(run_id, step.step_id),
+                    ):
+                        if eid:
+                            failure_evidence.append(eid)
+                except Exception as capture_exc:
+                    self._record_evidence_error(f"locator failure capture: {capture_exc}")
             self.collector.emit(
                 "step.error",
                 step_id=step.step_id,
@@ -638,6 +673,7 @@ class BrowserManager:
                 step.action,
                 False,
                 detail,
+                tuple(failure_evidence),
                 blocked=detail if target_gone else "",
             )
 

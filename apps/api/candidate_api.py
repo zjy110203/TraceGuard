@@ -477,7 +477,9 @@ def approve_candidate(request: Request, candidate_id: str, body: ReviewRequest) 
                 details={"case_id": formal.case_id, "file": target.name},
             )
         case_dir.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps(formal.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        target.write_text(
+            json.dumps(formal.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
     record.update(
         {

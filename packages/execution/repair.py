@@ -26,6 +26,7 @@ import hashlib
 import json
 import os
 import threading
+import uuid
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
@@ -180,6 +181,16 @@ class RepairStore:
 
     def append(self, snapshot: dict[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        # Finish a preserved torn tail with a delimiter before appending. The
+        # original bytes remain in the journal and in the recovery sidecar.
+        if self.path.exists():
+            raw = self.path.read_bytes()
+            if raw and not raw.endswith(b"\n"):
+                self.latest()  # fail closed unless this is the documented tail case
+                with self.path.open("ab") as stream:
+                    stream.write(b"\n")
+                    stream.flush()
+                    os.fsync(stream.fileno())
         line = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         with self.path.open("a", encoding="utf-8", newline="\n") as stream:
             stream.write(line + "\n")
@@ -190,10 +201,57 @@ class RepairStore:
         if not self.path.exists():
             return None
         latest: dict[str, Any] | None = None
-        with self.path.open(encoding="utf-8") as stream:
-            for line in stream:
-                if line.strip():
-                    latest = json.loads(line)
+        raw = self.path.read_bytes()
+        lines = raw.splitlines(keepends=True)
+        offset = 0
+        for index, line in enumerate(lines):
+            if not line.strip():
+                offset += len(line)
+                continue
+            try:
+                record = json.loads(line)
+                if not isinstance(record, dict):
+                    raise ValueError("snapshot must be an object")
+                latest = record
+            except (ValueError, UnicodeDecodeError) as exc:
+                payload = line[:-1] if line.endswith(b"\n") else line
+                incomplete = (
+                    isinstance(exc, json.JSONDecodeError)
+                    and (exc.pos >= len(exc.doc.rstrip()) - 1 or "Unterminated string" in exc.msg)
+                ) or (
+                    isinstance(exc, UnicodeDecodeError)
+                    and exc.reason == "unexpected end of data"
+                    and exc.end == len(line)
+                )
+                digest = hashlib.sha256(payload).hexdigest()
+                evidence = self.path.with_name(f"{self.path.name}.torn-{offset}-{digest}.bin")
+                receipt = evidence.with_suffix(".json")
+                previously_preserved = evidence.exists() and evidence.read_bytes() == payload
+                if not previously_preserved and (
+                    index != len(lines) - 1
+                    or line.endswith(b"\n")
+                    or not line.lstrip().startswith(b"{")
+                    or not incomplete
+                ):
+                    raise ValidationError(f"corrupt repair history at byte {offset}") from exc
+                if not previously_preserved:
+                    with evidence.open("xb") as stream:
+                        stream.write(payload)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    receipt.write_text(
+                        json.dumps(
+                            {
+                                "event": "TORN_TAIL_PRESERVED",
+                                "offset": offset,
+                                "sha256": digest,
+                                "at": _now(),
+                                "original_journal": str(self.path),
+                            }
+                        ),
+                        encoding="utf-8",
+                    )
+            offset += len(line)
         return latest
 
 
@@ -209,6 +267,8 @@ class RepairService:
         self.store_path = store_path
         self.store = RepairStore(store_path) if store_path is not None else None
         self._replays: dict[str, dict[str, Any]] = {}
+        self._transactions: dict[str, dict[str, Any]] = {}
+        self.fault_hook: Callable[[str], None] = lambda _stage: None
         if store_path is not None:
             self._restore()
 
@@ -217,6 +277,14 @@ class RepairService:
             "proposals": [p.to_dict() for p in self._proposals.values()],
             "candidates": {k: v.to_dict() for k, v in self._candidates.items()},
             "replays": self._replays,
+            "transactions": self._transactions,
+            "store_recovery_evidence": (
+                sorted(
+                    p.name for p in self.store.path.parent.glob(f"{self.store.path.name}.torn-*")
+                )
+                if self.store
+                else []
+            ),
         }
 
     def _persist(self) -> None:
@@ -244,6 +312,138 @@ class RepairService:
             key: case_from_dict(value) for key, value in latest.get("candidates", {}).items()
         }
         self._replays = dict(latest.get("replays", {}))
+        self._transactions = dict(latest.get("transactions", {}))
+        if self.case_dir is not None:
+            self.recover()
+
+    def _formal_path(self, case_id: str, version: int) -> Path:
+        if self.case_dir is None:
+            raise ValidationError("formal asset directory is not configured")
+        return self.case_dir / f"{case_id}.v{version}.json"
+
+    def _disk_current(self, case_id: str) -> TestCaseVersion:
+        from packages.execution.models import case_from_dict
+
+        assert self.case_dir is not None
+        cases = []
+        for path in self.case_dir.glob("*.json"):
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict) and raw.get("case_id") == case_id:
+                cases.append(case_from_dict(raw))
+        if not cases:
+            raise ConflictError("formal case is missing")
+        return max(cases, key=lambda case: case.version)
+
+    def _finish_transaction(self, tx: dict[str, Any]) -> None:
+        from packages.execution.models import case_from_dict
+
+        p = self._get(tx["proposal_id"])
+        case = case_from_dict(tx["asset"])
+        tx["status"] = "COMMITTED"
+        self._persist()
+        self.fault_hook("committed")
+        if tx["kind"] == "promotion":
+            p.promotion_record = dict(tx["audit"])
+            p.state = "PROMOTED"
+        else:
+            p.promotion_record.update(tx["audit"])
+            p.state = "ROLLED_BACK"
+        p.failure_reason = ""
+        self._candidates[f"__formal__{p.case_id}"] = case
+        self.fault_hook("before_state")
+        tx["status"] = "DONE"
+        try:
+            self._persist()
+        except Exception:
+            tx["status"] = "COMMITTED"
+            p.state = "APPROVED" if tx["kind"] == "promotion" else "PROMOTED"
+            raise
+
+    def recover(self) -> None:
+        """Recover only files carrying this durable transaction's ownership proof."""
+        with self._lock:
+            for tx in self._transactions.values():
+                if tx["status"] in {"DONE", "BLOCKED"}:
+                    continue
+                with case_lock(self.case_dir or Path("."), tx["case_id"]):
+                    path = self._formal_path(tx["case_id"], tx["target_version"])
+                    if not path.exists():
+                        continue  # intent reserves this target; same transaction may retry
+                    try:
+                        raw = json.loads(path.read_text(encoding="utf-8"))
+                    except (ValueError, UnicodeDecodeError):
+                        raw = None
+                    if raw != tx["asset"]:
+                        tx["status"] = "BLOCKED"
+                        self._get(
+                            tx["proposal_id"]
+                        ).failure_reason = "BLOCKED: transaction asset mismatch"
+                        self._persist()
+                        continue
+                    self.fault_hook("recovery")
+                    self._finish_transaction(tx)
+
+    def _write_transaction(self, tx: dict[str, Any]) -> None:
+        path = self._formal_path(tx["case_id"], tx["target_version"])
+        if path.exists():
+            raise ConflictError("formal target exists; recovery is required")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp = path.with_name(f".{path.name}.{tx['transaction_id']}.tmp")
+        with temp.open("w", encoding="utf-8", newline="\n") as stream:
+            stream.write(json.dumps(tx["asset"], ensure_ascii=False, sort_keys=True) + "\n")
+            self.fault_hook("temp_written")
+            stream.flush()
+            os.fsync(stream.fileno())
+        self.fault_hook("temp_synced")
+        os.replace(temp, path)
+        self.fault_hook("replaced")
+        self._finish_transaction(tx)
+
+    def _new_transaction(
+        self,
+        p: RepairProposal,
+        case: TestCaseVersion,
+        current: TestCaseVersion,
+        kind: str,
+        audit: dict[str, Any],
+    ) -> None:
+        path = self._formal_path(p.case_id, case.version)
+        for tx in self._transactions.values():
+            if tx["case_id"] == p.case_id and tx["target_version"] == case.version:
+                if (
+                    tx["proposal_id"] == p.proposal_id
+                    and tx["kind"] == kind
+                    and tx["status"] == "INTENT"
+                ):
+                    self._persist()  # retry must first prove the intent is durable
+                    self._write_transaction(tx)
+                    return
+                raise ConflictError("target reserved by an existing transaction")
+        if path.exists():
+            raise ConflictError("formal target already exists; ownership cannot be inferred")
+        tid = f"{kind}_{uuid.uuid4().hex}"
+        asset = json.loads(json.dumps({**case.to_dict(), "_repair_transaction": tid}))
+        if kind == "rollback":
+            asset["rollback_of_version"] = audit["rolled_back_to"]
+        audit = {**audit, f"{kind}_id": tid}
+        tx = {
+            "transaction_id": tid,
+            "proposal_id": p.proposal_id,
+            "case_id": p.case_id,
+            "base_version": current.version,
+            "base_digest": self.case_digest(current),
+            "target_version": case.version,
+            "candidate_digest": self.case_digest(case),
+            "kind": kind,
+            "status": "INTENT",
+            "asset": asset,
+            "audit": audit,
+        }
+        self.fault_hook("before_intent")
+        self._transactions[tid] = tx
+        self._persist()
+        self.fault_hook("intent")
+        self._write_transaction(tx)
 
     def save_replay(self, proposal_id: str, replay: dict[str, Any]) -> None:
         with self._lock:
@@ -254,6 +454,14 @@ class RepairService:
     def get_replay(self, proposal_id: str) -> dict[str, Any] | None:
         with self._lock:
             return self._replays.get(proposal_id)
+
+    def transactions(self, proposal_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            return [
+                {k: v for k, v in tx.items() if k != "asset"}
+                for tx in self._transactions.values()
+                if tx["proposal_id"] == proposal_id
+            ]
 
     @staticmethod
     def case_digest(case: TestCaseVersion) -> str:
@@ -391,7 +599,10 @@ class RepairService:
         """Atomic CAS promotion under a lock. One attempt per base version."""
         with self._lock, case_lock(self.case_dir or Path("."), self._get(proposal_id).case_id):
             p = self._get(proposal_id)
-            if read_formal is not None:
+            if self.case_dir is not None:
+                self.recover()
+                current_formal = self._disk_current(p.case_id)
+            elif read_formal is not None:
                 current_formal = read_formal()
             else:
                 current_formal = self.formal_version(p.case_id) or current_formal
@@ -444,6 +655,22 @@ class RepairService:
                 return p, current_formal
             # Atomic: append new immutable version + pointer + record together.
             promoted = replace(candidate, version=p.promotion_target_version)
+            if self.case_dir is not None:
+                self._new_transaction(
+                    p,
+                    promoted,
+                    current_formal,
+                    "promotion",
+                    {
+                        "target_version": promoted.version,
+                        "base_version": current_formal.version,
+                        "at": _now(),
+                        "operator": operator or p.approved_by,
+                        "reason": promotion_reason[:500],
+                        "cas_check": "passed",
+                    },
+                )
+                return p, promoted
             if persist_formal is not None:
                 persist_formal(promoted)
             self._transition(p, "PROMOTING")
@@ -473,21 +700,48 @@ class RepairService:
     def rollback(
         self, proposal_id: str, *, target_version: TestCaseVersion, reason: str, operator: str
     ) -> RepairProposal:
-        if not reason or not operator:
-            raise ValidationError("rollback requires reason and operator")
-        with self._lock:
+        if (
+            not reason.strip()
+            or is_self_approver(operator)
+            or operator.strip().casefold() == "mock"
+        ):
+            raise ValidationError("rollback requires reason and a named human operator")
+        with self._lock, case_lock(self.case_dir or Path("."), self._get(proposal_id).case_id):
             p = self._get(proposal_id)
-            self._transition(p, "ROLLED_BACK")
-            p.promotion_record = {
-                **p.promotion_record,
+            if self.case_dir is not None:
+                self.recover()
+            if p.state == "ROLLED_BACK":
+                if p.promotion_record["rolled_back_to"] != target_version.version:
+                    raise ConflictError("rollback already completed with another target")
+                return p
+            if p.state != "PROMOTED":
+                raise ConflictError("rollback requires PROMOTED")
+            current = (
+                self._disk_current(p.case_id) if self.case_dir else self.formal_version(p.case_id)
+            )
+            if current is None or current.version != p.promotion_record["target_version"]:
+                raise ConflictError("VERSION_CONFLICT: a later formal version exists")
+            expected = self._candidates[proposal_id]
+            if self.case_digest(current) != self.case_digest(expected):
+                raise ConflictError("VERSION_CONFLICT: promoted asset changed")
+            if target_version.case_id != p.case_id or target_version.version >= current.version:
+                raise ValidationError("rollback target must be a prior version of this case")
+            restored = replace(target_version, version=current.version + 1)
+            audit = {
                 "rolled_back_to": target_version.version,
-                "rollback_reason": reason[:500],
-                "rollback_operator": operator,
+                "rollback_reason": reason.strip()[:500],
+                "rollback_operator": operator.strip(),
                 "rolled_back_at": _now(),
+                "rollback_version": restored.version,
+                "original_promotion_id": p.promotion_record.get("promotion_id", ""),
             }
-            self._candidates[f"__formal__{p.case_id}"] = target_version
-            self._lock_version[p.case_id] = target_version.version
-            self._persist()
+            if self.case_dir is not None:
+                self._new_transaction(p, restored, current, "rollback", audit)
+            else:
+                p.promotion_record.update(audit)
+                p.state = "ROLLED_BACK"
+                self._candidates[f"__formal__{p.case_id}"] = restored
+                self._persist()
             return p
 
     def formal_version(self, case_id: str) -> TestCaseVersion | None:
@@ -510,7 +764,7 @@ class RepairService:
         return p
 
     def _candidate_pair(self, proposal_id: str) -> tuple[TestCaseVersion, TestCaseVersion]:
-        p = self._get(proposal_id)
+        self._get(proposal_id)
         base = self._candidates.get(f"__base__{proposal_id}")
         cand = self._candidates[proposal_id]
         if base is None:

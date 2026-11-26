@@ -46,6 +46,21 @@ def require_eval_token(
         raise HTTPException(status_code=401, detail="invalid eval token")
 
 
+@router.get("/ui-revision", dependencies=[Depends(require_eval_token)])
+def ui_revision(request: Request) -> dict[str, str]:
+    return {"revision": getattr(request.app.state, "ui_revision", "v1")}
+
+
+@router.post("/ui-revision", dependencies=[Depends(require_eval_token)])
+def set_ui_revision(body: dict[str, str], request: Request) -> dict[str, str]:
+    revision = body.get("revision", "")
+    if revision not in {"v1", "v2"}:
+        raise HTTPException(status_code=422, detail="unsupported demo UI revision")
+    request.app.state.ui_revision = revision
+    # This changes presentation only; no Ground Truth or Oracle data is touched.
+    return {"revision": revision}
+
+
 @router.get("/faults", dependencies=[Depends(require_eval_token)])
 def list_faults(db: Session = Depends(get_db)) -> list[dict[str, Any]]:  # type: ignore[assignment]
     return faults.list_faults(db)

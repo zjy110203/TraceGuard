@@ -26,10 +26,10 @@ const createForm = reactive({
 })
 
 // Per-proposal form state: multiple pending proposals must never share inputs.
-const forms = reactive<Record<string, { approver: string; record: string; reason: string; operator: string; promotionReason: string }>>({})
+const forms = reactive<Record<string, { approver: string; record: string; reason: string; operator: string; promotionReason: string; rollbackTarget: number }>>({})
 
 function formOf(id: string) {
-  if (!forms[id]) forms[id] = { approver: '', record: '', reason: '', operator: '', promotionReason: '' }
+  if (!forms[id]) forms[id] = { approver: '', record: '', reason: '', operator: '', promotionReason: '', rollbackTarget: 1 }
   return forms[id]
 }
 
@@ -153,6 +153,17 @@ async function promoteProposal(id: string): Promise<void> {
   await proposalAction(id, () => api.promoteRepair(id, {
     operator: f.operator.trim(), reason: f.promotionReason.trim(),
   }), '正式版本已追加晋升')
+}
+
+async function rollbackProposal(id: string): Promise<void> {
+  const f = formOf(id)
+  if (!f.operator.trim() || !f.reason.trim()) {
+    actionError.value = '回滚操作者和理由均必填。'
+    return
+  }
+  await proposalAction(id, () => api.rollbackRepair(id, {
+    target_version: f.rollbackTarget, operator: f.operator.trim(), reason: f.reason.trim(),
+  }), '已追加不可变回滚版本；历史版本保留')
 }
 
 async function proposalAction(
@@ -319,7 +330,15 @@ async function proposalAction(
             <button class="btn primary" type="button" :disabled="busyId === p.proposal_id || p.sandbox_replay?.status !== 'PASSED'" @click="promoteProposal(p.proposal_id)">人工晋升</button>
           </div>
         </div>
-        <p v-else-if="p.approved_by" class="small muted">
+        <div v-if="p.state === 'PROMOTED'" class="approval" data-testid="rollback-form">
+          <label class="field">回滚目标历史版本<input v-model.number="formOf(p.proposal_id).rollbackTarget" type="number" min="1" :max="p.base_testcase_version" /></label>
+          <label class="field">回滚操作者<input v-model="formOf(p.proposal_id).operator" /></label>
+          <label class="field">回滚理由<input v-model="formOf(p.proposal_id).reason" /></label>
+          <button class="btn danger" type="button" :disabled="busyId === p.proposal_id" @click="rollbackProposal(p.proposal_id)">追加回滚版本</button>
+        </div>
+        <p v-if="p.promotion_record.promotion_id" class="small mono">Promotion {{ p.promotion_record.promotion_id }}</p>
+        <p v-if="p.promotion_record.rollback_id" class="small mono">Rollback {{ p.promotion_record.rollback_id }} · v{{ p.promotion_record.rollback_version }} 恢复自 v{{ p.promotion_record.rolled_back_to }} · {{ p.promotion_record.rollback_operator }} · {{ p.promotion_record.rollback_reason }}</p>
+        <p v-if="p.approved_by" class="small muted">
           批准人：{{ p.approved_by }} · {{ p.approval_record }}
         </p>
         <p v-if="p.rejected_by" class="small muted">拒绝操作者：{{ p.rejected_by }}</p>

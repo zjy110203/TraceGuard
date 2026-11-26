@@ -37,12 +37,14 @@ import sys
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
+from packages.execution.dataref import TestDataProvider
 from packages.execution.models import TestCaseVersion, load_case
 from packages.execution.runner import LocalRunner
 
@@ -123,12 +125,18 @@ class RepairSandbox:
         control_case: TestCaseVersion | None = None,
         on_evidence: Callable[[dict[str, Any]], None] | None = None,
         root: Path | None = None,
+        ui_revision: str = "v1",
+        source_base_url: str = "",
+        data_provider: TestDataProvider | None = None,
     ) -> None:
         self.sandbox_id = f"sb_{uuid.uuid4().hex[:12]}"
         self.proposal_id = proposal_id
         self.base_case = base_case
         self.candidate = candidate
         self.control_case = control_case
+        self.ui_revision = ui_revision
+        self.source_base_url = source_base_url
+        self.data_provider = data_provider
         self.on_evidence = on_evidence
         # The root is injectable so tests can isolate each sandbox under their
         # own tmp_path. The previous fixed root accumulated one directory per
@@ -196,6 +204,14 @@ class RepairSandbox:
                 try:
                     if httpx.get(f"{url}/health", timeout=1.0, trust_env=False).status_code == 200:
                         self._target_url = url
+                        response = httpx.post(
+                            f"{url}/__eval__/ui-revision",
+                            headers={"X-Eval-Token": EVAL_TOKEN},
+                            json={"revision": self.ui_revision},
+                            timeout=5,
+                            trust_env=False,
+                        )
+                        response.raise_for_status()
                         return url
                 except httpx.HTTPError:
                     pass
@@ -301,8 +317,26 @@ class RepairSandbox:
             self._target_url,
             report_dir=self._dir / "reports" / label,
             eval_token=EVAL_TOKEN,
+            data_provider=self.data_provider,
         )
-        report = runner.run(case)
+        # Bind the source deployment's exact origin to our isolated deployment.
+        # Keep formal/candidate bytes and Oracle bindings unchanged; off-origin
+        # URLs remain untouched and are rejected by the browser network policy.
+        source = urlsplit(self.source_base_url)
+        steps = []
+        for step in case.steps:
+            target = urlsplit(step.target) if step.action in {"navigate", "api_call"} else None
+            if (
+                source.netloc
+                and target
+                and (target.scheme, target.netloc) == (source.scheme, source.netloc)
+            ):
+                step = replace(
+                    step,
+                    target=urlunsplit(("", "", target.path or "/", target.query, target.fragment)),
+                )
+            steps.append(step)
+        report = runner.run(replace(case, steps=tuple(steps)))
         duration = time.monotonic() - started
         if duration > REPLAY_BUDGET_S + 30:
             raise SandboxError(f"replay exceeded budget: {duration:.1f}s")
@@ -380,7 +414,11 @@ class RepairSandbox:
         if base is None or cand is None:
             result.reason = "replay incomplete"
             return
-        if base.test_verdict != "FAILED" and base.steps_ok == base.steps_total:
+        if (
+            base.test_verdict == "PASSED"
+            and base.steps_total > 0
+            and base.steps_ok == base.steps_total
+        ):
             result.verdict = "NO_BEHAVIORAL_CHANGE"
             result.reason = (
                 "baseline already passes; a repair cannot be validated against a "
@@ -415,6 +453,8 @@ class RepairSandbox:
 
         payload = {
             "sandbox_id": result.sandbox_id,
+            "ui_revision": self.ui_revision,
+            "origin_rebinding": {"from": self.source_base_url, "to": self._target_url},
             "proposal_id": result.proposal_id,
             "verdict": result.verdict,
             "reason": result.reason,
@@ -456,7 +496,17 @@ class RepairSandbox:
         if recorded.get("sandbox_id") != self.sandbox_id:
             return
         try:
-            shutil.rmtree(resolved)
+            # Windows may release a terminated child's inherited log handle
+            # slightly after wait(). Retry sharing violations only, bounded;
+            # persistent failure remains a failed replay cleanup.
+            for attempt in range(21):
+                try:
+                    shutil.rmtree(resolved)
+                    break
+                except OSError as exc:
+                    if getattr(exc, "winerror", None) not in {32, 33} or attempt == 20:
+                        raise
+                    time.sleep(0.1)
         except OSError as exc:
             # Failure is surfaced to run() (result.cleanup_error), not swallowed.
             self._cleanup_error = f"cleanup failed: {exc}"

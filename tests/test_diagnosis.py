@@ -40,6 +40,33 @@ TF_BASE = f"http://127.0.0.1:{TF_PORT}"
 EVAL_H = {"X-Eval-Token": "local-dev-eval-token-change-me"}
 
 
+@pytest.mark.parametrize(
+    "count, evidence_run, expected",
+    [(0, "r", "SUPPORTED"), (1, "r", "CANDIDATE"), (0, "other", "CANDIDATE")],
+)
+def test_observed_missing_locator_support_is_not_root_cause(count, evidence_run, expected):
+    diagnosis = DiagnosisService().diagnose(
+        "d",
+        "r",
+        {
+            "test_verdict": "FAILED",
+            "failed_step_ids": ["s"],
+            "evidence": [
+                {
+                    "evidence_id": "e",
+                    "evidence_type": "locator_failure",
+                    "run_id": evidence_run,
+                    "step_id": "s",
+                    "source_trust": "observed",
+                    "payload": {"match_count": count, "error_type": "TimeoutError"},
+                }
+            ],
+        },
+    )
+    assert diagnosis.hypotheses[0].status == expected
+    assert diagnosis.root_causes == ()
+
+
 @pytest.fixture(scope="module")
 def teamflow_server() -> None:
     config = uvicorn.Config(

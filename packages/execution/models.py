@@ -310,6 +310,9 @@ def _oracle_verdict(value: Any) -> OracleVerdict:
 def _version_from_dict(item: dict[str, Any]) -> TestCaseVersion:
     """Rebuild a version from JSON (used only by repository load)."""
     data = dict(item)
+    # Storage envelope metadata is not part of the active TestCase schema.
+    data.pop("_repair_transaction", None)
+    data.pop("rollback_of_version", None)
     data["intent"] = TestIntent(**data["intent"])
     data["steps"] = tuple(TestStep(**s) for s in data["steps"])
     data["assertions"] = tuple(AssertionSpec(**a) for a in data["assertions"])
