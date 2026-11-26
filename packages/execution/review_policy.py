@@ -10,6 +10,10 @@ SELF_APPROVER_IDENTIFIERS = frozenset(
     {
         "",
         "agent",
+        "mock",
+        "mock-agent",
+        "mock_agent",
+        "mock agent",
         "ai",
         "system",
         "auto",

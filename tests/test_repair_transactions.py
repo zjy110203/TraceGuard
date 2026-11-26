@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 from threading import Barrier
 
@@ -19,14 +20,17 @@ from packages.execution.repair import RepairService, RepairStore
 from tests.test_repair import _base, _locator_fix
 
 
-def prepared(root: Path, pid: str = "p") -> RepairService:
+def prepared(root: Path, pid: str = "p", *, different: bool = False) -> RepairService:
     root.mkdir(exist_ok=True)
     path = root / "base.json"
     if not path.exists():
         path.write_text(json.dumps(_base().to_dict()), encoding="utf-8")
     base = load_case(path)
     svc = RepairService(root / "repairs.jsonl", case_dir=root)
-    svc.create_proposal(pid, base, _locator_fix(base), change_kinds=("locator_update",), diff=[])
+    candidate = _locator_fix(base)
+    if different:
+        candidate = replace(candidate, title="different candidate")
+    svc.create_proposal(pid, base, candidate, change_kinds=("locator_update",), diff=[])
     svc.validate(pid)
     svc.submit_for_approval(pid)
     svc.approve(pid, approver="reviewer", approval_record="r")
@@ -36,7 +40,7 @@ def prepared(root: Path, pid: str = "p") -> RepairService:
         pid,
         {
             "proposal_id": pid,
-            "candidate_digest": svc.case_digest(_locator_fix(base)),
+            "candidate_digest": svc.case_digest(candidate),
             "base_version": 1,
             "evidence": evidence,
             "evidence_hash": digest,
@@ -169,7 +173,7 @@ def test_mismatch_blocked_and_no_unowned_adoption(tmp_path):
 @pytest.mark.parametrize("identical", [True, False])
 def test_persisted_concurrent_cas(tmp_path, identical):
     svc = prepared(tmp_path, "a")
-    svc = prepared(tmp_path, "b")
+    svc = prepared(tmp_path, "b", different=not identical)
     barrier = Barrier(2)
 
     def run(pid):
@@ -216,6 +220,41 @@ def test_jsonl_middle_corruption_fails_closed(tmp_path):
     path.write_bytes(b'{}\n{"broken"\n{}\n')
     with pytest.raises(ValidationError, match="corrupt repair history"):
         RepairStore(path).latest()
+
+
+@pytest.mark.parametrize("raw", [b"not json", b'{"a":bad}', b"[]"])
+def test_malformed_complete_tail_is_not_torn_write(tmp_path, raw):
+    path = tmp_path / "repairs.jsonl"
+    path.write_bytes(b"{}\n" + raw)
+    with pytest.raises(ValidationError):
+        RepairStore(path).latest()
+    assert path.read_bytes() == b"{}\n" + raw
+
+
+def test_completed_transaction_missing_or_modified_asset_blocks(tmp_path):
+    svc = prepared(tmp_path)
+    promote(svc)
+    path = tmp_path / "TC-REPAIR.v2.json"
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["title"] = "unexpected external modification"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    before = path.read_bytes()
+    svc = RepairService(tmp_path / "repairs.jsonl", case_dir=tmp_path)
+    with pytest.raises(ConflictError, match="BLOCKED"):
+        promote(svc)
+    assert path.read_bytes() == before
+    assert svc.transactions("p")[0]["status"] == "BLOCKED"
+
+
+def test_create_rechecks_current_base_under_same_lock(tmp_path):
+    svc = prepared(tmp_path)
+    promote(svc)
+    base = load_case(tmp_path / "base.json")
+    with pytest.raises(ConflictError, match="VERSION_CONFLICT"):
+        svc.create_proposal(
+            "stale", base, _locator_fix(base), change_kinds=("locator_update",), diff=[]
+        )
+    assert len(svc.list()) == 1
 
 
 @pytest.mark.parametrize("stage", ["intent", "replaced", "before_state"])

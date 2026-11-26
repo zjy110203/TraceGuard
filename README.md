@@ -5,8 +5,9 @@ Event/Evidence 证据链 + 多假设诊断 + 证据图 + Oracle 保护的自愈�
 UI-FaultBench 评测 + 产品级 Vue3 工作台。
 
 > 设计依据：`docs/design/`（11 篇规格）+ `docs/roadmap/`（十四阶段实施路线）。
-> 当前状态：R5-5.3-F1～F6 已集成；工作台 Mock Agent 浏览器旅程和单 Run 证据关联 E2E 已通过。**F7 单一业务链覆盖至 Diagnosis；Repair 集成在独立真实 Run→Diagnosis→Proposal 测试中通过，尚未在同一条端到端旅程中完成 Repair 晋升。** 分阶段细节见 [`R5-5.3-F1-F7 实施补充与验收状态`](docs/r5/R5-5.3-F1-F7-实施补充与验收状态.md)。
-> 最新完整 Python 回归：**802 passed / 1 skipped / 1 warning**（2026-11-26）。Security 100 passed、Product E2E 24 passed、Browser E2E 142 passed / 2 个数据条件 SKIP；详细门禁及统一 runner 首轮启动阻断的修复情况见增量报告。GitHub Actions 本批次 `NOT_RUN`；历史 R5-5.1-R 的 626 数字不再作为当前状态。
+> 当前状态（2026-11-26）：F6 并发 CAS、进程中断恢复、正式不可变 Rollback，以及同一 Explorer 来源的真实 Chromium Repair/Promotion/Regression/Rollback E2E 已通过专项验证。完整 `verify_all --mode all` 与最新 CI 正在执行，整体收口仍 PARTIAL。见 [最终攻坚验收记录](docs/r5/R5-5.3-F6-F7-最终攻坚验收记录.md)。
+> 历史门禁快照：此前 802 passed / 1 skipped、Security 100、Product 24、Browser 142 / 2 个条件 SKIP 的记录保留在 [F1–F7 历史报告](docs/r5/R5-5.3-F1-F7-实施补充与验收状态.md)，不当作当前完整 aggregate 结果。
+> 以下 Git 起点及历史 CI 为历史快照；当前工作分支为 `r5-5-product-integration-closure`。
 > **Git 状态（三基线分列，不得混用）**：
 > 1. **本轮（DR2.1）起点 HEAD**：`bb3bd55`，分支 `r5-5-product-completion`，起点 20 ahead / 0 behind main（DR2.1 三个文档提交后 23 / 0；其后 E1 勘误再 +1 → 24 / 0）；
 > 2. **最后一次实际修改业务代码**：`60d89e7`（R5-5.1-R 事件流故障区间修复）；`8819694` 是设计文档提交，**不是**代码变更基线；

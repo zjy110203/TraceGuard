@@ -7,3 +7,6 @@ Implemented durable INTENT -> COMMITTED -> DONE journal protocol, ownership-mark
 
 ## 2026-11-26 F7 unified product loop
 Real Chromium test passed in 85.62s. Single Explorer exp_b62a0741d78f -> cand_141e5b5154 -> TC-CAND-CE3F2DDE97 -> failed run run_20261126113958903500_830c7b -> supported real locator diagnosis -> rp_968164f1ec90 -> real replay PASSED -> v2 promotion -> API process restart -> regression PASSED -> UI calls official rollback API -> immutable v3 -> second API process restart -> expected FAILED execution of historical v1 selector. All lineage assertions read persisted stores. Evidence and screenshots: docs/r5/evidence/f6-f7-20261126. Full aggregate currently running; no aggregate/CI PASS claimed yet.
+
+## 2026-11-26 final invariant review
+Recheck proposal creation against current disk base under the shared case lock; idempotent promote returns its own version. Revalidate committed/DONE file ownership on restart, expose BLOCKED on missing/changed assets, and refuse further mutation. Add explicit mock actor aliases to the common human-review policy. Correct persisted race coverage to use different contents in its nonidentical scenario. Focused Repair/Candidate/API/Diagnosis regression: 138 passed, 1 warning, raw f6-hardening.log retained. A fresh full aggregate will validate this final code; the earlier aggregate remains a separate run.

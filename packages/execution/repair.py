@@ -363,11 +363,17 @@ class RepairService:
         """Recover only files carrying this durable transaction's ownership proof."""
         with self._lock:
             for tx in self._transactions.values():
-                if tx["status"] in {"DONE", "BLOCKED"}:
+                if tx["status"] == "BLOCKED":
                     continue
                 with case_lock(self.case_dir or Path("."), tx["case_id"]):
                     path = self._formal_path(tx["case_id"], tx["target_version"])
                     if not path.exists():
+                        if tx["status"] != "INTENT":
+                            tx["status"] = "BLOCKED"
+                            self._get(
+                                tx["proposal_id"]
+                            ).failure_reason = "BLOCKED: committed transaction asset missing"
+                            self._persist()
                         continue  # intent reserves this target; same transaction may retry
                     try:
                         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -379,6 +385,8 @@ class RepairService:
                             tx["proposal_id"]
                         ).failure_reason = "BLOCKED: transaction asset mismatch"
                         self._persist()
+                        continue
+                    if tx["status"] == "DONE":
                         continue
                     self.fault_hook("recovery")
                     self._finish_transaction(tx)
@@ -499,9 +507,13 @@ class RepairService:
             raise ValidationError("candidate case_id differs from base")
         if candidate.version != base.version + 1:
             raise ValidationError("candidate must be exactly base version + 1")
-        with self._lock:
+        with self._lock, case_lock(self.case_dir or Path("."), base.case_id):
             if proposal_id in self._proposals:
                 raise ConflictError(f"proposal exists: {proposal_id}")
+            if self.case_dir is not None and self.case_digest(
+                self._disk_current(base.case_id)
+            ) != self.case_digest(base):
+                raise ConflictError("VERSION_CONFLICT: proposal base is no longer current")
             proposal = RepairProposal(
                 proposal_id=proposal_id,
                 case_id=base.case_id,
@@ -601,13 +613,14 @@ class RepairService:
             p = self._get(proposal_id)
             if self.case_dir is not None:
                 self.recover()
+                self._require_unblocked(proposal_id)
                 current_formal = self._disk_current(p.case_id)
             elif read_formal is not None:
                 current_formal = read_formal()
             else:
                 current_formal = self.formal_version(p.case_id) or current_formal
             if p.state == "PROMOTED":
-                return p, self._candidates[f"__formal__{p.case_id}"]
+                return p, self._candidates[proposal_id]
             if p.state != "APPROVED":
                 raise ConflictError(f"promotion requires APPROVED, got {p.state}")
             if is_self_approver(p.approved_by):
@@ -710,6 +723,7 @@ class RepairService:
             p = self._get(proposal_id)
             if self.case_dir is not None:
                 self.recover()
+                self._require_unblocked(proposal_id)
             if p.state == "ROLLED_BACK":
                 if p.promotion_record["rolled_back_to"] != target_version.version:
                     raise ConflictError("rollback already completed with another target")
@@ -743,6 +757,13 @@ class RepairService:
                 self._candidates[f"__formal__{p.case_id}"] = restored
                 self._persist()
             return p
+
+    def _require_unblocked(self, proposal_id: str) -> None:
+        if any(
+            tx["status"] == "BLOCKED" and tx["proposal_id"] == proposal_id
+            for tx in self._transactions.values()
+        ):
+            raise ConflictError("BLOCKED: transaction recovery requires manual investigation")
 
     def formal_version(self, case_id: str) -> TestCaseVersion | None:
         return self._candidates.get(f"__formal__{case_id}")
