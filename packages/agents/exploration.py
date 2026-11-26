@@ -39,6 +39,10 @@ from packages.execution.dataref import (
 # pierce is rejected before Playwright ever sees it.
 _SELECTOR_SAFE = re.compile(r"^[A-Za-z0-9\s\[\]=\"'#._:\->~*+,()]+$")
 _SELECTOR_DENY = re.compile(r"(javascript|vbscript|data)\s*:", re.IGNORECASE)
+_URL_IN_TEXT = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
+_SECRET_TEXT = re.compile(
+    r"(?i)\b(password|passwd|access_token|refresh_token|token|secret|api_key|authorization)\b\s*[:=]\s*[^\s&;,]+"
+)
 _DESTRUCTIVE_INTENT = re.compile(
     r"\b(delete|remove|destroy|reset(?:_data)?|drop|truncate|wipe|purge|clear)\b",
     re.IGNORECASE,
@@ -527,6 +531,7 @@ class Observation:
     dom_counts: dict[str, int] = field(default_factory=dict)
     dom_relations: tuple[dict[str, Any], ...] = ()
     attrs: tuple[dict[str, str], ...] = ()
+    selector_counts: dict[str, int] = field(default_factory=dict)
     page_state: str = "unknown"
     previous_url_path: str = ""
     observed_at: str = field(default_factory=_now)
@@ -537,7 +542,7 @@ class Observation:
     def state_summary(self) -> str:
         """One-line digest: enough to compare two page states at a glance."""
         return (
-            f"{self.title or '(untitled)'} @ {self.url_path or self.url} | "
+            f"{self.title or '(untitled)'} @ {self.url_path or sanitize_url(self.url)} | "
             f"{len(self.visible_testids)} testids | {len(self.visible_elements)} elements"
         )
 
@@ -545,7 +550,7 @@ class Observation:
         """Persistable observation: bounded text, no unbounded DOM dump."""
         max_text = min(max(int(max_text), 0), 3000)
         record = {
-            "url": self.url,
+            "url": sanitize_url(self.url),
             "url_path": self.url_path,
             "title": self.title,
             "visible_testids": list(self.visible_testids),
@@ -560,9 +565,13 @@ class Observation:
                 for x in self.dom_relations[:100]
             ],
             "attrs": [_safe_attrs(x) for x in self.attrs[:100]],
+            "selector_counts": {
+                str(key)[:200]: max(0, int(value))
+                for key, value in list(self.selector_counts.items())[:32]
+            },
             "page_state": self.page_state[:40],
             "previous_url_path": self.previous_url_path[:500],
-            "text_excerpt": self.page_text[:max_text],
+            "text_excerpt": sanitize_page_text(self.page_text)[:max_text],
             "state_summary": self.state_summary,
             "observed_at": self.observed_at,
             "step_index": self.step_index,
@@ -600,8 +609,7 @@ def _safe_element(element: dict[str, Any]) -> dict[str, Any]:
         out.pop("type", None)
         out.pop("href", None)
     elif out.get("href"):
-        parsed = urlparse(str(out["href"]))
-        out["href"] = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+        out["href"] = sanitize_href(str(out["href"]))
     return out
 
 
@@ -620,9 +628,34 @@ def _safe_attrs(attrs: dict[str, Any]) -> dict[str, Any]:
         out.pop("href", None)
         out.pop("type", None)
     elif out.get("href"):
-        parsed = urlparse(out["href"])
-        out["href"] = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+        out["href"] = sanitize_href(out["href"])
     return out
+
+
+def sanitize_url(value: str) -> str:
+    """Keep the origin and path; query parameters and fragments are secrets by default."""
+    try:
+        parsed = urlparse(value)
+        if not parsed.scheme and not parsed.netloc:
+            return parsed.path or value.split("?", 1)[0].split("#", 1)[0]
+        return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+    except ValueError:
+        return "[redacted-url]"
+
+
+def sanitize_href(value: str) -> str:
+    """Persist only the safe path portion of an observed link."""
+    try:
+        parsed = urlparse(value)
+        return parsed.path or "/"
+    except ValueError:
+        return "[redacted-path]"
+
+
+def sanitize_page_text(value: str) -> str:
+    """Preserve useful text while stripping URL credentials and key=value secrets."""
+    value = _URL_IN_TEXT.sub(lambda match: sanitize_url(match.group(0)), value)
+    return _SECRET_TEXT.sub(lambda match: f"{match.group(1)}=[REDACTED]", value)
 
 
 class Policy(Protocol):
@@ -647,7 +680,17 @@ def sanitize_action(action: dict[str, Any]) -> tuple[dict[str, Any], int]:
     """
     args = action.get("args")
     if not isinstance(args, dict):
-        return action, 0
+        safe = {
+            key: (
+                sanitize_url(str(value))
+                if key.casefold().endswith("url") and isinstance(value, str)
+                else sanitize_page_text(value)
+                if isinstance(value, str)
+                else value
+            )
+            for key, value in action.items()
+        }
+        return safe, 0
     context = " ".join(
         str(v) for k, v in args.items() if k != "value" and isinstance(v, (str, int, float))
     )
@@ -660,13 +703,27 @@ def sanitize_action(action: dict[str, Any]) -> tuple[dict[str, Any], int]:
         if (key_sensitive or value_sensitive) and value not in (None, ""):
             clean[key] = REDACTED_MARKER
             masked += 1
+        elif isinstance(value, str) and key.casefold().endswith("url"):
+            clean[key] = sanitize_url(value)
+        elif isinstance(value, str):
+            clean[key] = sanitize_page_text(value)
         else:
             clean[key] = value
     if masked:
         selector = str(args.get("selector") or args.get("target") or "")
         clean["value_ref"] = derive_value_ref(selector)
         clean["redacted"] = True
-    return {**action, "args": clean}, masked
+    safe_action = {
+        key: (
+            sanitize_url(str(value))
+            if key.casefold().endswith("url") and isinstance(value, str)
+            else sanitize_page_text(value)
+            if isinstance(value, str)
+            else value
+        )
+        for key, value in action.items()
+    }
+    return {**safe_action, "args": clean}, masked
 
 
 HASH_VERSION_LEGACY = 1
@@ -830,6 +887,10 @@ class ExplorationTrace:
     goal_status: str = ""
     goal_checks: list[dict[str, Any]] = field(default_factory=list)
     goal_reason: str = ""
+    goal_assertions: dict[str, Any] = field(default_factory=dict)
+    path_spec: dict[str, Any] = field(default_factory=dict)
+    path_expect: dict[str, Any] = field(default_factory=dict)
+    test_case_verdict: str = ""
     started_at: str = field(default_factory=_now)
     finished_at: str = ""
 

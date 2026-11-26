@@ -205,6 +205,9 @@ def test_stable_evidence_reference_resolves_and_detects_tampering() -> None:
         ("VERIFIED", "VERIFIED", ["PASSED", "NOT_EVALUATED"], CaseVerdict.INCONCLUSIVE),
         ("VERIFIED", "VERIFIED", ["FAILED", "NOT_EVALUATED"], CaseVerdict.FAILED),
         ("VERIFIED", "VERIFIED", ["INCONCLUSIVE"], CaseVerdict.INCONCLUSIVE),
+        ("NOT_EVALUATED", "VERIFIED", ["PASSED"], CaseVerdict.INCONCLUSIVE),
+        ("NOT_EVALUATED", "VERIFIED", ["FAILED"], CaseVerdict.FAILED),
+        ("NOT_VERIFIED", "NOT_VERIFIED", ["PASSED"], CaseVerdict.PASSED),
         ("VERIFIED", "VERIFIED", ["PASSED"], CaseVerdict.PASSED),
     ],
 )
@@ -217,3 +220,20 @@ def test_test_case_verdict_priority_matrix(
         )
         is want
     )
+
+
+def test_missing_relation_and_evidence_capture_are_inconclusive() -> None:
+    report = evaluate_assertions(
+        [
+            {
+                "name": "relation",
+                "kind": "element_relation",
+                "relation": "row_in_table",
+                "testid": "project-row",
+            },
+            {"name": "evidence", "kind": "evidence_complete", "evidence_ref": "ev-1"},
+        ],
+        {"url_path": "/projects", "observation_ref": "obs-1"},
+    )
+    assert report.verdict == "INCONCLUSIVE"
+    assert [result.verdict for result in report.results] == ["INCONCLUSIVE", "INCONCLUSIVE"]

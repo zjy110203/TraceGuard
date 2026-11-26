@@ -41,6 +41,8 @@ from packages.agents.exploration import (
     evaluate_goal,
     verify_trace_record,
 )
+from packages.agents.goal_assertions import evaluate_assertions, evaluate_test_case_verdict
+from packages.agents.scenarios import default_registry
 from packages.core.errors import ConflictError, NotFoundError, ValidationError
 from packages.execution.models import (
     AssertionSpec,
@@ -578,6 +580,52 @@ def _exploration_record(request: Request, exploration_id: str) -> dict[str, Any]
                 "exploration_id": exploration_id,
                 "source_trace_hash": record.get("source_trace_hash", ""),
                 "hint": "the trace was modified after it was written, or its hash is stale",
+            },
+        )
+
+    # New scenario traces carry the scenario-level test oracle verdict. A
+    # verified business goal alone cannot admit a negative-path trace whose
+    # expected error was absent or inconclusive.
+    recorded_case_verdict = record.get("test_case_verdict")
+    path_spec = record.get("path_spec")
+    if isinstance(path_spec, dict):
+        observations = list(record.get("observations") or [])
+        final_observation = dict((observations or [{}])[-1] or {})
+        expect_report = evaluate_assertions(
+            list(path_spec.get("expect") or []),
+            final_observation,
+            observations=observations,
+        )
+        recomputed_case_verdict = evaluate_test_case_verdict(
+            goal_status=str(record.get("goal_status") or "NOT_EVALUATED"),
+            expected_goal_status=str(path_spec.get("expected_goal_status") or ""),
+            required_expect_verdicts=[
+                result.verdict for result in expect_report.results if result.required
+            ],
+        ).value
+        scenario = default_registry().get(
+            str(record.get("scenario_id") or ""), str(record.get("scenario_version") or "")
+        )
+        if scenario is None or scenario.digest != record.get("scenario_digest"):
+            raise ConflictError("scenario identity is unavailable or changed; refusing to compile")
+        expected_path_spec = scenario.path_spec_for_path(str(record.get("scenario_path") or ""))
+        if expected_path_spec != path_spec:
+            raise ConflictError("scenario path specification changed; refusing to compile")
+        if recorded_case_verdict != recomputed_case_verdict:
+            raise ConflictError(
+                "recorded scenario test-case verdict disagrees with its evidence",
+                details={
+                    "recorded": recorded_case_verdict,
+                    "recomputed": recomputed_case_verdict,
+                },
+            )
+        recorded_case_verdict = recomputed_case_verdict
+    if recorded_case_verdict not in (None, "PASSED"):
+        raise ConflictError(
+            "scenario test-case verdict does not admit compilation",
+            details={
+                "exploration_id": exploration_id,
+                "test_case_verdict": recorded_case_verdict,
             },
         )
 

@@ -110,10 +110,15 @@ class TestCaseVerdict(StrEnum):
 def evaluate_test_case_verdict(
     *, goal_status: str, expected_goal_status: str, required_expect_verdicts: list[str]
 ) -> TestCaseVerdict:
-    known_goal_statuses = {"VERIFIED", "NOT_VERIFIED", "INCONCLUSIVE", "NOT_EVALUATED"}
-    if goal_status not in known_goal_statuses or expected_goal_status not in known_goal_statuses:
+    if expected_goal_status not in {VERIFIED, NOT_VERIFIED}:
         return TestCaseVerdict.INCONCLUSIVE
-    if goal_status != expected_goal_status or FAILED in required_expect_verdicts:
+    if FAILED in required_expect_verdicts:
+        return TestCaseVerdict.FAILED
+    if goal_status == "NOT_EVALUATED":
+        return TestCaseVerdict.INCONCLUSIVE
+    if goal_status not in {VERIFIED, NOT_VERIFIED, INCONCLUSIVE}:
+        return TestCaseVerdict.INCONCLUSIVE
+    if goal_status != expected_goal_status:
         return TestCaseVerdict.FAILED
     if not required_expect_verdicts or INCONCLUSIVE in required_expect_verdicts:
         return TestCaseVerdict.INCONCLUSIVE
@@ -210,7 +215,16 @@ class _ObservationView:
     def element(self, testid: str) -> dict[str, Any] | None:
         for element in self.elements:
             if str(element.get("testid") or "") == testid:
-                return element
+                attrs = self.raw.get("attrs") or []
+                observed_attrs = next(
+                    (
+                        item
+                        for item in attrs
+                        if isinstance(item, dict) and str(item.get("testid") or "") == testid
+                    ),
+                    {},
+                )
+                return {**observed_attrs, **element}
         return None
 
     @property
@@ -382,6 +396,11 @@ def validate_assertion(spec: dict[str, Any]) -> list[str]:
                 problems.append(f"{kind}.value must be non-negative")
         except (TypeError, ValueError):
             problems.append(f"{kind}.value must be an integer")
+        selector = spec.get("selector")
+        if selector is not None and (
+            not isinstance(selector, str) or not selector.strip() or len(selector) > 200
+        ):
+            problems.append(f"{kind}.selector must be a non-empty CSS selector up to 200 chars")
     if kind == "element_attr":
         if not str(spec.get("testid") or "").strip():
             problems.append("element_attr needs a testid")
@@ -694,6 +713,26 @@ def evaluate_assertion(spec: dict[str, Any], view: _ObservationView) -> Assertio
 
     if kind in ("table_row_count", "list_item_count"):
         key = kind
+        selector = str(spec.get("selector") or "")
+        if selector:
+            counts = view.raw.get("selector_counts") or {}
+            if selector not in counts:
+                return _result(
+                    spec,
+                    INCONCLUSIVE,
+                    expected=str(spec["value"]),
+                    observed="selector count unavailable",
+                    evidence=f"observations[-1].selector_counts[{selector!r}]",
+                )
+            actual_count = int(counts[selector])
+            expected_count = int(str(spec["value"]))
+            return _result(
+                spec,
+                PASSED if actual_count == expected_count else FAILED,
+                expected=str(expected_count),
+                observed=str(actual_count),
+                evidence=f"observations[-1].selector_counts[{selector!r}]",
+            )
         counts = view.raw.get("dom_counts") or {}
         if key not in counts:
             return _result(
@@ -735,12 +774,21 @@ def evaluate_assertion(spec: dict[str, Any], view: _ObservationView) -> Assertio
         )
 
     if kind == "element_relation":
+        if "dom_relations" not in view.raw:
+            return _result(
+                spec,
+                INCONCLUSIVE,
+                expected=str(spec["relation"]),
+                observed="relation capture unavailable",
+                evidence="observations[-1].dom_relations",
+            )
         relations = view.raw.get("dom_relations") or []
         relation = str(spec["relation"])
         found = any(
             isinstance(x, dict)
             and x.get("relation") == relation
             and (not spec.get("testid") or x.get("testid") == spec["testid"])
+            and (not spec.get("parent_testid") or x.get("parent_testid") == spec["parent_testid"])
             for x in relations
         )
         return _result(
@@ -857,7 +905,7 @@ def evaluate_assertion(spec: dict[str, Any], view: _ObservationView) -> Assertio
         complete = actual == expected and bool(ref)
         return _result(
             spec,
-            PASSED if complete else INCONCLUSIVE if not ref else FAILED,
+            PASSED if complete else INCONCLUSIVE if not actual or not ref else FAILED,
             expected=expected,
             observed=actual or "missing",
             evidence="observations[-1].evidence_ref,observations[-1].observation_ref",
@@ -867,12 +915,17 @@ def evaluate_assertion(spec: dict[str, Any], view: _ObservationView) -> Assertio
 
 
 def evaluate_assertions(
-    assertions: list[dict[str, Any]], observation: dict[str, Any]
+    assertions: list[dict[str, Any]],
+    observation: dict[str, Any],
+    *,
+    observations: list[dict[str, Any]] | None = None,
 ) -> AssertionReport:
     """Evaluate a whole goal. All assertions run; none short-circuits another."""
     if not assertions:
         return AssertionReport(INCONCLUSIVE, (), "goal declares no assertions")
     raw = dict(observation or {})
+    if observations is not None:
+        raw["observations"] = observations
     # Registration sugar: keep the external declaration at 20 forms while
     # ensuring evaluation is only performed by the existing all_of evaluator.
     assertions = [

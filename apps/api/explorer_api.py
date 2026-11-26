@@ -30,6 +30,7 @@ from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
+from sqlalchemy import select
 
 from apps.teamflow import service as teamflow_service
 from apps.teamflow.models import Project
@@ -40,10 +41,12 @@ from packages.agents.exploration import (
     ToolCall,
     origin_of,
     sanitize_action,
+    sanitize_page_text,
+    sanitize_url,
     verify_trace_record,
 )
 from packages.agents.explorer import Explorer
-from packages.agents.goal_assertions import evaluate_assertions
+from packages.agents.goal_assertions import evaluate_assertions, evaluate_test_case_verdict
 from packages.agents.scenarios import Scenario, default_registry
 from packages.agents.scripted_agent import AgentStep, ScriptedAgentPolicy
 from packages.core import database
@@ -130,6 +133,20 @@ def _substitute(value: Any, mapping: dict[str, str]) -> Any:
     if isinstance(value, list):
         return [_substitute(v, mapping) for v in value]
     return value
+
+
+def _selector_count_targets(assertions: list[dict[str, Any]]) -> tuple[str, ...]:
+    selectors: list[str] = []
+    for assertion in assertions:
+        if not isinstance(assertion, dict):
+            continue
+        selector = str(assertion.get("selector") or "").strip()
+        if assertion.get("kind") in {"table_row_count", "list_item_count"} and selector:
+            selectors.append(selector)
+        children = assertion.get("assertions")
+        if isinstance(children, list):
+            selectors.extend(_selector_count_targets(children))
+    return tuple(dict.fromkeys(selectors))[:32]
 
 
 def scenario_steps(
@@ -257,6 +274,17 @@ def _cleanup_app_scenario_data(app: Any, run_id: str, token: str) -> None:
             ).startswith(marker):
                 raise RuntimeError("run-owned project identity changed; refusing cleanup")
             session.delete(project)
+        # Browser actions can create additional data after the initial seed
+        # (for example the boundary path's project). Match both the per-run
+        # name prefix and the per-run description marker for each DB row before
+        # deleting it; never sweep by prefix alone.
+        run_prefix = f"TG_RUN_{run_id}_"
+        owner_marker = f"traceguard-run:{run_id};"
+        for project in session.scalars(select(Project)).all():
+            if project.name.startswith(run_prefix) and (project.description or "").startswith(
+                owner_marker
+            ):
+                session.delete(project)
         session.commit()
 
 
@@ -424,6 +452,7 @@ def _summary(record: dict[str, Any]) -> dict[str, Any]:
         # business-goal verdict, deliberately separate from status/stop_reason
         "goal_status": record.get("goal_status") or "",
         "goal_reason": record.get("goal_reason") or "",
+        "test_case_verdict": record.get("test_case_verdict") or "INCONCLUSIVE",
         "step_count": record.get("step_count", 0),
         "observation_count": len(record.get("observations") or []),
         "started_at": record.get("started_at") or "",
@@ -515,6 +544,7 @@ def get_exploration(request: Request, exploration_id: str) -> dict[str, Any]:
         recomputed = evaluate_assertions(
             list(scenario_for_record.goal_definition),
             dict((record.get("observations") or [{}])[-1] or {}),
+            observations=list(record.get("observations") or []),
         )
         record["goal_assertions_recomputed"] = recomputed.to_dict()
         record["goal_assertions_verified"] = recomputed.to_dict() == record.get("goal_assertions")
@@ -555,8 +585,9 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
             },
         )
 
+    path_spec = scenario.path_spec_for_path(body.path)
     path_steps = scenario.steps_for_path(body.path)
-    if path_steps is None:
+    if path_spec is None or path_steps is None:
         raise ValidationError(
             f"scenario path {body.path!r} is not registered",
             details={"scenario_id": scenario.scenario_id, "scenario_version": scenario.version},
@@ -568,7 +599,10 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
     if parsed.scheme not in {"http", "https"} or host not in _LOCAL_HOSTS:
         raise ValidationError(
             "exploration target must be a local URL",
-            details={"base_url": body.base_url, "allowed_hosts": sorted(_LOCAL_HOSTS)},
+            details={
+                "base_url": sanitize_url(body.base_url),
+                "allowed_hosts": sorted(_LOCAL_HOSTS),
+            },
         )
     if not 1 <= body.max_steps <= 30:
         raise ValidationError("max_steps must be between 1 and 30")
@@ -578,6 +612,9 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
 
     explorer = Explorer(
         sensitive_selectors=scenario.sensitive_selectors,
+        count_selectors=_selector_count_targets(
+            [*scenario.goal_definition, *list(path_spec.get("expect") or [])]
+        ),
         budget=Budget(
             max_steps=body.max_steps,
             max_tool_calls=body.max_steps * 2 + 4,
@@ -644,7 +681,7 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
         payload = trace.to_dict()
     except Exception as exc:  # noqa: BLE001 - surface target/execution failure honestly
         status = "FAILED"
-        error = f"{type(exc).__name__}: {exc}"
+        error = sanitize_page_text(f"{type(exc).__name__}: {exc}")
         # Keep whatever the loop captured before it broke.
         explorer.trace.stop_reason = explorer.trace.stop_reason or "ERROR"
         explorer.trace.finalize()
@@ -653,8 +690,12 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
     # R5-5.2 §15: structured goal assertions, evaluated against the LAST
     # observed page only. Every assertion gets its own verdict + evidence, and an
     # unobservable assertion is INCONCLUSIVE rather than a silent failure.
-    final_observation = dict((payload.get("observations") or [{}])[-1] or {})
-    assertion_report = evaluate_assertions(list(scenario.goal_definition), final_observation)
+    observations = list(payload.get("observations") or [])
+    final_observation = dict((observations or [{}])[-1] or {})
+    assertion_report = evaluate_assertions(
+        list(scenario.goal_definition), final_observation, observations=observations
+    )
+    explorer.trace.goal_assertions = assertion_report.to_dict()
     payload["goal_assertions"] = assertion_report.to_dict()
     if assertion_report.verdict != "VERIFIED" and payload.get("goal_status") == "VERIFIED":
         # Tighten, never loosen: a goal cannot stay VERIFIED on the strength of a
@@ -662,9 +703,26 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
         payload["goal_status"] = (
             "NOT_VERIFIED" if assertion_report.verdict == "NOT_VERIFIED" else "INCONCLUSIVE"
         )
+        explorer.trace.goal_status = payload["goal_status"]
         payload["goal_reason"] = (
             f"{payload.get('goal_reason') or ''} | scenario assertions: {assertion_report.reason}"
         ).strip(" |")
+
+    path_expect = evaluate_assertions(
+        list(path_spec.get("expect") or []), final_observation, observations=observations
+    )
+    required_expect_verdicts = [result.verdict for result in path_expect.results if result.required]
+    test_case_verdict = evaluate_test_case_verdict(
+        goal_status=str(payload.get("goal_status") or "NOT_EVALUATED"),
+        expected_goal_status=str(path_spec.get("expected_goal_status") or ""),
+        required_expect_verdicts=required_expect_verdicts,
+    )
+    payload["path_spec"] = path_spec
+    payload["path_expect"] = path_expect.to_dict()
+    payload["test_case_verdict"] = test_case_verdict.value
+    explorer.trace.path_spec = path_spec
+    explorer.trace.path_expect = path_expect.to_dict()
+    explorer.trace.test_case_verdict = test_case_verdict.value
 
     record: dict[str, Any] = {
         **payload,
@@ -672,7 +730,7 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
         "policy_label": title,
         "is_llm": False,
         "agent_version": payload.get("agent_version") or agent_version,
-        "target": body.base_url,
+        "target": sanitize_url(body.base_url),
         "scenario_id": scenario.scenario_id,
         "scenario_version": scenario.version,
         "scenario_path": body.path,

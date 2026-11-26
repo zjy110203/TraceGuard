@@ -76,7 +76,7 @@ class Scenario:
     cleanup: dict[str, Any] | None = None
     denied_actions: tuple[str, ...] = ()
     sensitive_selectors: tuple[str, ...] = ()
-    paths: dict[str, tuple[dict[str, Any], ...]] | None = None
+    paths: dict[str, Any] | None = None
 
     @classmethod
     def from_mapping(cls, value: dict[str, Any]) -> Scenario:
@@ -102,7 +102,10 @@ class Scenario:
             if key in normalized:
                 normalized[key] = tuple(normalized[key])
         if isinstance(normalized.get("paths"), dict):
-            normalized["paths"] = {key: tuple(items) for key, items in normalized["paths"].items()}
+            normalized["paths"] = {
+                key: dict(items) if isinstance(items, dict) else tuple(items)
+                for key, items in normalized["paths"].items()
+            }
         return cls(**normalized)
 
     def canonical_payload(self) -> dict[str, Any]:
@@ -131,13 +134,47 @@ class Scenario:
             "cleanup": self.cleanup or {},
             "denied_actions": list(self.denied_actions),
             "sensitive_selectors": list(self.sensitive_selectors),
-            "paths": {k: list(v) for k, v in (self.paths or {}).items()},
+            "paths": {k: self.path_spec_for_path(k) for k in (self.paths or {})},
+        }
+
+    def path_spec_for_path(self, path_kind: str) -> dict[str, Any] | None:
+        raw = (self.paths or {}).get(path_kind)
+        if raw is None:
+            if path_kind == "normal":
+                raw = self.steps
+            else:
+                return None
+        if isinstance(raw, dict):
+            return dict(raw)
+        # Compatibility adapter for the six registered legacy scenarios.
+        expected = "NOT_VERIFIED" if path_kind in {"exception", "boundary"} else "VERIFIED"
+        expect = (
+            [
+                {
+                    "name": "expected_login_error",
+                    "kind": "element_exists",
+                    "testid": "login-error",
+                    "required": True,
+                }
+            ]
+            if expected == "NOT_VERIFIED"
+            else [dict(item) for item in self.goal_definition if item.get("required", True)]
+        )
+        return {
+            "path_id": f"{self.scenario_id}:{path_kind}",
+            "expected_goal_status": expected,
+            "expect": expect,
+            "steps": [dict(step) for step in raw],
         }
 
     def steps_for_path(self, path_kind: str) -> tuple[dict[str, Any], ...] | None:
-        if path_kind == "normal" and not (self.paths or {}).get(path_kind):
-            return self.steps
-        return (self.paths or {}).get(path_kind)
+        spec = self.path_spec_for_path(path_kind)
+        if spec is None:
+            return None
+        steps = spec.get("steps")
+        if steps is None and isinstance(spec.get("scripted_fixture"), dict):
+            steps = spec["scripted_fixture"].get("steps")
+        return tuple(steps) if isinstance(steps, list | tuple) else None
 
     @property
     def digest(self) -> str:
@@ -259,12 +296,68 @@ class Scenario:
             if unknown_paths:
                 problems.append(f"paths contain unknown path kinds: {sorted(unknown_paths)}")
             for path_kind, path in paths.items():
-                if not isinstance(path, (tuple, list)) or any(
-                    not isinstance(step, dict) for step in path
+                if isinstance(path, dict):
+                    if set(path) - {
+                        "path_id",
+                        "expected_goal_status",
+                        "expect",
+                        "steps",
+                        "scripted_fixture",
+                    }:
+                        problems.append(f"paths[{path_kind!r}] has unknown fields")
+                    if not str(path.get("path_id") or "").strip():
+                        problems.append(f"paths[{path_kind!r}] requires path_id")
+                    if path.get("expected_goal_status") not in {"VERIFIED", "NOT_VERIFIED"}:
+                        problems.append(
+                            f"paths[{path_kind!r}] expected_goal_status must be "
+                            "VERIFIED or NOT_VERIFIED"
+                        )
+                    expect = path.get("expect")
+                    if not isinstance(expect, list) or not expect:
+                        problems.append(f"paths[{path_kind!r}].expect must be a non-empty list")
+                    else:
+                        if not any(
+                            isinstance(item, dict) and item.get("required", True) for item in expect
+                        ):
+                            problems.append(
+                                f"paths[{path_kind!r}].expect needs a required assertion"
+                            )
+                        for index, assertion in enumerate(expect):
+                            if not isinstance(assertion, dict):
+                                problems.append(
+                                    f"paths[{path_kind!r}].expect[{index}] must be an object"
+                                )
+                            else:
+                                for issue in validate_assertion(assertion):
+                                    problems.append(
+                                        f"paths[{path_kind!r}].expect[{index}]: {issue}"
+                                    )
+                    path_steps = path.get("steps")
+                    if path_steps is None:
+                        fixture = path.get("scripted_fixture")
+                        if not isinstance(fixture, dict) or not isinstance(
+                            fixture.get("steps"), list
+                        ):
+                            problems.append(
+                                f"paths[{path_kind!r}] requires steps or scripted_fixture.steps"
+                            )
+                        else:
+                            if set(fixture) != {"steps"}:
+                                problems.append(
+                                    f"paths[{path_kind!r}].scripted_fixture has unknown fields"
+                                )
+                            path_steps = fixture["steps"]
+                    if not isinstance(path_steps, (tuple, list)):
+                        path_steps = ()
+                else:
+                    # Legacy v1 scenario format: a sequence of step objects.
+                    path_steps = path
+                if not isinstance(path_steps, (tuple, list)) or any(
+                    not isinstance(step, dict) for step in path_steps
                 ):
-                    problems.append(f"paths[{path_kind!r}] must be a sequence of step objects")
+                    problems.append(f"paths[{path_kind!r}] must contain step objects")
                     continue
-                for step_index, step in enumerate(path):
+                for step_index, step in enumerate(path_steps):
                     if set(step) - {"tool", "args", "rationale", "expect"}:
                         problems.append(f"paths[{path_kind!r}][{step_index}] has unknown fields")
                     if not isinstance(step.get("args", {}), dict):
@@ -276,7 +369,7 @@ class Scenario:
                             f"paths[{path_kind!r}][{step_index}] uses a tool "
                             "outside allowed_actions"
                         )
-                if len(path) > self.max_steps:
+                if len(path_steps) > self.max_steps:
                     problems.append(f"paths[{path_kind!r}] exceeds max_steps")
         if self.implemented and not self.steps:
             problems.append("an implemented scenario must declare its decision steps")
@@ -298,6 +391,14 @@ class ScenarioRegistry:
         self._scenarios: dict[tuple[str, str], Scenario] = {}
 
     def register(self, scenario: Scenario) -> Scenario:
+        if scenario.paths and any(not isinstance(path, dict) for path in scenario.paths.values()):
+            upgraded_paths = {
+                path_id: (
+                    dict(path) if isinstance(path, dict) else scenario.path_spec_for_path(path_id)
+                )
+                for path_id, path in scenario.paths.items()
+            }
+            scenario = replace(scenario, paths=upgraded_paths)
         normalized_goal = tuple(
             expand_assertion_sugar(dict(spec)) for spec in scenario.goal_definition
         )

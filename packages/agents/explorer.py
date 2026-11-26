@@ -29,6 +29,8 @@ from packages.agents.exploration import (
     evaluate_goal,
     intent_of,
     sanitize_action,
+    sanitize_page_text,
+    sanitize_url,
 )
 from packages.core.errors import ForbiddenError
 from packages.core.logging import get_logger
@@ -57,10 +59,12 @@ class PlaywrightAdapter:
         budget: Budget | None = None,
         *,
         sensitive_selectors: tuple[str, ...] = (),
+        count_selectors: tuple[str, ...] = (),
     ) -> None:
         self.trace = trace
         self.budget = budget or Budget()
         self.sensitive_selectors = sensitive_selectors
+        self.count_selectors = tuple(dict.fromkeys(count_selectors))[:32]
         # The route guard uses the SAME OriginPolicy implementation as the
         # formal BrowserManager (R5-4.7): one network boundary, two consumers.
         # A Budget without explicit origins stays hostname-scoped — inventing a
@@ -123,6 +127,7 @@ class PlaywrightAdapter:
         dom_counts: dict[str, int] = {}
         dom_relations: list[dict[str, Any]] = []
         attrs: list[dict[str, str]] = []
+        selector_counts: dict[str, int | None] = {}
         title = ""
         url_path = ""
         try:
@@ -215,6 +220,16 @@ class PlaywrightAdapter:
             }))""",
                 arg=list(self.sensitive_selectors),
             )
+            selector_counts = page.evaluate(
+                """selectors => Object.fromEntries(selectors.map(selector => {
+                    try {
+                        const count = document.querySelectorAll(selector).length;
+                        return [selector, Math.min(count, 10000)];
+                    }
+                    catch (_) { return [selector, null]; }
+                }))""",
+                list(self.count_selectors),
+            )
         except Exception:  # noqa: BLE001 - blank page before first navigate
             pass
         self._last_observed_url_path = url_path
@@ -229,6 +244,11 @@ class PlaywrightAdapter:
             dom_counts={str(k): int(v) for k, v in dom_counts.items()},
             dom_relations=tuple(x for x in dom_relations if isinstance(x, dict))[:100],
             attrs=tuple(x for x in attrs if isinstance(x, dict))[:100],
+            selector_counts={
+                str(key): int(value)
+                for key, value in (selector_counts or {}).items()
+                if value is not None
+            },
             page_state="loaded" if title or url_path else "unavailable",
             previous_url_path=previous_url_path,
             phase=phase,
@@ -302,6 +322,7 @@ class Explorer:
         application_version: str = "teamflow-0.1.0",
         browser_version: str = "system-chrome",
         sensitive_selectors: tuple[str, ...] = (),
+        count_selectors: tuple[str, ...] = (),
         trace_hash_version: int = 2,
     ) -> None:
         self.policy = policy or ScriptedPolicy()
@@ -309,6 +330,7 @@ class Explorer:
         self.application_version = application_version
         self.browser_version = browser_version
         self.sensitive_selectors = sensitive_selectors
+        self.count_selectors = count_selectors
         self.trace = ExplorationTrace(
             exploration_id=f"exp_{uuid.uuid4().hex[:12]}",
             test_intent_ref="",
@@ -349,7 +371,10 @@ class Explorer:
             bind_gateway(gateway)
         stop = StopReason.POLICY_STOP
         with PlaywrightAdapter(
-            self.trace, self.budget, sensitive_selectors=self.sensitive_selectors
+            self.trace,
+            self.budget,
+            sensitive_selectors=self.sensitive_selectors,
+            count_selectors=self.count_selectors,
         ) as adapter:
             while True:
                 reason = gateway.check_budget()
@@ -358,7 +383,7 @@ class Explorer:
                     break
                 observation = adapter.observe(gateway.steps)
                 if observation.url and not observation.url.startswith("about:"):
-                    self.trace.page_state_ref = observation.url
+                    self.trace.page_state_ref = sanitize_url(observation.url)
                     # Structured, bounded, redacted-by-construction: page text
                     # is truncated data, never a permission source.
                     self.trace.record_observation(observation)
@@ -394,7 +419,8 @@ class Explorer:
                 try:
                     gateway.authorize(call)
                 except ForbiddenError as exc:
-                    logger.warning("explorer_tool_rejected: %s", exc)
+                    safe_error = sanitize_page_text(str(exc))
+                    logger.warning("explorer_tool_rejected: %s", safe_error)
                     self.trace.action_sequence.append(
                         {"tool": call.tool, "rejected": True, "reason": str(exc)}
                     )
@@ -403,7 +429,7 @@ class Explorer:
                             "kind": "tool_rejected",
                             "step_index": gateway.steps,
                             "tool": call.tool,
-                            "reason": str(exc),
+                            "reason": safe_error,
                             "at": _now(),
                         }
                     )
@@ -414,7 +440,7 @@ class Explorer:
                             "action": call.tool,
                             "rationale": call.rationale,
                             "result": "REJECTED",
-                            "rejection_reason": str(exc),
+                            "rejection_reason": safe_error,
                             "decided_at": _now(),
                             "policy_version": self.trace.agent_version,
                             "prompt_version": self.trace.prompt_version,
@@ -429,7 +455,7 @@ class Explorer:
                     # redaction as a success) and let the policy see the new
                     # state, so an error can be recovered from instead of
                     # aborting the whole exploration.
-                    detail = f"{type(exc).__name__}: {exc}"[:300]
+                    detail = sanitize_page_text(f"{type(exc).__name__}: {exc}")[:300]
                     safe, _ = sanitize_action({"tool": call.tool, "args": dict(call.args)})
                     self._record_decision(observation, safe, {"error": detail})
                     self.trace.action_sequence.append({**safe, "error": detail})
@@ -461,7 +487,7 @@ class Explorer:
                         "action": call.tool,
                         "rationale": call.rationale,
                         "result": "OK",
-                        "detail": str(raw_result.get("detail", ""))[:200],
+                        "detail": sanitize_page_text(str(raw_result.get("detail", "")))[:200],
                         "decided_at": _now(),
                         "policy_version": self.trace.agent_version,
                         "prompt_version": self.trace.prompt_version,
@@ -472,7 +498,7 @@ class Explorer:
         # involved.
         for url in adapter.blocked_requests:
             self.trace.security_events.append(
-                {"kind": "request_blocked", "url": url[:300], "at": _now()}
+                {"kind": "request_blocked", "url": sanitize_url(url), "at": _now()}
             )
         self.trace.stop_reason = stop
         # Goal evaluation happens AFTER execution, from observed evidence only.

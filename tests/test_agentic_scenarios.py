@@ -21,6 +21,7 @@ import re
 import threading
 import time
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -76,6 +77,12 @@ def test_default_registry_is_valid_and_lists_every_required_scenario() -> None:
     # An unimplemented scenario stays visible, with the reason it is not runnable.
     for scenario in registry.all():
         assert set(scenario.paths or {}) == {"normal", "exception", "boundary", "recovery"}
+        for path_id in scenario.paths or {}:
+            spec = scenario.path_spec_for_path(path_id)
+            assert spec is not None
+            assert spec["path_id"]
+            assert spec["expected_goal_status"] in {"VERIFIED", "NOT_VERIFIED"}
+            assert any(item.get("required", True) for item in spec["expect"])
         if not scenario.implemented:
             assert scenario.blocked_reason, scenario.scenario_id
 
@@ -146,6 +153,45 @@ def test_scenario_without_constraints_is_refused() -> None:
 
     with pytest.raises(ValueError, match="constraints"):
         ScenarioRegistry().register(bad)
+
+
+@pytest.mark.parametrize(
+    "spec,problem",
+    [
+        (
+            {
+                "path_id": "p",
+                "expect": [{"name": "x", "kind": "testid", "value": "x"}],
+                "steps": [],
+            },
+            "expected_goal_status",
+        ),
+        ({"path_id": "p", "expected_goal_status": "VERIFIED", "steps": []}, "expect"),
+        ({"path_id": "p", "expected_goal_status": "VERIFIED", "expect": [], "steps": []}, "expect"),
+        (
+            {
+                "path_id": "p",
+                "expected_goal_status": "VERIFIED",
+                "expect": [{"name": "x", "kind": "testid", "value": "x", "required": False}],
+                "steps": [],
+            },
+            "required assertion",
+        ),
+        (
+            {
+                "path_id": "p",
+                "expected_goal_status": "INCONCLUSIVE",
+                "expect": [{"name": "x", "kind": "testid", "value": "x"}],
+                "steps": [],
+            },
+            "expected_goal_status",
+        ),
+    ],
+)
+def test_scenario_path_spec_requires_explicit_oracle(spec, problem) -> None:
+    source = default_registry().require("teamflow-login")
+    bad = Scenario(**{**source.__dict__, "paths": {"normal": spec}})
+    assert any(problem in issue for issue in bad.validate())
 
 
 def test_unsupported_assertion_kind_is_a_definition_error() -> None:
@@ -831,3 +877,82 @@ def test_four_path_matrix_for_existing_scenarios_through_real_browser_api(
                     reread = client.get(f"/api/v1/explorations/{record['exploration_id']}")
                     assert reread.status_code == 200
                     assert reread.json()["scenario_digest_verified"] is True
+
+
+def test_api_test_case_verdict_distinguishes_expected_negative_login(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import apps.api.explorer_api as explorer_api
+
+    scenario = default_registry().require("teamflow-login", "2.0.0")
+    with _isolated_teamflow(tmp_path) as base:
+        settings = Settings(
+            app_env="test",
+            database_url=f"sqlite:///{(tmp_path / 'teamflow.db').as_posix()}",
+            exploration_data_dir=str(tmp_path / "explorations"),
+            candidate_data_dir=str(tmp_path / "candidates"),
+            case_dir=str(tmp_path / "cases"),
+            benchmark_data_dir=str(tmp_path / "benchmark"),
+            chain_data_dir=str(tmp_path / "chains"),
+            blob_dir=str(tmp_path / "blobs"),
+        )
+        with TestClient(build_platform_app(settings)) as client:
+            request = {
+                "scenario": scenario.scenario_id,
+                "scenario_version": scenario.version,
+                "goal": "Log in and reach the project list",
+                "target": "/projects",
+                "expected_outcomes": ["项目列表"],
+                "base_url": f"{base}/?access_token=secret123#password=abc",
+                "policy": "scripted",
+                "max_steps": 8,
+            }
+            normal = client.post("/api/v1/explorations", json={**request, "path": "normal"}).json()
+            assert normal["goal_status"] == "VERIFIED"
+            assert normal["test_case_verdict"] == "PASSED"
+            assert "secret123" not in str(normal)
+            assert "password=abc" not in str(normal)
+            reread = client.get(f"/api/v1/explorations/{normal['exploration_id']}").json()
+            assert reread["test_case_verdict"] == "PASSED"
+            assert reread["trace_integrity_verified"] is True
+
+            negative = client.post(
+                "/api/v1/explorations", json={**request, "path": "exception"}
+            ).json()
+            assert negative["goal_status"] == "NOT_VERIFIED"
+            assert negative["path_expect"]["verdict"] == "VERIFIED"
+            assert negative["test_case_verdict"] == "PASSED"
+
+            # A valid credential on the negative path is a real regression.
+            path_specs = {key: dict(value) for key, value in scenario.paths.items()}
+            exception_spec = dict(path_specs["exception"])
+            exception_spec["steps"] = [
+                {
+                    **step,
+                    "args": {
+                        **dict(step.get("args") or {}),
+                        **(
+                            {"value": "{password}"}
+                            if step.get("tool") == "fill"
+                            and step.get("args", {}).get("selector") == "[data-testid=password]"
+                            else {}
+                        ),
+                    },
+                }
+                for step in exception_spec["steps"]
+            ]
+            path_specs["exception"] = exception_spec
+            wrong_success = replace(scenario, paths=path_specs)
+            original_get = explorer_api.SCENARIOS.get
+            monkeypatch.setattr(
+                explorer_api.SCENARIOS,
+                "get",
+                lambda sid, version=None: (
+                    wrong_success if sid == scenario.scenario_id else original_get(sid, version)
+                ),
+            )
+            regression = client.post(
+                "/api/v1/explorations", json={**request, "path": "exception"}
+            ).json()
+            assert regression["goal_status"] == "VERIFIED"
+            assert regression["test_case_verdict"] == "FAILED"

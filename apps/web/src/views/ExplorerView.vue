@@ -324,6 +324,12 @@ function actionSummary(action: { tool?: string; args?: Record<string, unknown> }
                   {{ selected.goal_status || 'NOT_EVALUATED' }}
                 </span>
               </li>
+              <li>
+                <span>测试用例裁决</span>
+                <span class="pill" :class="selected.test_case_verdict === 'PASSED' ? 'ok' : selected.test_case_verdict === 'FAILED' ? 'bad' : 'warn'" data-testid="test-case-verdict">
+                  {{ selected.test_case_verdict || 'INCONCLUSIVE' }}
+                </span>
+              </li>
               <li><span>意图引用</span><span class="mono">{{ selected.test_intent_ref || '—' }}</span></li>
               <li>
                 <span>业务目标</span>
@@ -435,6 +441,7 @@ function actionSummary(action: { tool?: string; args?: Record<string, unknown> }
               <th>执行状态</th>
               <th>停止原因</th>
               <th>目标验证</th>
+              <th>测试裁决</th>
               <th class="num">步数</th>
               <th>开始时间</th>
             </tr>
@@ -463,6 +470,9 @@ function actionSummary(action: { tool?: string; args?: Record<string, unknown> }
                 >
                   {{ row.goal_status || 'NOT_EVALUATED' }}
                 </span>
+              </td>
+              <td>
+                <StatusPill :value="row.test_case_verdict || 'INCONCLUSIVE'" />
               </td>
               <td class="num">{{ row.step_count }}</td>
               <td class="mono small">{{ row.started_at.replace('T', ' ').slice(0, 19) }}</td>

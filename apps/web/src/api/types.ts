@@ -422,6 +422,7 @@ export interface ExplorationSummary {
   /** Business-goal verdict, deliberately separate from status/stop_reason. */
   goal_status: string
   goal_reason: string
+  test_case_verdict?: 'PASSED' | 'FAILED' | 'INCONCLUSIVE' | string
   step_count: number
   started_at: string
   finished_at: string
@@ -462,6 +463,8 @@ export interface ExplorationTrace extends ExplorationSummary {
     constraints: string[]
   }
   goal_checks?: GoalCheck[]
+  /** Test oracle verdict is separate from the observed goal status. */
+  test_case_verdict?: 'PASSED' | 'FAILED' | 'INCONCLUSIVE' | string
 }
 
 export interface ReviewChecklistItem {
