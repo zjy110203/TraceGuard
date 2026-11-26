@@ -696,7 +696,7 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
     explorer = Explorer(
         sensitive_selectors=scenario.sensitive_selectors,
         secret_resolver=request.app.state.secret_resolver,
-        trace_hash_version=3 if body.policy == "mock-agent" else 2,
+        trace_hash_version=3,
         scenario_identity={
             "scenario_id": scenario.scenario_id,
             "scenario_version": scenario.version,

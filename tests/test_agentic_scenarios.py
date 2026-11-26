@@ -920,6 +920,7 @@ def test_api_test_case_verdict_distinguishes_expected_negative_login(
                 "max_steps": 8,
             }
             normal = client.post("/api/v1/explorations", json={**request, "path": "normal"}).json()
+            assert normal["hash_version"] == 3
             assert normal["goal_status"] == "VERIFIED"
             assert normal["test_case_verdict"] == "PASSED"
             leaked_fields = {
@@ -935,6 +936,7 @@ def test_api_test_case_verdict_distinguishes_expected_negative_login(
             negative = client.post(
                 "/api/v1/explorations", json={**request, "path": "exception"}
             ).json()
+            assert negative["hash_version"] == 3
             assert negative["goal_status"] == "NOT_VERIFIED"
             assert negative["path_expect"]["verdict"] == "VERIFIED"
             assert negative["test_case_verdict"] == "PASSED"
