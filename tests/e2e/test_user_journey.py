@@ -131,6 +131,7 @@ def test_user_journey_explore_compile_review_run(page: Page, platform: str, team
     page.fill('[data-testid="exp-outcomes"]', "项目列表")
     page.fill('[data-testid="exp-target-path"]', "/projects")
     page.fill('[data-testid="exp-base-url"]', teamflow)
+    page.select_option('[data-testid="exp-policy"]', "mock-agent")
 
     # 3. run the exploration — the button is disabled while running
     page.click("button:has-text('启动探索')")
@@ -140,6 +141,16 @@ def test_user_journey_explore_compile_review_run(page: Page, platform: str, team
     detail = page.inner_text(".detail-card")
     assert "PLAN_EXHAUSTED" in detail or "GOAL_VERIFIED" in detail
     assert "VERIFIED" in detail
+    traces = httpx.get(f"{platform}/api/v1/explorations", timeout=10, trust_env=False).json()
+    trace = httpx.get(
+        f"{platform}/api/v1/explorations/{traces[0]['exploration_id']}",
+        timeout=10,
+        trust_env=False,
+    ).json()
+    assert trace["policy"] == "mock-agent" and trace["is_real_model"] is False
+    assert trace["hash_version"] == 3 and trace["trace_integrity_verified"] is True
+    assert trace["scenario_id"] == "teamflow-login" and trace["scenario_digest"]
+    assert trace["decision_records"]
 
     # 6. compile to a candidate
     page.click('[data-testid="compile-candidate"]')
@@ -195,16 +206,54 @@ def test_user_journey_explore_compile_review_run(page: Page, platform: str, team
     run_page = page.inner_text("main")
     assert "run_" in run_page
 
-    # 16-19. assertion results / evidence / graph / diagnosis are reachable
-    for nav, marker in (
-        ("证据台账", "证据"),
-        ("证据图谱", "节点"),
-        ("诊断", None),
-    ):
-        if marker is None:
-            continue
+    # 16-19. persisted events/evidence and diagnosis all bind to this same Run.
+    chains = httpx.get(f"{platform}/api/v1/chains", timeout=10, trust_env=False).json()
+    assert len(chains) == 1
+    chain = chains[0]
+    chain_detail = httpx.get(
+        f"{platform}/api/v1/chains/{chain['chain_id']}", timeout=10, trust_env=False
+    ).json()
+    run_id = chain_detail["run_id"]
+    assert run_id and run_id in run_page
+    events = httpx.get(
+        f"{platform}/api/v1/evidence/events",
+        params={"run_id": run_id},
+        timeout=10,
+        trust_env=False,
+    ).json()
+    evidence = httpx.get(
+        f"{platform}/api/v1/evidence/records",
+        params={"run_id": run_id},
+        timeout=10,
+        trust_env=False,
+    ).json()
+    diagnosis = httpx.get(
+        f"{platform}/api/v1/runs/{run_id}/diagnosis", timeout=10, trust_env=False
+    ).json()
+    graph_nodes = httpx.get(
+        f"{platform}/api/v1/evidence/graph/nodes", timeout=10, trust_env=False
+    ).json()
+    assert events and all(item["context_refs"]["run_id"] == run_id for item in events)
+    assert evidence and all(item["run_id"] == run_id for item in evidence)
+    assert diagnosis["run_id"] == run_id
+    assert any(item["node_id"] == f"{run_id}:Run" for item in graph_nodes)
+    for nav, marker in (("证据台账", "证据"), ("证据图谱", "节点")):
         page.click(f"text={nav}")
         page.wait_for_load_state("networkidle")
+        if nav == "证据图谱":
+            page.wait_for_function(
+                "document.body.innerText.includes('当前显示') || "
+                "document.body.innerText.includes('图中还没有节点')",
+                timeout=10000,
+            )
+        else:
+            assert marker in page.inner_text("main")
+    page.goto(f"{platform}/#/diagnosis", wait_until="domcontentloaded")
+    page.wait_for_load_state("networkidle")
+    page.fill("#diag-run", run_id)
+    page.click("button:has-text('运行诊断')")
+    page.wait_for_selector(".meta")
+    assert run_id in page.inner_text("main")
 
 
 def test_negative_scenario_without_goal_cannot_compile(
@@ -240,7 +289,9 @@ def test_negative_scenario_without_goal_cannot_compile(
         trust_env=False,
     )
     assert compile_resp.status_code == 409
-    assert "not verified" in compile_resp.json()["error"]["message"]
+    assert "scenario test-case verdict does not admit compilation" in compile_resp.json()["error"][
+        "message"
+    ]
 
 
 def test_unsupported_scenario_is_rejected_by_the_api(platform: str) -> None:
