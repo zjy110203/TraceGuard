@@ -147,6 +147,18 @@ def test_scenario_digest_is_canonical_and_covers_v2_fields() -> None:
     assert original.to_dict()["digest_algorithm_version"] == "canonical-json-v1"
 
 
+def test_scenario_digest_rejects_nan_and_preserves_list_order_and_null() -> None:
+    original = default_registry().require("teamflow-login")
+    with pytest.raises(ValueError, match="Out of range float"):
+        assert Scenario(**{**original.__dict__, "data_setup": {"value": float("nan")}}).digest
+    list_a = Scenario(**{**original.__dict__, "constraints": ("first", "second")})
+    list_b = Scenario(**{**original.__dict__, "constraints": ("second", "first")})
+    null_value = Scenario(**{**original.__dict__, "data_setup": {"key": None}})
+    empty_value = Scenario(**{**original.__dict__, "data_setup": {}})
+    assert list_a.digest != list_b.digest
+    assert null_value.digest != empty_value.digest
+
+
 def test_scenario_without_constraints_is_refused() -> None:
     scenario = default_registry().require("teamflow-login")
     bad = Scenario(**{**scenario.__dict__, "scenario_id": "no-limits", "constraints": ()})

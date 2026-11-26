@@ -818,6 +818,17 @@ _HASH_VERSION_FIELDS = (
     "application_version",
     "browser_version",
 )
+_HASH_VERSION_V3_FIELDS = (
+    *_HASH_VERSION_FIELDS,
+    "decision_records",
+    "proposed_action",
+    "policy_decision",
+    "decision_id",
+    "decision_source",
+    "scenario_id",
+    "scenario_version",
+    "scenario_digest",
+)
 
 
 def compute_trace_hash(
@@ -830,6 +841,9 @@ def compute_trace_hash(
     test_intent: dict[str, Any] | None = None,
     agent_decisions: list[dict[str, Any]] | None = None,
     decision_records: list[dict[str, Any]] | None = None,
+    scenario_id: str | None = None,
+    scenario_version: str | None = None,
+    scenario_digest: str | None = None,
     versions: dict[str, Any] | None = None,
     hash_version: int = HASH_VERSION,
 ) -> str:
@@ -876,7 +890,17 @@ def compute_trace_hash(
     }
     if hash_version == HASH_VERSION_DECISIONS:
         payload["decision_records"] = list(decision_records or [])
-        payload["hash_scope"] = [*_HASH_VERSION_FIELDS, "decision_records"]
+        records = list(decision_records or [])
+        payload["proposed_action"] = [
+            row.get("proposed_action", row.get("proposal")) for row in records
+        ]
+        payload["policy_decision"] = [row.get("policy_decision") for row in records]
+        payload["decision_id"] = [row.get("decision_id") for row in records]
+        payload["decision_source"] = [row.get("decision_source") for row in records]
+        payload["scenario_id"] = scenario_id
+        payload["scenario_version"] = scenario_version
+        payload["scenario_digest"] = scenario_digest
+        payload["hash_scope"] = list(_HASH_VERSION_V3_FIELDS)
     canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
 
@@ -905,6 +929,9 @@ def verify_trace_record(record: dict[str, Any]) -> bool:
         test_intent=dict(record.get("test_intent") or {}),
         agent_decisions=list(record.get("agent_decisions") or []),
         decision_records=list(record.get("decision_records") or []),
+        scenario_id=record.get("scenario_id"),
+        scenario_version=record.get("scenario_version"),
+        scenario_digest=record.get("scenario_digest"),
         versions={
             "agent_version": str(record.get("agent_version") or ""),
             "prompt_version": str(record.get("prompt_version") or ""),
@@ -942,6 +969,9 @@ class ExplorationTrace:
     observations: list[dict[str, Any]] = field(default_factory=list)
     agent_decisions: list[dict[str, Any]] = field(default_factory=list)
     decision_records: list[dict[str, Any]] = field(default_factory=list)
+    scenario_id: str | None = None
+    scenario_version: str | None = None
+    scenario_digest: str | None = None
     authorization_events: list[dict[str, Any]] = field(default_factory=list)
     post_action_records: list[dict[str, Any]] = field(default_factory=list)
     # Every security refusal, with its reason: a reviewer must be able to see
@@ -984,6 +1014,9 @@ class ExplorationTrace:
             test_intent=self.test_intent,
             agent_decisions=self.agent_decisions,
             decision_records=self.decision_records,
+            scenario_id=self.scenario_id,
+            scenario_version=self.scenario_version,
+            scenario_digest=self.scenario_digest,
             versions={
                 "agent_version": self.agent_version,
                 "prompt_version": self.prompt_version,

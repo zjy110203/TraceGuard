@@ -696,6 +696,12 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
     explorer = Explorer(
         sensitive_selectors=scenario.sensitive_selectors,
         secret_resolver=request.app.state.secret_resolver,
+        trace_hash_version=3 if body.policy == "mock-agent" else 2,
+        scenario_identity={
+            "scenario_id": scenario.scenario_id,
+            "scenario_version": scenario.version,
+            "scenario_digest": scenario.digest,
+        },
         count_selectors=_selector_count_targets(
             [*scenario.goal_definition, *list(path_spec.get("expect") or [])]
         ),
@@ -741,8 +747,6 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
         )
         explorer.policy = policy
         explorer.trace.agent_version = agent_version
-        if body.policy == "mock-agent":
-            explorer.trace.hash_version = 3
         explorer.trace.prompt_version = (
             "none-real-model" if body.policy == "mock-agent" else "none-scripted"
         )

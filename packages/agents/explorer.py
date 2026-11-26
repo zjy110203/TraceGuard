@@ -333,6 +333,7 @@ class Explorer:
         count_selectors: tuple[str, ...] = (),
         secret_resolver: SecretResolver | None = None,
         trace_hash_version: int = 2,
+        scenario_identity: dict[str, str] | None = None,
     ) -> None:
         self.policy = policy or ScriptedPolicy()
         self.budget = budget or Budget()
@@ -353,6 +354,10 @@ class Explorer:
             tool_version="1.0.0",
         )
         self.trace.hash_version = trace_hash_version
+        if scenario_identity:
+            self.trace.scenario_id = scenario_identity["scenario_id"]
+            self.trace.scenario_version = scenario_identity["scenario_version"]
+            self.trace.scenario_digest = scenario_identity["scenario_digest"]
 
     def explore(
         self,
