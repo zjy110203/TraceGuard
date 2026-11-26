@@ -227,7 +227,9 @@ def test_concurrent_runs_keep_their_events_separate(
         recorder = _Recorder(
             f"{api}/api/v1/events/stream",
             stop_when=lambda frames: all(
-                any(f["event_type"] == "run.finished" and f["run_id"] == rid for f in frames)
+                any(
+                    f.get("event_type") == "run.finished" and f.get("run_id") == rid for f in frames
+                )
                 for rid in run_ids
             ),
             max_seconds=120,
@@ -247,8 +249,11 @@ def test_concurrent_runs_keep_their_events_separate(
     # increasing within that run: a crossed payload would break both invariants.
     by_run: dict[str, list[dict[str, Any]]] = {rid: [] for rid in run_ids}
     for frame in recorder.frames:
-        if frame["run_id"] in by_run:
-            by_run[frame["run_id"]].append(frame)
+        # ``stream.notice`` transport frames share the data channel but are not
+        # C05 events and therefore have no run_id or event_type.
+        run_id = frame.get("run_id")
+        if run_id in by_run and frame.get("event_type"):
+            by_run[run_id].append(frame)
     for run_id, frames in by_run.items():
         assert frames, f"no events observed for {run_id}"
         sequences = [f["sequence"] for f in frames]
