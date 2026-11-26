@@ -43,7 +43,7 @@
 | 目录 | 内容 |
 |---|---|
 | `FINAL/` | 第二轮（`TraceGuard-Second-Run-Report.md`）、第三轮、第四轮交付报告；最终交付总报告 |
-| `r5/` | 第五轮（R5）实施、评审与验收材料：R5-3、R5-4、R5-5.1、R5-5.2 与 R5-5.3 设计和评审整改（DR1/DR2/DR2.1/E1）；**R5-5.3-M0-架构评审预审记录**（技术预审底稿，非人工审批，历史结论保留）；**R5-5.3-M0-委托技术决策与本机范围冻结记录**（授权来源、15 项决策、本机边界、M1/D8 准入）；**R5-5.3-M0-决策确认单**（15 项 `DECIDED_BY_DELEGATION`、3 项 `REGISTERED`、0 项具名 `APPROVED`；完整 `M0_FROZEN=false`、本机 `M0_LOCAL_SCOPE_FROZEN=true`） |
+| `r5/` | 第五轮（R5）实施、评审与验收材料：R5-3、R5-4、R5-5.1、R5-5.2 与 R5-5.3 设计和评审整改（DR1/DR2/DR2.1/E1）；**R5-5.3-M0-架构评审预审记录**（技术预审底稿，非人工审批，历史结论保留）；**R5-5.3-M0-委托技术决策与本机范围冻结记录**（授权来源、15 项决策、本机边界、M1/D8 准入）；**R5-5.3-M0-决策确认单**（15 项 `DECIDED_BY_DELEGATION`、3 项 `REGISTERED`、0 项具名 `APPROVED`；完整 `M0_FROZEN=false`、本机 `M0_LOCAL_SCOPE_FROZEN=true`）；**M1 / M2 / M3 / M5 实施验收报告**（本机结果、CI、环境 skip 与阻断范围） |
 | `audit/` | 契约符合性审计、test_s2 隔离专项报告，以及 R5-0 起手审计 5 篇（Git 差异、任务准入清单、安全风险、本机环境、测试基线） |
 | `ui/` | 前端设计系统、页面规格、UI/UX 审计；`ui/r5/R5-2-前端视觉验收报告.md` 与 `ui/r5/screenshots/`（真实浏览器验收截图） |
 | `benchmark/` | GT 映射提案、UI-FaultBench 结果报告 |
