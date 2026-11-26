@@ -10,3 +10,6 @@ Real Chromium test passed in 85.62s. Single Explorer exp_b62a0741d78f -> cand_14
 
 ## 2026-11-26 final invariant review
 Recheck proposal creation against current disk base under the shared case lock; idempotent promote returns its own version. Revalidate committed/DONE file ownership on restart, expose BLOCKED on missing/changed assets, and refuse further mutation. Add explicit mock actor aliases to the common human-review policy. Correct persisted race coverage to use different contents in its nonidentical scenario. Focused Repair/Candidate/API/Diagnosis regression: 138 passed, 1 warning, raw f6-hardening.log retained. A fresh full aggregate will validate this final code; the earlier aggregate remains a separate run.
+
+## 2026-11-26 aggregate evidence isolation
+Found the existing all-mode runner used the same pytest.log and pytest-tmp for full Python and focused Security, allowing later gates to overwrite evidence. Preserved the original full log before overwrite; assigned the Security gate its own name/log/basetemp without changing test scope or assertions. Verifier status/timeout regression: 19 passed (verifier-evidence.log). A fresh all-mode run will cover the final runner and product code together.

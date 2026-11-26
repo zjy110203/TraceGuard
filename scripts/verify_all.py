@@ -679,9 +679,9 @@ def _run(step: Step, out_dir: Path, extra_env: dict[str, str]) -> StepResult:
     return result
 
 
-def _pytest(argv: list[str]) -> Step:
+def _pytest(argv: list[str], *, name: str = "pytest") -> Step:
     return Step(
-        name="pytest",
+        name=name,
         argv=[PY, "-m", "pytest", *argv],
         count_re=r"(\d+) passed",
         skip_re=r"(\d+) skipped",
@@ -727,7 +727,8 @@ def security_steps() -> list[Step]:
                 "tests/test_explorer_api.py",
                 "tests/test_goal_semantics.py",
                 "tests/test_trace_integrity_v2.py",
-            ]
+            ],
+            name="pytest-security",
         )
     ]
 
@@ -1190,11 +1191,12 @@ def main() -> int:
                 queue.append(toolchain_blocked(mode, exc))
                 continue
             for step in built:
-                if step.name == "pytest" and not any(
+                if step.name.startswith("pytest") and not any(
                     arg.startswith("--basetemp=") for arg in step.argv
                 ):
-                    # One basetemp per run, inside this run's output directory.
-                    step.argv = [*step.argv, f"--basetemp={out_dir / 'pytest-tmp'}"]
+                    # Distinct stages must not overwrite logs or let pytest
+                    # remove an earlier stage's filesystem evidence.
+                    step.argv = [*step.argv, f"--basetemp={out_dir / (step.name + '-tmp')}"]
                 queue.append(step)
 
     print("=" * 70)

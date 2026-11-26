@@ -6,6 +6,7 @@ These tests are deliberately pure: every verdict is computed from a constructed
 
 from __future__ import annotations
 
+
 import json
 from pathlib import Path
 
@@ -181,3 +182,13 @@ def test_missing_executable_is_blocked_not_a_traceback(tmp_path: Path) -> None:
     assert result.status == "BLOCKED"
     assert result.ok is False
     assert result.blocked_evidence
+
+
+def test_full_and_security_gates_have_distinct_artifact_names():
+    from scripts.verify_all import python_steps, security_steps
+
+    full = python_steps()[-1]
+    security = security_steps()[0]
+    assert full.name != security.name
+    assert full.argv[1:3] == security.argv[1:3] == ["-m", "pytest"]
+    assert "tests/test_repair_sandbox.py" in security.argv
