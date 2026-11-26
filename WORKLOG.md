@@ -13,3 +13,5 @@ Recheck proposal creation against current disk base under the shared case lock; 
 
 ## 2026-11-26 aggregate evidence isolation
 Found the existing all-mode runner used the same pytest.log and pytest-tmp for full Python and focused Security, allowing later gates to overwrite evidence. Preserved the original full log before overwrite; assigned the Security gate its own name/log/basetemp without changing test scope or assertions. Verifier status/timeout regression: 19 passed (verifier-evidence.log). A fresh all-mode run will cover the final runner and product code together.
+
+Verifier test import spacing failed Ruff in run 20261126-195712-all-47748. Stopped only that superseded run and preserved its lint log/aborted.json. Fixed imports with Ruff, verified full Ruff/Format, and start a fresh full aggregate. No failing run is counted as PASS.

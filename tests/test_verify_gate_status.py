@@ -6,7 +6,6 @@ These tests are deliberately pure: every verdict is computed from a constructed
 
 from __future__ import annotations
 
-
 import json
 from pathlib import Path
 
