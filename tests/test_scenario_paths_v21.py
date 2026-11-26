@@ -97,7 +97,14 @@ def test_all_four_paths_have_passing_real_browser_verdicts(tmp_path: Path, sid: 
                 )
                 if spec["expected_goal_status"] == "NOT_VERIFIED":
                     assert compiled.status_code == 409, compiled.text
-                    assert compiled.json()["error"]["details"]["goal_status"] == "NOT_VERIFIED"
+                    details = compiled.json()["error"]["details"]
+                    if sid == "project-query":
+                        # The dynamic route satisfies the legacy TestIntent while the
+                        # versioned goal correctly detects that the project was absent.
+                        assert details["recorded"] == "NOT_VERIFIED"
+                        assert details["recomputed"] == "VERIFIED"
+                    else:
+                        assert details["goal_status"] == "NOT_VERIFIED"
                     assert not any(
                         json.loads(p.read_bytes()).get("source_trace_hash")
                         == record["source_trace_hash"]
