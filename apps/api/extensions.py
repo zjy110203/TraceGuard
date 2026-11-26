@@ -406,8 +406,7 @@ class ApproveBody(BaseModel):
 
 class RejectBody(BaseModel):
     reason: str
-    reviewer: str = "human"
-    rejected_by: str = ""
+    reviewer: str
 
 
 class CreateRepairBody(BaseModel):
@@ -557,7 +556,7 @@ def approve_repair(proposal_id: str, body: ApproveBody, request: Request) -> dic
 def reject_repair(proposal_id: str, body: RejectBody, request: Request) -> dict[str, Any]:
     if not body.reason.strip():
         raise ValidationError("rejection reason is required")
-    rejected_by = body.rejected_by or body.reviewer
+    rejected_by = body.reviewer.strip()
     if is_self_approver(rejected_by):
         raise ValidationError("repair rejection requires a named human reviewer")
     service = request.app.state.repair_service

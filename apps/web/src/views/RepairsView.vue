@@ -122,7 +122,7 @@ async function reject(id: string): Promise<void> {
   actionError.value = ''
   notice.value = ''
   try {
-    await api.rejectRepair(id, { reason: f.reason.trim(), reviewer: f.approver.trim() || 'human' })
+    await api.rejectRepair(id, { reason: f.reason.trim(), reviewer: f.approver.trim() })
     notice.value = `已驳回 ${id}`
     await state.reload()
   } catch (err) {

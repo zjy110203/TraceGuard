@@ -221,6 +221,14 @@ def test_self_approval_of_repair_is_refused(client: Any) -> None:
     assert "human" in resp.json()["error"]["message"]
 
 
+@pytest.mark.parametrize(
+    "body", [{"reason": "insufficient evidence"}, {"reason": "x", "reviewer": ""}]
+)
+def test_repair_reject_requires_explicit_reviewer(client: Any, body: dict[str, str]) -> None:
+    response = client.post("/api/v1/repairs/rp-1/reject", json=body)
+    assert response.status_code == 422
+
+
 def test_approval_requires_a_record(client: Any) -> None:
     resp = client.post(
         "/api/v1/repairs/rp-1/approve",

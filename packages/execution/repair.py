@@ -359,7 +359,7 @@ class RepairService:
             self._persist()
             return p  # APPROVED != PROMOTED
 
-    def reject(self, proposal_id: str, reason: str, rejected_by: str = "human") -> RepairProposal:
+    def reject(self, proposal_id: str, reason: str, *, rejected_by: str) -> RepairProposal:
         if not reason.strip():
             raise ValidationError("rejection reason is required")
         if not rejected_by.strip():
