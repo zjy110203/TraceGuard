@@ -396,7 +396,7 @@ function actionSummary(action: { tool?: string; args?: Record<string, unknown> }
                   selected.status !== 'COMPLETED'
                     ? '仅执行状态 COMPLETED 的轨迹可编译。'
                     : !goalVerified
-                      ? '业务目标未验证（VERIFIED）前不可编译：没有目标证据，观察结果不能自我定义期望。'
+                      ? '仅业务目标 VERIFIED 可编译。负向路径即使符合预期（PASSED），也不能据此生成正式业务断言。'
                       : '编译器为确定性规则（非 LLM），产物需人工评审后才会成为正式用例。'
                 }}
               </span>

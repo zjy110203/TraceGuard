@@ -92,6 +92,26 @@ def test_all_four_paths_have_passing_real_browser_verdicts(tmp_path: Path, sid: 
                 detail = client.get(f"/api/v1/explorations/{record['exploration_id']}").json()
                 assert detail["scenario_digest_verified"] is True
                 assert detail["goal_assertions_verified"] is True
+                compiled = client.post(
+                    f"/api/v1/explorations/{record['exploration_id']}/compile", json={}
+                )
+                if spec["expected_goal_status"] == "NOT_VERIFIED":
+                    assert compiled.status_code == 409, compiled.text
+                    assert compiled.json()["error"]["details"]["goal_status"] == "NOT_VERIFIED"
+                    assert not any(
+                        json.loads(p.read_bytes()).get("source_trace_hash")
+                        == record["source_trace_hash"]
+                        for p in (tmp_path / "candidates").glob("cand_*.json")
+                    )
+                else:
+                    assert compiled.status_code == 201, compiled.text
+                    assert compiled.json()["status"] == "PENDING_REVIEW"
+                    path = tmp_path / "candidates" / f"{compiled.json()['candidate_id']}.json"
+                    assert (
+                        json.loads(path.read_bytes())["source_trace_hash"]
+                        == record["source_trace_hash"]
+                    )
+                assert not list((tmp_path / "cases").glob("*.json"))
                 if kind == "recovery":
                     sequence = next(
                         r

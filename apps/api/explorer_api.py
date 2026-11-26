@@ -46,7 +46,11 @@ from packages.agents.exploration import (
     verify_trace_record,
 )
 from packages.agents.explorer import Explorer
-from packages.agents.goal_assertions import evaluate_assertions, evaluate_test_case_verdict
+from packages.agents.goal_assertions import (
+    evaluate_assertions,
+    evaluate_test_case_verdict,
+    legacy_report_matches,
+)
 from packages.agents.planner import MockProvider, PlannerPolicy
 from packages.agents.scenarios import Scenario, default_registry
 from packages.agents.scripted_agent import AgentStep, ScriptedAgentPolicy
@@ -628,17 +632,21 @@ def get_exploration(request: Request, exploration_id: str) -> dict[str, Any]:
             scenario_for_record and scenario_for_record.digest == record["scenario_digest"]
         )
     if scenario_for_record and scenario_for_record.goal_definition:
+        specs = list(
+            scenario_for_record.goal_definition_for_path(
+                str(record.get("scenario_path") or "normal")
+            )
+        )
+        observations = list(record.get("observations") or [])
         recomputed = evaluate_assertions(
-            list(
-                scenario_for_record.goal_definition_for_path(
-                    str(record.get("scenario_path") or "normal")
-                )
-            ),
-            dict((record.get("observations") or [{}])[-1] or {}),
-            observations=list(record.get("observations") or []),
+            specs, dict((observations or [{}])[-1]), observations=observations
         )
         record["goal_assertions_recomputed"] = recomputed.to_dict()
-        record["goal_assertions_verified"] = recomputed.to_dict() == record.get("goal_assertions")
+        stored = record.get("goal_assertions")
+        record["goal_assertions_verified"] = recomputed.to_dict() == stored or (
+            isinstance(stored, dict)
+            and legacy_report_matches(recomputed, stored, specs, observations)
+        )
     return record
 
 

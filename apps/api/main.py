@@ -45,12 +45,7 @@ def build_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         logger.info("platform_api_startup", extra={"extra_fields": {"env": settings.app_env.value}})
-        _app.state.candidate_recovery = CandidateTransactions(
-            _app.state.candidate_store, Path(settings.case_dir)
-        ).recover_all()
-        for result in _app.state.candidate_recovery:
-            if result["status"] == "BLOCKED":
-                logger.error("candidate_recovery_blocked", extra={"extra_fields": result})
+        candidate_transactions().recover_all()
         recover_expired_scenario_data(_app)
         yield
         engine.dispose()
@@ -81,6 +76,9 @@ def build_app(settings: Settings | None = None) -> FastAPI:
     async def _domain_error_handler(_req: Request, exc: DomainError) -> JSONResponse:
         return JSONResponse(status_code=exc.status_code, content=exc.to_envelope())
 
+    def candidate_transactions() -> CandidateTransactions:
+        return CandidateTransactions(app.state.candidate_store, Path(settings.case_dir))
+
     @app.get("/health")
     def health() -> dict[str, Any]:
         """Liveness + DB connectivity. Reads DB with a trivial statement."""
@@ -92,9 +90,7 @@ def build_app(settings: Settings | None = None) -> FastAPI:
         except Exception as exc:  # pragma: no cover - exercised only on DB outage
             db_ok = False
             error = type(exc).__name__
-        blocked = [
-            r for r in getattr(app.state, "candidate_recovery", []) if r["status"] == "BLOCKED"
-        ]
+        blocked = [r for r in candidate_transactions().recover_all() if r["status"] == "BLOCKED"]
         return {
             "status": "ok" if db_ok and not blocked else "degraded",
             "service": "platform-api",

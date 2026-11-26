@@ -142,6 +142,7 @@ class AssertionResult:
     field_path: str = ""
     step_id: str = ""
     evidence_refs: tuple[str, ...] = ()
+    children: tuple[AssertionResult, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -158,6 +159,7 @@ class AssertionResult:
             "field_path": self.field_path,
             "step_id": self.step_id,
             "evidence_refs": list(self.evidence_refs),
+            **({"children": [c.to_dict() for c in self.children]} if self.children else {}),
         }
 
 
@@ -187,6 +189,7 @@ class _ObservationView:
     """Read-only, defensive view over one persisted observation dict."""
 
     raw: dict[str, Any] = field(default_factory=dict)
+    history: list[dict[str, Any]] | None = None
 
     @property
     def url(self) -> str:
@@ -250,6 +253,10 @@ class _ObservationView:
         return str(self.raw.get("step_id") or f"step-{self.raw.get('step_index', 0)}")
 
 
+def _reference_id(step_id: str, observation_ref: str, path: str) -> str:
+    return "ev_" + hashlib.sha256(f"{step_id}:{observation_ref}:{path}".encode()).hexdigest()[:24]
+
+
 def resolve_evidence_reference(
     observations: list[dict[str, Any]],
     *,
@@ -259,10 +266,7 @@ def resolve_evidence_reference(
     evidence_ref: str,
 ) -> Any:
     """Re-resolve a stable evidence reference and reject stale/tampered refs."""
-    expected = (
-        "ev_"
-        + hashlib.sha256(f"{step_id}:{observation_ref}:{field_path}".encode()).hexdigest()[:24]
-    )
+    expected = _reference_id(step_id, observation_ref, field_path)
     if expected != evidence_ref:
         raise ValueError("evidence reference digest mismatch")
     record = next(
@@ -284,6 +288,23 @@ def resolve_evidence_reference(
         actual_ref = "obs_" + hashlib.sha256(canonical.encode()).hexdigest()[:24]
         if actual_ref != declared_ref:
             raise ValueError("observation content no longer matches its stable reference")
+    if field_path.startswith("{"):
+        path = json.loads(field_path)
+        if "fields" in path:
+            return {key: record[key] for key in path["fields"] if key in record}
+        if "element" in path:
+            element = _ObservationView(record).element(path["element"])
+            if element is not None and path["attribute"] in element:
+                return element[path["attribute"]]
+        if "keys" in path:
+            current: Any = record
+            for key in path["keys"]:
+                if not isinstance(current, dict) or key not in current:
+                    raise ValueError("missing evidence field")
+                current = current[key]
+            return current
+        raise ValueError("invalid evidence field path")
+    # Read references persisted by earlier versions.
     if field_path == "composite":
         # Composite predicates read the whole immutable observation. Preserve
         # their existing reference IDs while making that source resolvable.
@@ -294,21 +315,25 @@ def resolve_evidence_reference(
         if not isinstance(selector, str) or selector not in counts:
             raise ValueError("evidence selector count no longer resolves")
         return counts[selector]
-    current: Any = record
-    for component in field_path.split("."):
-        if component.startswith("visible_elements[testid=") and component.endswith("]"):
-            testid = component[len("visible_elements[testid=") : -1]
-            current = next(
-                (e for e in record.get("visible_elements", []) if e.get("testid") == testid),
-                None,
-            )
-        elif isinstance(current, dict):
-            current = current.get(component)
-        else:
-            current = None
-        if current is None:
-            raise ValueError("evidence field path no longer resolves")
-    return current
+    element_path = re.fullmatch(r"visible_elements\[testid=(.*)\]\.(\w+)", field_path)
+    if element_path:
+        testid, attribute = element_path.groups()
+        element = _ObservationView(record).element(testid)
+        if attribute in {"present", "absent"} or element is None or attribute not in element:
+            return dict(record)
+        return element[attribute]
+    if field_path in {"previous_url_path", "previous_url_path,url_path"}:
+        return {key: record[key] for key in ("previous_url_path", "url_path") if key in record}
+    if field_path in {"evidence_ref", "evidence_ref,observation_ref"}:
+        return {key: record[key] for key in ("evidence_ref", "observation_ref") if key in record}
+    count_path = re.fullmatch(r"dom_counts\.(table_row_count|list_item_count)", field_path)
+    if count_path and count_path[1] in record.get("dom_counts", {}):
+        return record["dom_counts"][count_path[1]]
+    if field_path == "text":
+        field_path = "text_excerpt"
+    if field_path in record:
+        return record[field_path]
+    raise ValueError("evidence field path no longer resolves")
 
 
 def _record_observation_ref(record: dict[str, Any]) -> str:
@@ -319,29 +344,63 @@ def _record_observation_ref(record: dict[str, Any]) -> str:
     return "obs_" + hashlib.sha256(canonical.encode()).hexdigest()[:24]
 
 
-def _stable_field_path(spec: dict[str, Any], result: AssertionResult) -> str:
-    kind = str(spec.get("kind") or "")
-    if kind in {"element_exists", "element_visible", "element_text", "form_state", "element_attr"}:
-        field_name = {
-            "element_exists": "testid",
+def _stable_field_path(
+    spec: dict[str, Any], result: AssertionResult, view: _ObservationView
+) -> str:
+    kind = spec["kind"]
+    if result.verdict == INCONCLUSIVE or kind in {
+        "not",
+        "all_of",
+        "any_of",
+        "url_and_content",
+        "multi_step_goal",
+    }:
+        return "composite"
+    path: dict[str, Any]
+    if kind in {
+        "element_relation",
+        "testid",
+        "dynamic_match",
+        "page_state",
+        "url_exact",
+        "url_regex",
+    }:
+        key = {
+            "element_relation": "dom_relations",
+            "testid": "visible_testids",
+            "dynamic_match": "text_excerpt",
+            "page_state": "text_excerpt"
+            if spec.get("field") == "text"
+            else spec.get("field") or "title",
+            "url_exact": "url_path" if view.url_path else "url",
+            "url_regex": "url_path" if view.url_path else "url",
+        }[kind]
+        path = {"keys": [key]} if key in view.raw else {"fields": [key]}
+    elif kind in {"list_item_count", "table_row_count"}:
+        path = {
+            "keys": ["selector_counts", spec["selector"]]
+            if spec.get("selector")
+            else ["dom_counts", kind]
+        }
+    elif kind in {"page_transition", "evidence_complete"}:
+        path = {
+            "fields": ["previous_url_path", "url_path"]
+            if kind == "page_transition"
+            else ["evidence_ref", "observation_ref"]
+        }
+    else:
+        element = view.element(spec["testid"])
+        attr = {
             "element_visible": "visible",
             "element_text": "name",
-            "form_state": str(spec.get("state") or "present"),
-            "element_attr": str(spec.get("attribute") or ""),
+            "element_attr": spec.get("attribute"),
+            "form_state": spec.get("state") or "present",
+            "element_exists": "testid",
         }[kind]
-        return f"visible_elements[testid={spec.get('testid', '')}].{field_name}"
-    if kind in {"table_row_count", "list_item_count"}:
-        if spec.get("selector"):
-            return f"selector_counts[{json.dumps(str(spec['selector']), ensure_ascii=False)}]"
-        return f"dom_counts.{kind}"
-    if kind == "element_relation":
-        return "dom_relations"
-    if kind == "page_transition":
-        return "previous_url_path"
-    if kind == "evidence_complete":
-        return "evidence_ref"
-    fields = re.findall(r"observations\[-1\]\.([A-Za-z0-9_.]+)", result.evidence)
-    return ",".join(fields) or result.evidence
+        if attr in {"present", "absent"} or element is None or attr not in element:
+            return "composite"
+        path = {"element": spec["testid"], "attribute": attr}
+    return json.dumps(path, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
 def validate_assertion(spec: dict[str, Any]) -> list[str]:
@@ -474,6 +533,21 @@ def _result(
 
 
 def evaluate_assertion(spec: dict[str, Any], view: _ObservationView) -> AssertionResult:
+    result = _evaluate_assertion(spec, view)
+    if spec["kind"] == "multi_step_goal" and result.children:
+        return replace(result, step_id=view.step_id, observation_ref=view.observation_ref)
+    path = _stable_field_path(spec, result, view)
+    ref = _reference_id(view.step_id, view.observation_ref, path)
+    return replace(
+        result,
+        step_id=view.step_id,
+        observation_ref=view.observation_ref,
+        field_path=path,
+        evidence_ref=ref,
+    )
+
+
+def _evaluate_assertion(spec: dict[str, Any], view: _ObservationView) -> AssertionResult:
     """Evaluate one assertion. Never raises for a well-formed spec."""
     problems = validate_assertion(spec)
     if problems:
@@ -497,13 +571,16 @@ def evaluate_assertion(spec: dict[str, Any], view: _ObservationView) -> Assertio
             ],
         }
         child = evaluate_assertion(expanded, view)
-        return _result(
-            spec,
-            child.verdict,
-            expected=child.expected,
-            observed=child.observed,
-            evidence=child.evidence,
-            detail="url_and_content expanded to all_of at evaluation",
+        return replace(
+            _result(
+                spec,
+                child.verdict,
+                expected=child.expected,
+                observed=child.observed,
+                evidence=child.evidence,
+                detail="url_and_content expanded to all_of at evaluation",
+            ),
+            children=child.children,
         )
 
     if kind == "all_of":
@@ -515,13 +592,16 @@ def evaluate_assertion(spec: dict[str, Any], view: _ObservationView) -> Assertio
             verdict = INCONCLUSIVE
         else:
             verdict = PASSED
-        return _result(
-            spec,
-            verdict,
-            expected=f"all {len(children)} sub-assertions",
-            observed=", ".join(f"{c.name}={c.verdict}" for c in children),
-            evidence="composite",
-            detail="all_of: any FAILED wins, then INCONCLUSIVE, else PASSED",
+        return replace(
+            _result(
+                spec,
+                verdict,
+                expected=f"all {len(children)} sub-assertions",
+                observed=", ".join(f"{c.name}={c.verdict}" for c in children),
+                evidence="composite",
+                detail="all_of: any FAILED wins, then INCONCLUSIVE, else PASSED",
+            ),
+            children=tuple(children),
         )
 
     if kind == "any_of":
@@ -533,13 +613,16 @@ def evaluate_assertion(spec: dict[str, Any], view: _ObservationView) -> Assertio
             verdict = INCONCLUSIVE
         else:
             verdict = FAILED
-        return _result(
-            spec,
-            verdict,
-            expected=f"any of {len(children)} sub-assertions",
-            observed=", ".join(f"{c.name}={c.verdict}" for c in children),
-            evidence="composite",
-            detail="any_of: any PASSED wins, then INCONCLUSIVE, else FAILED",
+        return replace(
+            _result(
+                spec,
+                verdict,
+                expected=f"any of {len(children)} sub-assertions",
+                observed=", ".join(f"{c.name}={c.verdict}" for c in children),
+                evidence="composite",
+                detail="any_of: any PASSED wins, then INCONCLUSIVE, else FAILED",
+            ),
+            children=tuple(children),
         )
 
     if kind == "not":
@@ -550,13 +633,16 @@ def evaluate_assertion(spec: dict[str, Any], view: _ObservationView) -> Assertio
             verdict, detail = PASSED, f"child {child.name} failed as required"
         else:
             verdict, detail = INCONCLUSIVE, f"child {child.name} is inconclusive"
-        return _result(
-            spec,
-            verdict,
-            expected=f"not({child.name})",
-            observed=child.verdict,
-            evidence=child.evidence,
-            detail=detail,
+        return replace(
+            _result(
+                spec,
+                verdict,
+                expected=f"not({child.name})",
+                observed=child.verdict,
+                evidence=child.evidence,
+                detail=detail,
+            ),
+            children=(child,),
         )
 
     if not view.sampled and kind != "url_exact" and kind != "url_regex":
@@ -884,7 +970,7 @@ def evaluate_assertion(spec: dict[str, Any], view: _ObservationView) -> Assertio
         )
 
     if kind == "multi_step_goal":
-        history = view.raw.get("observations")
+        history = view.history if view.history is not None else view.raw.get("observations")
         children = []
         previous_index = -1
         if isinstance(history, list):
@@ -933,22 +1019,7 @@ def evaluate_assertion(spec: dict[str, Any], view: _ObservationView) -> Assertio
                     assertion = step.get("assertion", step)
                     target_view = _ObservationView(target)
                     child = evaluate_assertion(assertion, target_view)
-                    child_path = _stable_field_path(assertion, child)
-                    child_ref = (
-                        "ev_"
-                        + hashlib.sha256(
-                            f"{target_view.step_id}:{target_view.observation_ref}:{child_path}".encode()
-                        ).hexdigest()[:24]
-                    )
-                    children.append(
-                        replace(
-                            child,
-                            step_id=target_view.step_id,
-                            observation_ref=target_view.observation_ref,
-                            field_path=child_path,
-                            evidence_ref=child_ref,
-                        )
-                    )
+                    children.append(child)
         else:
             children = [
                 _result(
@@ -973,7 +1044,9 @@ def evaluate_assertion(spec: dict[str, Any], view: _ObservationView) -> Assertio
             detail="ordered multi-step assertions share stable observation references",
         )
         return replace(
-            result, evidence_refs=tuple(x.evidence_ref for x in children if x.evidence_ref)
+            result,
+            children=tuple(children),
+            evidence_refs=tuple(x.evidence_ref for x in children if x.evidence_ref),
         )
 
     if kind == "dynamic_match":
@@ -1022,8 +1095,6 @@ def evaluate_assertions(
     if not assertions:
         return AssertionReport(INCONCLUSIVE, (), "goal declares no assertions")
     raw = dict(observation or {})
-    if observations is not None:
-        raw["observations"] = observations
     # Registration sugar: keep the external declaration at 20 forms while
     # ensuring evaluation is only performed by the existing all_of evaluator.
     assertions = [
@@ -1047,27 +1118,8 @@ def evaluate_assertions(
         )
         for a in assertions
     ]
-    view = _ObservationView(raw)
-    raw_results = tuple(evaluate_assertion(spec, view) for spec in assertions)
-    results = tuple(
-        replace(
-            result,
-            observation_ref=view.observation_ref,
-            step_id=view.step_id,
-            field_path=_stable_field_path(spec, result),
-            evidence_ref=(
-                "ev_"
-                + hashlib.sha256(
-                    (
-                        f"{view.step_id}:{view.observation_ref}:{_stable_field_path(spec, result)}"
-                    ).encode()
-                ).hexdigest()[:24]
-                if result.evidence != "composite"
-                else ""
-            ),
-        )
-        for spec, result in zip(assertions, raw_results, strict=True)
-    )
+    view = _ObservationView(raw, observations)
+    results = tuple(evaluate_assertion(spec, view) for spec in assertions)
     required = [r for r in results if r.required]
     if not required:
         return AssertionReport(
@@ -1084,3 +1136,61 @@ def evaluate_assertions(
             INCONCLUSIVE, results, f"required assertions could not be observed: {unknown}"
         )
     return AssertionReport(VERIFIED, results, "every required assertion passed")
+
+
+def legacy_report_matches(
+    report: AssertionReport,
+    stored: dict[str, Any],
+    specs: list[dict[str, Any]],
+    observations: list[dict[str, Any]],
+) -> bool:
+    """Verify the exact pre-structured-reference envelope without rewriting stored traces."""
+    rebuilt = report.to_dict()
+    final = dict((observations or [{}])[-1], observations=observations)
+    for row, spec, result in zip(rebuilt["results"], specs, report.results, strict=True):
+        path = _legacy_field_path(spec, result)
+        view = _ObservationView(final)
+        row.update(
+            field_path=path,
+            observation_ref=view.observation_ref,
+            evidence_ref=_reference_id(view.step_id, view.observation_ref, path)
+            if result.evidence != "composite"
+            else "",
+        )
+        row.pop("children", None)
+        if spec["kind"] == "multi_step_goal":
+            row["evidence_refs"] = [
+                _reference_id(
+                    child.step_id,
+                    child.observation_ref,
+                    _legacy_field_path(step["assertion"], child),
+                )
+                for step, child in zip(spec["assertions"], result.children, strict=False)
+                if child.observation_ref
+            ]
+    return rebuilt == stored
+
+
+def _legacy_field_path(spec: dict[str, Any], result: AssertionResult) -> str:
+    kind = str(spec.get("kind") or "")
+    if kind in {"element_exists", "element_visible", "element_text", "form_state", "element_attr"}:
+        field_name = {
+            "element_exists": "testid",
+            "element_visible": "visible",
+            "element_text": "name",
+            "form_state": str(spec.get("state") or "present"),
+            "element_attr": str(spec.get("attribute") or ""),
+        }[kind]
+        return f"visible_elements[testid={spec.get('testid', '')}].{field_name}"
+    if kind in {"table_row_count", "list_item_count"}:
+        if spec.get("selector"):
+            return f"selector_counts[{json.dumps(str(spec['selector']), ensure_ascii=False)}]"
+        return f"dom_counts.{kind}"
+    if kind == "element_relation":
+        return "dom_relations"
+    if kind == "page_transition":
+        return "previous_url_path"
+    if kind == "evidence_complete":
+        return "evidence_ref"
+    fields = re.findall(r"observations\[-1\]\.([A-Za-z0-9_.]+)", result.evidence)
+    return ",".join(fields) or result.evidence

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import tempfile
@@ -68,18 +69,43 @@ class CandidateTransactions:
         checkpoint(stage)
 
     def recover(self, cid: str) -> None:
-        path = self._path(cid)
-        if not path.exists():
-            return
         try:
-            tx = json.loads(path.read_bytes())
+            self._recover(cid)
+        except ConflictError as exc:
+            exc.details.setdefault("candidate_id", cid)
+            exc.details.setdefault("failure_type", "integrity_conflict")
+            exc.details["status"] = "BLOCKED"
+            logging.getLogger(__name__).error("candidate recovery blocked: %s", exc.details)
+            raise
+
+    def _recover(self, cid: str) -> None:
+        path = self._path(cid)
+        try:
+            try:
+                data = path.read_bytes()
+            except FileNotFoundError:
+                candidate = self.store.get(cid)
+                if candidate is not None and "review_transaction_id" in candidate:
+                    raise ConflictError(
+                        "committed review transaction is missing; recovery BLOCKED",
+                        details={"failure_type": "missing_transaction"},
+                    ) from None
+                return
+            tx = json.loads(data)
             if tx["candidate_id"] != cid or not re.fullmatch(r"TC-[A-Z0-9-]+", tx["case_id"]):
                 raise ValueError("transaction identity mismatch")
             if tx["stage"] == "BLOCKED":
-                raise ConflictError("candidate transaction BLOCKED", details={"candidate_id": cid})
+                raise ConflictError(
+                    "candidate transaction BLOCKED",
+                    details={
+                        "reason": tx.get("blocked_reason", "blocked decision"),
+                        "failure_type": tx.get("failure_type", "integrity_conflict"),
+                    },
+                )
             if (
                 tx["stage"]
                 not in {"INTENT_DURABLE", "FORMAL_CASE_DURABLE", "CANDIDATE_STATE_DURABLE", "DONE"}
+                or not re.fullmatch(r"[0-9a-f]{32}", tx["transaction_id"])
                 or digest(json_bytes(tx["before"])) != tx["before_sha256"]
                 or digest(json_bytes(tx["after"])) != tx["after_sha256"]
                 or tx["before"]["status"] != "PENDING_REVIEW"
@@ -104,25 +130,26 @@ class CandidateTransactions:
                 not in {("APPROVE", "APPROVED"), ("REJECT", "REJECTED")}
                 or (tx["formal"] is not None) != (tx["operation"] == "APPROVE")
             ):
-                self._blocked(tx, "invalid durable decision")
+                self._blocked(tx, "invalid_decision", "invalid durable decision")
             with case_lock(self.case_dir, tx["case_id"]):
                 self._finish(tx)
         except (KeyError, TypeError, ValueError, OSError, AttributeError) as exc:
             # Preserve malformed intent bytes. Never guess ownership or paths.
             raise ConflictError(
-                "candidate recovery BLOCKED", details={"candidate_id": cid}
+                "candidate recovery BLOCKED",
+                details={"failure_type": "invalid_transaction", "reason": str(exc)},
             ) from exc
 
     def recover_all(self) -> list[dict[str, str]]:
         results = []
-        for path in sorted(self.root.glob("cand_*.json")):
-            cid = path.stem
+        ids = {p.stem for root in (self.store.root, self.root) for p in root.glob("cand_*.json")}
+        for cid in sorted(ids):
             with self.store.lock(cid):
                 try:
                     self.recover(cid)
                     results.append({"candidate_id": cid, "status": "RECOVERED"})
                 except ConflictError as exc:
-                    results.append({"candidate_id": cid, "status": "BLOCKED", "reason": str(exc)})
+                    results.append({"reason": str(exc), **exc.details})
         return results
 
     def commit(
@@ -169,22 +196,36 @@ class CandidateTransactions:
                             "unreadable review intent; formal creation BLOCKED"
                         ) from exc
             if asset is not None and target.exists():
-                self._blocked(tx, "pre-existing formal file has no matching durable intent")
+                self._blocked(
+                    tx, "formal_conflict", "pre-existing formal file has no matching durable intent"
+                )
             checkpoint("PREPARED")
             self._save(tx, "INTENT_DURABLE")
             self._finish(tx)
 
-    def _blocked(self, tx: dict[str, Any], reason: str) -> None:
+    def _blocked(self, tx: dict[str, Any], failure_type: str, reason: str) -> None:
+        tx["failure_type"] = failure_type
         tx["blocked_reason"] = reason
         self._save(tx, "BLOCKED")
-        raise ConflictError("candidate transaction BLOCKED", details={"reason": reason})
+        raise ConflictError(
+            "candidate transaction BLOCKED",
+            details={"reason": reason, "failure_type": failure_type},
+        )
 
     def _finish(self, tx: dict[str, Any]) -> None:
         cid = tx["candidate_id"]
         current = self.store.get(cid)
-        before, after = tx["before"], tx["after"]
-        if current not in (before, after):
-            self._blocked(tx, "candidate differs from both intent snapshots")
+        after = tx["after"]
+        current_sha = digest(json_bytes(current)) if current is not None else None
+        committed = current_sha == tx["after_sha256"]
+        if not committed and current_sha != tx["before_sha256"]:
+            self._blocked(
+                tx, "candidate_snapshot_mismatch", "candidate differs from both intent snapshots"
+            )
+        if tx["stage"] == "CANDIDATE_STATE_DURABLE" and not committed:
+            self._blocked(tx, "candidate_state_mismatch", "durable candidate state was modified")
+        if tx["stage"] == "INTENT_DURABLE" and committed:
+            self._blocked(tx, "candidate_state_mismatch", "candidate advanced before formal stage")
         asset = tx["formal"]
         target = self.case_dir / f"{tx['case_id']}.json"
         if asset is not None:
@@ -194,21 +235,30 @@ class CandidateTransactions:
                 or asset.get("_candidate_transaction") != tx["transaction_id"]
                 or asset.get("case_id") != tx["case_id"]
             ):
-                self._blocked(tx, "intent formal digest mismatch")
+                self._blocked(tx, "formal_digest_mismatch", "intent formal digest mismatch")
             if target.exists():
                 if target.read_bytes() != data:
-                    self._blocked(tx, "formal file ownership or content mismatch")
+                    self._blocked(
+                        tx,
+                        "formal_ownership_or_content_mismatch",
+                        "formal file ownership or content mismatch",
+                    )
             elif tx["stage"] in {"FORMAL_CASE_DURABLE", "CANDIDATE_STATE_DURABLE", "DONE"}:
-                self._blocked(tx, "committed formal asset is missing")
+                self._blocked(tx, "formal_missing", "committed formal asset is missing")
             else:
                 atomic_write(target, data, hook=lambda s: checkpoint(f"FORMAL_{s}"))
         if tx["stage"] == "DONE":
-            if current != after:
-                self._blocked(tx, "completed candidate state was modified")
+            if not committed:
+                self._blocked(
+                    tx, "candidate_state_mismatch", "completed candidate state was modified"
+                )
             return
-        self._save(tx, "FORMAL_CASE_DURABLE")
-        checkpoint("BEFORE_CANDIDATE_STATE")
-        self.store.save(after, hook=lambda s: checkpoint(f"CANDIDATE_{s}"))
-        self._save(tx, "CANDIDATE_STATE_DURABLE")
+        if tx["stage"] == "INTENT_DURABLE":
+            self._save(tx, "FORMAL_CASE_DURABLE")
+        if tx["stage"] == "FORMAL_CASE_DURABLE":
+            checkpoint("BEFORE_CANDIDATE_STATE")
+            if not committed:
+                self.store.save(after, hook=lambda s: checkpoint(f"CANDIDATE_{s}"))
+            self._save(tx, "CANDIDATE_STATE_DURABLE")
         checkpoint("BEFORE_DONE")
         self._save(tx, "DONE")

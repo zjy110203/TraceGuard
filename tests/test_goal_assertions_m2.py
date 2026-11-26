@@ -445,3 +445,131 @@ def test_structured_count_and_composite_evidence_resolves(composite: bool) -> No
             field_path=field_path,
             evidence_ref=reference,
         )
+
+
+_URL = {"kind": "url_exact", "value": "/projects/42", "name": "url"}
+
+
+@pytest.mark.parametrize(
+    "spec,expected",
+    [
+        (_URL, "/projects/42"),
+        ({"kind": "url_regex", "value": "projects"}, "/projects/42"),
+        ({"kind": "testid", "value": "project-link"}, ["project-link"]),
+        ({"kind": "element_exists", "testid": "project-link"}, "project-link"),
+        ({"kind": "element_visible", "testid": "project-link"}, True),
+        ({"kind": "element_text", "testid": "project-link", "contains": "link"}, "link"),
+        (
+            {
+                "kind": "element_attr",
+                "testid": "project-link",
+                "attribute": "href",
+                "value": "/projects/42",
+            },
+            "/projects/42",
+        ),
+        ({"kind": "form_state", "testid": "project-link", "state": "present"}, "whole"),
+        ({"kind": "form_state", "testid": "missing", "state": "absent"}, "whole"),
+        ({"kind": "page_state", "field": "text", "value": "Alpha"}, "Project Alpha saved"),
+        (
+            {"kind": "element_relation", "relation": "row_in_table", "testid": "row-1"},
+            OBS["dom_relations"],
+        ),
+        ({"kind": "list_item_count", "value": 3}, 3),
+        ({"kind": "table_row_count", "value": 2, "selector": 'tr.a[data-id="a.b"]'}, 2),
+        ({"kind": "dynamic_match", "pattern": "saved"}, "Project Alpha saved"),
+        (
+            {"kind": "page_transition", "to": "/projects/42"},
+            {"previous_url_path": "/projects", "url_path": "/projects/42"},
+        ),
+        ({"kind": "evidence_complete", "evidence_ref": "ev-source-1"}, "refs"),
+        ({"kind": "all_of", "assertions": [_URL]}, "whole"),
+        ({"kind": "any_of", "assertions": [_URL]}, "whole"),
+        ({"kind": "not", "assertions": [_URL]}, "whole"),
+        ({"kind": "url_and_content", "url": "/projects/42", "contains": "Alpha"}, "whole"),
+        (
+            {
+                "kind": "multi_step_goal",
+                "assertions": [{"match": "first_after_previous", "assertion": _URL}],
+            },
+            "sequence",
+        ),
+    ],
+)
+def test_every_reference_reads_original_fields(spec, expected):
+    import hashlib
+    import json
+
+    row = {k: v for k, v in OBS.items() if k not in {"observations", "observation_ref"}}
+    row.update(
+        visible_elements=[{"testid": "project-link", "name": "link", "visible": True}],
+        attrs=[{"testid": "project-link", "href": "/projects/42"}],
+        selector_counts={'tr.a[data-id="a.b"]': 2},
+    )
+    row["observation_ref"] = (
+        "obs_"
+        + hashlib.sha256(
+            json.dumps(row, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()
+        ).hexdigest()[:24]
+    )
+    result = evaluate_assertions([{**spec, "name": "checked"}], row, observations=[row]).results[0]
+
+    def read(item):
+        ref = {
+            key: getattr(item, key)
+            for key in ("step_id", "observation_ref", "field_path", "evidence_ref")
+        }
+        with pytest.raises(ValueError):
+            resolve_evidence_reference([{**row, "title": "changed"}], **ref)
+        return resolve_evidence_reference([row], **ref)
+
+    if expected == "sequence":
+        (child,) = result.children
+        assert result.evidence_refs == (child.evidence_ref,)
+        assert read(child) == row["url_path"]
+    else:
+        value = read(result)
+        if expected == "whole":
+            assert value == row
+            for child in result.children:
+                read(child)
+        elif expected == "refs":
+            assert value == {k: row[k] for k in ("observation_ref", "evidence_ref")}
+        else:
+            assert value == expected
+
+
+def test_history_does_not_change_unlabelled_observation_ref():
+    rows = [{"url_path": "/first"}, {"url_path": "/second"}]
+    spec = {"kind": "url_exact", "value": "/second", "name": "second"}
+    direct = evaluate_assertions([spec], rows[-1]).results[0]
+    history = evaluate_assertions([spec], rows[-1], observations=rows).results[0]
+    assert direct == history
+    assert (
+        resolve_evidence_reference(
+            rows,
+            step_id=history.step_id,
+            observation_ref=history.observation_ref,
+            evidence_ref=history.evidence_ref,
+            field_path=history.field_path,
+        )
+        == "/second"
+    )
+
+
+def test_legacy_report_requires_exact_reference():
+    import hashlib
+
+    from packages.agents.goal_assertions import legacy_report_matches
+
+    row = {"url_path": "/projects/42", "observation_ref": "obs-historical"}
+    report = evaluate_assertions([_URL], row, observations=[row])
+    stored = report.to_dict()
+    fields = stored["results"][0]
+    fields.update(
+        field_path="url_path",
+        evidence_ref="ev_" + hashlib.sha256(b"step-0:obs-historical:url_path").hexdigest()[:24],
+    )
+    assert legacy_report_matches(report, stored, [_URL], [row])
+    fields["evidence_ref"] = "changed"
+    assert not legacy_report_matches(report, stored, [_URL], [row])

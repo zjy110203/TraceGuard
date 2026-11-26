@@ -142,15 +142,7 @@ def test_process_exit_recovery(client: Any, monkeypatch: Any, stage: str) -> Non
     cid = cand["candidate_id"]
     tx = _tx(client)
 
-    # Capture only a decision that passed the actual HTTP human review gate.
-    def capture(self: Any, before: Any, after: Any, formal: Any = None) -> None:
-        (self.store.root / "decision.json").write_text(
-            json.dumps({"before": before, "after": after, "formal": formal}), encoding="utf-8"
-        )
-
-    with monkeypatch.context() as patch:
-        patch.setattr(CandidateTransactions, "commit", capture)
-        assert _approve(client, cid).status_code == 200
+    _capture_decision(client, cid, monkeypatch, "approve")
     assert _child(tx, cid, stage, "commit") == 73
     if stage != "PREPARED":
         assert _child(tx, cid, "BEFORE_CANDIDATE_STATE", "recover") in (0, 73)
@@ -289,3 +281,128 @@ def test_recovery_cross_checks_all_review_audit_fields(client: Any, field: str, 
         tx.recover(cid)
     assert json.loads(tx._path(cid).read_bytes())["stage"] == "BLOCKED"
     assert tx.store.get(cid)["approval_record"] == "REV-1"
+
+
+def _capture_decision(client: Any, cid: str, monkeypatch: Any, operation: str) -> None:
+    # Capture only a decision that passed the actual HTTP human review gate.
+    def capture(self: Any, before: Any, after: Any, formal: Any = None) -> None:
+        (self.store.root / "decision.json").write_text(
+            json.dumps({"before": before, "after": after, "formal": formal}), encoding="utf-8"
+        )
+
+    with monkeypatch.context() as patch:
+        patch.setattr(CandidateTransactions, "commit", capture)
+        response = (
+            _approve(client, cid)
+            if operation == "approve"
+            else client.post(
+                f"/api/v1/candidates/{cid}/reject",
+                json={"reviewer": "qa-lead", "reason": "insufficient evidence"},
+            )
+        )
+        assert response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "stage",
+    [
+        "PREPARED",
+        "INTENT_DURABLE",
+        "BEFORE_CANDIDATE_STATE",
+        "CANDIDATE_TEMP_DURABLE",
+        "CANDIDATE_REPLACED",
+        "CANDIDATE_STATE_DURABLE",
+        "BEFORE_DONE",
+        "DONE",
+    ],
+)
+def test_reject_process_exit(client: Any, monkeypatch: Any, stage: str) -> None:
+    cid = _compile(client)["candidate_id"]
+    tx = _tx(client)
+    _capture_decision(client, cid, monkeypatch, "reject")
+    assert _child(tx, cid, stage, "commit") == 73
+    if stage == "PREPARED":
+        assert _child(tx, cid, "never", "recover") == 0
+        assert tx.store.get(cid)["status"] == "PENDING_REVIEW"
+        assert not tx._path(cid).exists()
+        # Only a new human decision may finish a pre-intent rejection.
+        assert (
+            client.post(
+                f"/api/v1/candidates/{cid}/reject",
+                json={"reviewer": "qa-lead", "reason": "insufficient evidence"},
+            ).status_code
+            == 200
+        )
+    elif stage != "DONE":
+        assert _child(tx, cid, "BEFORE_DONE", "recover") == 73
+    for _ in range(2):
+        assert _child(tx, cid, "never", "recover") == 0
+        audit = tx._path(cid).read_bytes()
+        journal = json.loads(audit)
+        record = tx.store.get(cid)
+        assert journal["stage"] == "DONE" and journal["after"] == record
+        assert record["rejection_reason"] == "insufficient evidence"
+        assert record["reviewer"] == "qa-lead" and record["status"] == "REJECTED"
+        assert journal["transaction_id"] == record["review_transaction_id"]
+        assert list(tx.root.glob("*.json")) == [tx._path(cid)]
+        assert not list(tx.case_dir.glob("*.json"))
+        tx.recover(cid)
+        assert tx._path(cid).read_bytes() == audit
+
+
+@pytest.mark.parametrize(
+    "damage", ["approved_missing", "rejected_missing", "empty", "bad_json", "id", "status"]
+)
+def test_runtime_and_restart_health(client: Any, damage: str) -> None:
+    from fastapi.testclient import TestClient
+
+    from apps.api.main import build_app
+
+    cid = _compile(client)["candidate_id"]
+    assert client.get("/health").json()["status"] == "ok"
+    if damage == "rejected_missing":
+        assert (
+            client.post(
+                f"/api/v1/candidates/{cid}/reject",
+                json={"reviewer": "qa-lead", "reason": "rejected"},
+            ).status_code
+            == 200
+        )
+    else:
+        assert _approve(client, cid).status_code == 200
+    tx = _tx(client)
+    path = tx._path(cid)
+    if damage.endswith("_missing"):
+        path.unlink()
+    elif damage in {"empty", "bad_json"}:
+        path.write_bytes(b"" if damage == "empty" else b"{")
+    else:
+        record = tx.store.get(cid)
+        record["review_transaction_id" if damage == "id" else "status"] = "unexpected"
+        tx.store.save(record)
+
+    def verify(active: Any) -> None:
+        response = active.get(f"/api/v1/candidates/{cid}")
+        assert response.status_code == 409
+        health = active.get("/health").json()
+        assert health["status"] == "degraded"
+        (blocked,) = health["candidate_recovery"]["blocked"]
+        assert blocked["candidate_id"] == cid and blocked["status"] == "BLOCKED"
+        assert blocked["failure_type"] == response.json()["error"]["details"]["failure_type"]
+
+    assert client.get("/health").json()["status"] == "degraded"
+    verify(client)
+    with TestClient(build_app(client.app.state.settings)) as restarted:
+        assert restarted.get("/health").json()["status"] == "degraded"
+        verify(restarted)
+    if damage.endswith("_missing"):
+        assert not path.exists()
+    elif damage in {"empty", "bad_json"}:
+        assert path.read_bytes() == (b"" if damage == "empty" else b"{")
+
+
+def test_legacy_review_without_transaction_id(client: Any) -> None:
+    tx = _tx(client)
+    tx.store.save({"candidate_id": "cand_old", "status": "APPROVED"})
+    assert client.get("/health").json()["candidate_recovery"]["blocked"] == []
+    assert not tx._path("cand_old").exists()
