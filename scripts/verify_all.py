@@ -807,6 +807,10 @@ def run_browser(
     db = work / f"browser-{stamp}.db"
     env = os.environ.copy()
     env.update(extra_env)
+    # This harness owns an isolated throwaway database and storage tree. Mark
+    # the ASGI import explicitly as test mode so the formal dev/prod startup
+    # boundary still rejects direct Uvicorn launches.
+    env["APP_ENV"] = "test"
     env["DATABASE_URL"] = f"sqlite:///{db.as_posix()}"
     env["TRACEGUARD_DATABASE_URL"] = f"sqlite:///{db.as_posix()}"
     env["TEAMFLOW_BASE_URL"] = "http://127.0.0.1:8001"

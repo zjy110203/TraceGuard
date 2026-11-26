@@ -5,6 +5,8 @@
 > 所有测试数量、版本、路径来自真实运行与代码，未编造。
 > 基线真值目录：`D:/桌面/TraceGuard/.workbuddy-run/`（progress/phase-status/test-results/changes/decisions/safety-log/resume/current-task）。
 
+> **状态更新（2026-11-26）**：本文主体是 2026-11-22 的历史交付快照，测试数字和实现状态不代表当前 HEAD。R5-5.3-F1–F6 增量已落地；F7 的工作台 Mock Agent 旅程通过至 Diagnosis，但与 Repair 晋升合为一条 E2E 尚未完成。当前实现、测试、BLOCKED/NOT_RUN 项以 [`R5-5.3-F1-F7 实施补充与验收状态`](../r5/R5-5.3-F1-F7-实施补充与验收状态.md) 为准。
+
 ---
 
 ## 0. 结论摘要（先读这里）

@@ -5,15 +5,15 @@ Event/Evidence 证据链 + 多假设诊断 + 证据图 + Oracle 保护的自愈�
 UI-FaultBench 评测 + 产品级 Vue3 工作台。
 
 > 设计依据：`docs/design/`（11 篇规格）+ `docs/roadmap/`（十四阶段实施路线）。
-> 当前状态：第五轮（R5）—— R5-4.11 工程基线收口 + R5-5.1 事件持久化 + **R5-5.1-R 长稳与事件流最终验收 PASS** + **R5-5.2 场景化 Agentic Testing 基础能力完成** + **R5-5.3 设计评审整改完成（DR1 + DR2 + DR2.1 收尾 + E1 最终勘误）** + **R5-5.3 M0 技术预审完成（R1：N1–N8 / O2 与 D4 解耦 / O4 实现级缺陷）**。
-> Python 全量 **626 passed / 1 skipped**、Product E2E 24/24、Browser E2E 150/150、安全回归 93 passed、前端门禁全绿（R5-5.1-R 最终验收，2026-11-25）。
+> 当前状态：R5-5.3-F1～F6 已集成；工作台 Mock Agent 浏览器旅程和单 Run 证据关联 E2E 已通过。**F7 单一业务链覆盖至 Diagnosis；Repair 集成在独立真实 Run→Diagnosis→Proposal 测试中通过，尚未在同一条端到端旅程中完成 Repair 晋升。** 分阶段细节见 [`R5-5.3-F1-F7 实施补充与验收状态`](docs/r5/R5-5.3-F1-F7-实施补充与验收状态.md)。
+> 最新完整 Python 回归：**802 passed / 1 skipped / 1 warning**（2026-11-26）。Security 100 passed、Product E2E 24 passed、Browser E2E 142 passed / 2 个数据条件 SKIP；详细门禁及统一 runner 首轮启动阻断的修复情况见增量报告。GitHub Actions 本批次 `NOT_RUN`；历史 R5-5.1-R 的 626 数字不再作为当前状态。
 > **Git 状态（三基线分列，不得混用）**：
 > 1. **本轮（DR2.1）起点 HEAD**：`bb3bd55`，分支 `r5-5-product-completion`，起点 20 ahead / 0 behind main（DR2.1 三个文档提交后 23 / 0；其后 E1 勘误再 +1 → 24 / 0）；
 > 2. **最后一次实际修改业务代码**：`60d89e7`（R5-5.1-R 事件流故障区间修复）；`8819694` 是设计文档提交，**不是**代码变更基线；
 > 3. **起点最新已完成 CI**：run `45542085918`（head_sha=bb3bd55），5/5 Job success；本轮 DR2.1 提交对应的 CI 结果在交付说明中给出（**不在文档里追记最终 CI**，避免自引用提交无限增长）。
 > **历史 CI 证据（独立陈述）**：R5-5.1-R 文档验收基线 `6a21f47`：run `45441655349`，5/5 success；
 > R5-5.1-R 门禁证据基于 `60d89e7`（run `45439716584`）——三套证据源分开陈述，不混用。
-> **当前授权状态（2026-11-26）**：项目方授权技术决策代理冻结本机单用户开发范围。15 项为 `DECIDED_BY_DELEGATION`，N2/N4/N7 为 `REGISTERED`；具名责任人 `APPROVED` 为 0。`M0_LOCAL_SCOPE_FROZEN=true`、`M1_START=GO_LOCAL_ONLY`，首项必须通过 M1-0。完整跨角色 `M0_FROZEN=false`；远程/多用户仍 BLOCKED。
+> **当前授权状态（2026-11-26）**：项目方授权技术决策代理冻结本机单用户开发范围。15 项为 `DECIDED_BY_DELEGATION`，N2/N4/N7 为 `REGISTERED`；具名责任人 `APPROVED` 为 0。`M0_LOCAL_SCOPE_FROZEN=true`、`M1_START=GO_LOCAL_ONLY`，M1-0 本机门禁已执行。完整跨角色 `M0_FROZEN=false`；远程/多用户仍 BLOCKED。
 > M0 材料另含 **4 项待评审观察项**（DR2 记录 §14.10：digest 算法白名单 / Execution Lock 作用域 / `url_and_content` 归类 / D8 Provider 默认模型）——均为**待评审，非已实现**。
 > 真实 LLM 独立门禁仍为 `409 BLOCKED`；本轮模型请求数为 0。
 > 完整文档导航见 [`docs/00-DOCUMENTATION-INDEX.md`](docs/00-DOCUMENTATION-INDEX.md)。
@@ -50,7 +50,7 @@ Linux/macOS 将 `.\.venv\Scripts\python.exe` 换成 `.venv/bin/python` 即可。
 | 目标断言 | `packages/agents/goal_assertions.py` | 11 类结构化断言 + 组合 + required/optional + 逐项证据，INCONCLUSIVE 不冒充 FAILED |
 | 证据图 | `packages/evidence/graph.py` | 可信关联、同源独立性、冲突分析、子图查询 |
 | 主动诊断 Planner | `packages/agents/probes.py` | Probe Registry + 审计脱敏 + EIG 评分 + 预算停止 |
-| 自愈沙箱 | `packages/execution/sandbox.py` | 子进程隔离 TeamFlow + 真回放 + Oracle 保护（库级实现；产品侧仅提供提案查看 / 批准 / 拒绝，提案创建与晋升未暴露为 API） |
+| 自愈沙箱与 Repair API | `packages/execution/sandbox.py`、`apps/api/extensions.py` | 提案创建要求真实 Run/支持假设/支持证据；RepairStore 恢复、人工审批、真实 Sandbox Replay 和 CAS 晋升 API 已接入 |
 | UI-FaultBench | `benchmark/` | GT 隔离 + 分区版本 + 三类评测 + 消融（LLM 基线 `NOT_RUN`，无真实模型对照） |
 | URL 安全 | `packages/core/url_guard.py` | SSRF / DNS rebinding / redirect 防护 |
 | 工作台 | `apps/web/` | Vue3 + TS，15 路由，设计系统 token，SSE 实时状态 |
@@ -69,7 +69,7 @@ Linux/macOS 将 `.\.venv\Scripts\python.exe` 换成 `.venv/bin/python` 即可。
 ## 测试与质量
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests/    # 626 passed / 1 skipped（R5-5.1-R 最终验收口径）
+.\.venv\Scripts\python.exe -m pytest tests/    # 按当前代码重新运行并读取 pytest 摘要
 .\.venv\Scripts\python.exe -m ruff check .
 .\.venv\Scripts\python.exe -m mypy packages apps benchmark
 cd apps/web; npm run build; npx vue-tsc --noEmit
@@ -78,7 +78,7 @@ cd apps/web; npm run build; npx vue-tsc --noEmit
 .\.venv\Scripts\python.exe scripts\verify_all.py --mode all
 ```
 
-- 全量测试：**626 passed / 1 skipped**（627 项收集；R5-5.1-R `gates/python2`，2026-11-25）。历史快照：601/1/2（R5-4.11~R5-5.2 时期，2 项 junction 用例受宿主批量删除守卫误杀，单独重跑全过）、484/530（更早）
+- 当前全量基线记录在 [F1-F7 补充验收状态](docs/r5/R5-5.3-F1-F7-实施补充与验收状态.md)；R5-5.1-R 的 626/1 是历史结果，不代表当前 HEAD。
 - 统一门禁：`scripts/verify_all.py`（每轮唯一输出目录 + 独立测试库；PASS/FAIL/SKIP/BLOCKED/EMPTY/NOT_RUN 六态，只有 PASS 才算通过；`--out` 必须绝对路径）
 - 产品级 E2E：**24/24**（`scripts/e2e_product_flow.py`，真实浏览器 + 隔离 SUT）
 - 真实浏览器 UI 验收：**150/150**（15 路由 ×（5 分辨率横向溢出 + 4 项逐路由检查）+ 7 项深链 + 8 项附加，`scripts/ui_acceptance.py`）
@@ -90,8 +90,8 @@ cd apps/web; npm run build; npx vue-tsc --noEmit
   3. R5-5.3 设计文档提交 `8819694`：run `45446643591`，**已完成**，5/5 success；
   4. **DR2 记录收口提交 `bb3bd55`（本轮起点）**：run `45542085918`，**已完成**，5/5 success；
   5. **本轮 DR2.1 文档提交**：CI 为准入条件（5/5），结果随交付说明给出，不在文档中追记为提交。
-- 代码功能基线：R5-5.2 收口（6 场景注册表、11 类断言、ScriptedAgentPolicy、Trace Hash v2），
-  最后一次业务代码提交 `60d89e7`；
+- 历史代码功能基线：R5-5.2 收口（6 场景注册表、11 类断言、ScriptedAgentPolicy、Trace Hash v2），
+  历史最后一次业务代码提交 `60d89e7`；当前 F1–F7 提交见增量状态报告。
   R5-5.3 设计文档版本：**DR2.1 收尾后**（在 DR2 的 TestCaseVerdict 分离、执行授权凭证、
   Secret Reference、数据清理租约、Path Spec 三概念、scenario_digest、Hash v3 唯一清单之上，
   补齐三态完整语义、敏感字段识别链、凭证原子性、证据稳定引用、digest 规范化算法、
@@ -104,33 +104,34 @@ cd apps/web; npm run build; npx vue-tsc --noEmit
 |---|---|---|---|
 | EventStore | 持久化、回放、恢复、保留窗口裁剪、跨重启实例游标 | 生产级扩展（多进程/分布式） | 单机 SQLite |
 | SSE | 实时投递、v2 游标恢复、缺口识别、多客户端并发、故障区间分离 | 更大规模部署 | 单机 |
-| Explorer | 目标驱动探索、ToolGateway、Trace Hash v2、Compiler 硬准入、场景注册表驱动 | 自主 LLM 决策 | 决策来自 ScriptedProvider / ScriptedAgentPolicy |
+| Explorer | 目标驱动探索、Mock Planner、授权消费、SecretResolver、Trace Hash v3、Compiler 硬准入 | 真实 LLM 决策 | 工作台 Mock Agent 真实浏览器验证；不代表真实模型能力 |
 | Scenario | 注册、查重、结构校验、4 场景真实浏览器验证 | project-edit / form-validation 两场景；每场景四类用例矩阵全量 | 2 场景 `implemented=False`（阻塞条件已登记） |
 | Goal Assertion | 11 类结构化断言、组合断言、required/optional、逐项证据、读取时复算 | 表格行数、列表计数、元素属性、多元素关系、状态转换等复杂断言 | 观测层 `text_excerpt` 3000 字符截断、元素标签 ≤60 字 |
 | Candidate | 生成、人工审核门禁（`review_confirmed` + `uncertainty_acknowledged` 服务端强制） | 身份认证 | reviewer 为本地审计字段，非可信身份 |
-| Repair | 沙箱与库级能力（提案生成、CAS 晋升在库级实现） | 产品完整闭环 | 产品侧仅 4 个路由（查看/批准/拒绝），无创建提案与晋升路由 |
+| Repair | 产品 API 创建/验证/人工审批/Replay/晋升、追加式持久化和 CAS | 单一 E2E 旅程从 Mock Explorer 一直走到 Repair 晋升 | 真实 Run→Diagnosis→Proposal 和 Repair API 生命周期分别覆盖；与 Explorer/Candidate/Run 统一成同一条 E2E 尚未完成 |
 | Benchmark | 评测框架、GT 隔离、分区版本、三类评测、消融 | 正式准确率 | GT 共 6 条全部 `UNRESOLVED`，指标输出 `None(BLOCKED)` |
 
 ## 当前已实现能力 / 明确未实现能力
 
-**已实现**：真实 Playwright/Chrome 执行内核；C01～C12 契约与人工审批门禁；Event→Evidence 链（Outbox/缺口检测/内容寻址）；EventStore 持久化 + SSE v2 游标恢复；目标驱动探索（Explorer + ToolGateway + Trace Hash v2 + Compiler 硬准入）；场景注册表（6 场景定义 / 4 场景真实浏览器验证）；结构化 Goal Assertion（11 类）；八维度多假设诊断；证据图；Probe Planner；自愈沙箱（库级）；UI-FaultBench 框架；SSRF/DNS rebinding 防护；Vue3 工作台（15 路由 + SSE）。
+**已实现并接入产品**：真实 Playwright/Chrome 执行内核；C01～C12 契约与人工审批门禁；Event→Evidence 链（Outbox/缺口检测/内容寻址）；EventStore 持久化 + SSE v2 游标恢复；目标驱动探索（Explorer + Mock Planner + 执行授权 + Trace Hash v3 + Compiler 硬准入）；场景注册表（6 场景定义 / 4 场景真实浏览器验证）；结构化 Goal Assertion（11 类）；八维度多假设诊断；证据图；Probe Planner；Repair API（提案、人工审批、真实回放、持久化与 CAS 晋升）；SSRF/DNS rebinding 防护；Vue3 工作台（15 路由 + SSE）。单一 Explorer→Repair 晋升 E2E 尚未完成。
 
-**明确未实现（不冒充）**：真实 LLM 推理（D8 未批准，`llm` 策略一律 409）；project-edit / form-validation 场景（SUT 缺编辑路由 / 缺可重复种子）；Candidate 身份认证（L2）；Repair 产品闭环（创建/晋升路由）；Benchmark 正式准确率（GT 未批准）；S3BlobStore（L4）；驱动级即时取消（L3，动作超时兜底）；分布式任务队列。
+**明确未实现（不冒充）**：真实 LLM 推理（D8 未批准，`llm` 策略一律 409）；project-edit / form-validation 场景（SUT 缺编辑路由 / 缺可重复种子）；Candidate 身份认证（L2）；单一业务 E2E 中从 Explorer 一直走到 Repair 晋升；Benchmark 正式准确率（GT 未批准）；S3BlobStore（L4）；驱动级即时取消（L3，动作超时兜底）；分布式任务队列。
 
-## 当前阶段：R5-5.3 Agent 决策与场景能力升级（本机范围已授权，M1-0 先行）
+## 当前阶段：R5-5.3 Agent 决策与场景能力升级（本机范围已授权）
 
-将 ScriptedProvider 为主的探索体系升级为严格约束下可自主决策的 Agentic Testing 系统。设计与准入材料已完成 DR1 + DR2 + DR2.1 三轮整改：
+将 ScriptedProvider 为主的探索体系升级为严格约束下可自主决策的 Agentic Testing 系统。Mock Agent 已接入工作台；真实 LLM 仍保持 D8 门禁。设计与准入材料已完成 DR1 + DR2 + DR2.1 三轮整改：
 
 - [`docs/r5/R5-5.3-总体设计与实施规格.md`](docs/r5/R5-5.3-总体设计与实施规格.md) —— 场景体系 / Goal Assertion（含 TestCaseVerdict 分离）/ 决策引擎（含执行授权凭证）/ Trace / 架构图 / M0～M5
 - [`docs/r5/R5-5.3-接口与数据契约台账.md`](docs/r5/R5-5.3-接口与数据契约台账.md) —— 8 个接口逐项输入输出/权限/错误处理/测试要求
 - [`docs/r5/R5-5.3-D8-真实LLM接入审批准备.md`](docs/r5/R5-5.3-D8-真实LLM接入审批准备.md) —— 调用范围/费用/隐私/风险/回滚（口径已统一），等待 D8 审批
 - [`docs/r5/R5-5.3-开发任务与验收矩阵.md`](docs/r5/R5-5.3-开发任务与验收矩阵.md) —— M0～M5 任务、依赖、验收门槛、风险清单
+- [`docs/r5/R5-5.3-F1-F7-实施补充与验收状态.md`](docs/r5/R5-5.3-F1-F7-实施补充与验收状态.md) —— 当前 HEAD 的 F1～F7 实现、产品接入、真实浏览器证据和限制状态
 - [`docs/r5/R5-5.3-DR2-第二轮设计一致性与安全准入整改记录.md`](docs/r5/R5-5.3-DR2-第二轮设计一致性与安全准入整改记录.md) —— DR2-01～DR2-12 整改记录 + **DR2.1-01～09 最终收尾记录（§14）**，含未决决策 D1–D5 与 M0 准入状态
 - [`docs/r5/R5-5.3-M0-架构评审预审记录.md`](docs/r5/R5-5.3-M0-架构评审预审记录.md) —— M0 技术预审底稿（**非人工审批**）；其预审结论保留为历史事实，委托本机范围状态见新增附记
 - [`docs/r5/R5-5.3-M0-委托技术决策与本机范围冻结记录.md`](docs/r5/R5-5.3-M0-委托技术决策与本机范围冻结记录.md) —— 授权来源、15 项本机决策、范围限制、M1 准入和 D8 独立门禁
 - [`docs/r5/R5-5.3-M0-决策确认单.md`](docs/r5/R5-5.3-M0-决策确认单.md) —— 15 项 `DECIDED_BY_DELEGATION` + 3 项 `REGISTERED`（N2/N4/N7）；具名责任人批准为 0，`M0_FROZEN=false`，本机 `M1_START=GO_LOCAL_ONLY`
 
-**完整跨角色 M0 仍未冻结**；本机范围按授权记录推进。M1-0 通过前不开展 M1 业务改造；D8 批准前不启用真实模型、不解禁 409。
+**完整跨角色 M0 仍未冻结**；本机范围按授权记录推进。M1-0 本机门禁已通过；D8 批准前不启用真实模型、不解禁 409。
 
 ## 状态纪律（不冒充完成）
 
@@ -156,7 +157,7 @@ packages/execution 执行内核、Oracle、Verdict、RepairSandbox
 packages/agents    Explorer / Compiler / Diagnosis / Probe Planner / LLM Provider
 packages/evidence  Event / Evidence / Outbox / 内容寻址存储
 benchmark/         Dataset / GT / 三类评测 / 消融 / 持久化
-tests/             627 项单元与集成测试（626 passed / 1 skipped）
+tests/             单元、集成、真实浏览器及工作台 E2E（当前计数以最新验收状态报告为准）
 infra/             Docker Compose（PostgreSQL 可选）
 docs/              规格设计、调研、每轮交付与验收报告（见文档索引）
 scripts/           serve / demo / run_benchmark / ui_acceptance / verify_llm_provider
