@@ -14,7 +14,7 @@ UI-FaultBench 评测 + 产品级 Vue3 工作台。
 > **历史 CI 证据（独立陈述）**：R5-5.1-R 文档验收基线 `6a21f47`：run `45441655349`，5/5 success；
 > R5-5.1-R 门禁证据基于 `60d89e7`（run `45439716584`）——三套证据源分开陈述，不混用。
 > 下一步：R5-5.3 Agent 决策与场景能力升级——设计评审整改（DR1 + DR2 + DR2.1 + E1 勘误）与 **M0 技术预审（含 R1 补充修正）**已完成，**等待 M0 独立架构评审与责任人签字**，未启动 M1～M5 开发。
-> **待批准清单**：M0 决策确认单 **18 项全部 `PENDING`**（D1–D5 / C05 口径与 owner / O1–O4 / N1–N8 处置），**0 项已批准**；`M0_FROZEN=false`、`M1_START=NO-GO`。
+> **M0 决策清单**：共 18 项，其中 **15 项待责任人决策（`PENDING`）、3 项已登记工程必修项（`REGISTERED`：N2/N4/N7）**，目前 **0 项已批准**；N8 仍为 `PENDING`。`M0_FROZEN=false`、`M1_START=NO-GO`。
 > M0 材料另含 **4 项待评审观察项**（DR2 记录 §14.10：digest 算法白名单 / Execution Lock 作用域 / `url_and_content` 归类 / D8 Provider 默认模型）——均为**待评审，非已实现**。
 > 完整文档导航见 [`docs/00-DOCUMENTATION-INDEX.md`](docs/00-DOCUMENTATION-INDEX.md)。
 
@@ -127,7 +127,7 @@ cd apps/web; npm run build; npx vue-tsc --noEmit
 - [`docs/r5/R5-5.3-开发任务与验收矩阵.md`](docs/r5/R5-5.3-开发任务与验收矩阵.md) —— M0～M5 任务、依赖、验收门槛、风险清单
 - [`docs/r5/R5-5.3-DR2-第二轮设计一致性与安全准入整改记录.md`](docs/r5/R5-5.3-DR2-第二轮设计一致性与安全准入整改记录.md) —— DR2-01～DR2-12 整改记录 + **DR2.1-01～09 最终收尾记录（§14）**，含未决决策 D1–D5 与 M0 准入状态
 - [`docs/r5/R5-5.3-M0-架构评审预审记录.md`](docs/r5/R5-5.3-M0-架构评审预审记录.md) —— M0 技术预审底稿（**非人工审批**）：八项职责源码核对、审批**三维能力矩阵**、网络暴露取证、**N1–N8** 新发现风险、九项门槛核对；结论 `M0_REVIEW_WITH_BLOCKERS` / `M0_FROZEN=false` / `M1_START=NO-GO`
-- [`docs/r5/R5-5.3-M0-决策确认单.md`](docs/r5/R5-5.3-M0-决策确认单.md) —— **18 项待批准决策**（D1–D5 / C05 口径与契约 owner / O1–O4 / N1–N8 处置）+ 各阶段准入对应关系，全部 `PENDING`，签字栏留空
+- [`docs/r5/R5-5.3-M0-决策确认单.md`](docs/r5/R5-5.3-M0-决策确认单.md) —— **18 项决项：15 项 `PENDING` + 3 项 `REGISTERED`（N2/N4/N7）**；N8 仍 `PENDING`，签字栏留空，`M0_FROZEN=false`、`M1_START=NO-GO`
 
 **未取得 M0 评审结论前不进入 M1～M5 正式开发**；D8 批准前不启用真实模型、不解禁 409。
 
