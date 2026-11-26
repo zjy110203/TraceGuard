@@ -44,6 +44,7 @@ from packages.agents.exploration import (
 from packages.agents.goal_assertions import evaluate_assertions, evaluate_test_case_verdict
 from packages.agents.scenarios import default_registry
 from packages.core.errors import ConflictError, NotFoundError, ValidationError
+from packages.execution.formal_lock import case_lock
 from packages.execution.models import (
     AssertionSpec,
     CleanupPolicy,
@@ -469,13 +470,14 @@ def approve_candidate(request: Request, candidate_id: str, body: ReviewRequest) 
     )
     case_dir = _case_dir(request)
     target = case_dir / f"{formal.case_id}.json"
-    if target.exists():
-        raise ConflictError(
-            "formal case file already exists; versions are append-only",
-            details={"case_id": formal.case_id, "file": target.name},
-        )
-    case_dir.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(formal.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+    with case_lock(case_dir, formal.case_id):
+        if target.exists():
+            raise ConflictError(
+                "formal case file already exists; versions are append-only",
+                details={"case_id": formal.case_id, "file": target.name},
+            )
+        case_dir.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(formal.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
 
     record.update(
         {

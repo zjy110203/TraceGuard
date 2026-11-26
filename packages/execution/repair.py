@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from packages.core.errors import ConflictError, ValidationError
+from packages.execution.formal_lock import case_lock
 from packages.execution.models import TestCaseVersion
 from packages.execution.review_policy import is_self_approver
 from packages.execution.verdict import OracleVerdict
@@ -199,7 +200,8 @@ class RepairStore:
 class RepairService:
     """State machine + validation + sandbox + gated CAS promotion + rollback."""
 
-    def __init__(self, store_path: Path | None = None) -> None:
+    def __init__(self, store_path: Path | None = None, case_dir: Path | None = None) -> None:
+        self.case_dir = case_dir
         self._lock = threading.RLock()
         self._proposals: dict[str, RepairProposal] = {}
         self._candidates: dict[str, TestCaseVersion] = {}
@@ -379,6 +381,7 @@ class RepairService:
         proposal_id: str,
         *,
         current_formal: TestCaseVersion,
+        read_formal: Callable[[], TestCaseVersion] | None = None,
         sandbox_replay: Callable[[TestCaseVersion], bool] | None = None,
         operator: str = "",
         promotion_reason: str = "",
@@ -386,14 +389,23 @@ class RepairService:
         rollback_formal: Callable[[TestCaseVersion], None] | None = None,
     ) -> tuple[RepairProposal, TestCaseVersion]:
         """Atomic CAS promotion under a lock. One attempt per base version."""
-        with self._lock:
+        with self._lock, case_lock(self.case_dir or Path("."), self._get(proposal_id).case_id):
             p = self._get(proposal_id)
+            if read_formal is not None:
+                current_formal = read_formal()
+            else:
+                current_formal = self.formal_version(p.case_id) or current_formal
+            if p.state == "PROMOTED":
+                return p, self._candidates[f"__formal__{p.case_id}"]
             if p.state != "APPROVED":
                 raise ConflictError(f"promotion requires APPROVED, got {p.state}")
             if is_self_approver(p.approved_by):
                 raise ValidationError("no valid human approval for promotion")
             # CAS: current formal version MUST equal the proposal's base.
-            if current_formal.version != p.base_testcase_version:
+            base_case, candidate = self._candidate_pair(proposal_id)
+            if current_formal.version != p.base_testcase_version or self.case_digest(
+                current_formal
+            ) != self.case_digest(base_case):
                 p.failure_reason = (
                     f"VERSION_CONFLICT: base={p.base_testcase_version} "
                     f"current={current_formal.version}"
@@ -402,7 +414,6 @@ class RepairService:
                 self._persist()
                 return p, current_formal
             # Re-run guards at promotion time (defence in depth).
-            base_case, candidate = self._candidate_pair(proposal_id)
             AssertionPreservationChecker().check(base_case, candidate)
             OracleIntegrityChecker().check(base_case, candidate)
             replay = self._replays.get(proposal_id)
@@ -500,7 +511,7 @@ class RepairService:
 
     def _candidate_pair(self, proposal_id: str) -> tuple[TestCaseVersion, TestCaseVersion]:
         p = self._get(proposal_id)
-        base = self.formal_version(p.case_id) or self._candidates.get(f"__base__{proposal_id}")
+        base = self._candidates.get(f"__base__{proposal_id}")
         cand = self._candidates[proposal_id]
         if base is None:
             raise ValidationError("base testcase version not registered")

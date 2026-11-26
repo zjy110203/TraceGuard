@@ -613,66 +613,32 @@ def promote_repair(proposal_id: str, body: RepairOperatorBody, request: Request)
     if is_self_approver(body.operator):
         raise ValidationError("automated actors cannot promote repair assets")
     record = _repair_view(request, proposal_id)
-    if record["state"] != "APPROVED":
-        raise ValidationError("promotion requires a human-approved proposal")
-    replay = request.app.state.repair_service.get_replay(proposal_id)
-    if not replay or replay.get("status") != "PASSED":
-        raise ValidationError("promotion requires a successful sandbox replay")
     case_id = str(record["case_id"])
-    current, _ = _find_case(_case_dir(request), case_id)
     target_path = _case_dir(request) / f"{case_id}.v{record['candidate_testcase_version']}.json"
-    recovered_file = False
-    if target_path.exists():
-        base_candidate, candidate = request.app.state.repair_service._candidate_pair(proposal_id)
-        expected = {**candidate.to_dict(), "version": int(record["candidate_testcase_version"])}
-        try:
-            recovered_file = json.loads(target_path.read_text(encoding="utf-8")) == expected
-        except (OSError, ValueError):
-            recovered_file = False
-        if not recovered_file:
-            raise ConflictError("formal version file already exists; refusing overwrite")
-        if current.version == int(record["candidate_testcase_version"]):
-            current = base_candidate
-        elif current.version > int(record["candidate_testcase_version"]):
-            raise ConflictError("a later formal version exists; refusing repair recovery")
-    else:
-        recovered_file = False
 
     def persist_formal(version: Any) -> None:
-        nonlocal recovered_file
         if target_path.exists():
-            if json.loads(target_path.read_text(encoding="utf-8")) == version.to_dict():
-                recovered_file = True
-                return
             raise ConflictError("formal version file already exists; refusing overwrite")
         temp_path = target_path.with_name(f".{target_path.name}.{uuid.uuid4().hex}.tmp")
-        temp_path.write_text(
-            json.dumps(version.to_dict(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
+        with temp_path.open("w", encoding="utf-8") as stream:
+            stream.write(json.dumps(version.to_dict(), ensure_ascii=False, indent=2) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
         os.replace(temp_path, target_path)
-        recovered_file = False
-
-    def rollback_formal(version: Any) -> None:
-        if not recovered_file and target_path.exists():
-            try:
-                existing = json.loads(target_path.read_text(encoding="utf-8"))
-                if existing == version.to_dict():
-                    target_path.unlink()
-            except (OSError, ValueError):
-                pass
 
     try:
         promoted, version = request.app.state.repair_service.promote(
             proposal_id,
-            current_formal=current,
+            current_formal=case_from_dict(request.app.state.repair_service._candidates[
+                f"__base__{proposal_id}"
+            ].to_dict()),
+            read_formal=lambda: _find_case(_case_dir(request), case_id)[0],
             sandbox_replay=lambda _candidate: True,
             operator=body.operator.strip(),
             promotion_reason=body.reason.strip(),
             persist_formal=persist_formal,
-            rollback_formal=rollback_formal,
+
         )
-    except ConflictError as exc:
-        raise ValidationError(str(exc)) from exc
     except OSError as exc:
         raise ValidationError(f"promotion asset write failed: {type(exc).__name__}") from exc
     if promoted.state != "PROMOTED":
@@ -711,7 +677,7 @@ def register_extensions(
     """
     app.state.probe_engine = build_default_engine()
     repair_store_root = benchmark_data_dir or Path("benchmark") / "data"
-    app.state.repair_service = RepairService(repair_store_root / "repairs.jsonl")
+    app.state.repair_service = RepairService(repair_store_root / "repairs.jsonl", case_dir=case_dir)
 
     gt = GroundTruthManager()
     datasets = DatasetManager(gt)

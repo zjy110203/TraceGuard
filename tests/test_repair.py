@@ -292,6 +292,73 @@ def test_sandbox_replay_gate() -> None:
     assert "sandbox" in result.failure_reason.lower()
 
 
+@pytest.mark.parametrize("identical", [False, True])
+def test_real_concurrent_cas_and_idempotency(tmp_path, identical) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from dataclasses import replace
+    from threading import Barrier
+
+    from packages.execution.models import load_case
+
+    svc = RepairService(case_dir=tmp_path)
+    base = _base()
+    path = tmp_path / "v1.json"
+    path.write_text(json.dumps(base.to_dict()), encoding="utf-8")
+    for pid in ("a", "b"):
+        candidate = _locator_fix(base)
+        if not identical and pid == "b":
+            candidate = replace(candidate, title="other candidate")
+        svc.create_proposal(pid, base, candidate, change_kinds=("locator_update",), diff=[])
+        svc.validate(pid)
+        svc.submit_for_approval(pid)
+        svc.approve(pid, approver="reviewer", approval_record="r")
+        svc.save_replay(pid, {"status": "PASSED", "proposal_id": pid})
+    barrier = Barrier(2)
+    writes = []
+
+    def write(case):
+        target = tmp_path / "v2.json"
+        assert not target.exists()
+        target.write_text(json.dumps(case.to_dict()), encoding="utf-8")
+        writes.append(case.to_dict())
+
+    def run(pid):
+        barrier.wait()
+        return svc.promote(
+            pid, current_formal=base,
+            read_formal=lambda: load_case(tmp_path / ("v2.json" if writes else "v1.json")),
+            persist_formal=write, sandbox_replay=lambda _: True,
+        )[0].state
+
+    with ThreadPoolExecutor(2) as pool:
+        results = list(pool.map(run, ("a", "b")))
+    assert sorted(results) == ["PROMOTED", "PROMOTION_FAILED"]
+    winner = "a" if results[0] == "PROMOTED" else "b"
+    loser = "b" if winner == "a" else "a"
+    assert len(writes) == 1
+    assert load_case(tmp_path / "v2.json").to_dict() == writes[0]
+    assert svc.formal_version(base.case_id).version == 2
+    assert svc.get(loser)["promotion_record"] == {}
+    assert svc.get_replay(loser)["proposal_id"] == loser
+    audit = svc.get(winner)["promotion_record"].copy()
+    svc.promote(winner, current_formal=base, persist_formal=write)
+    assert svc.get(winner)["promotion_record"] == audit
+    assert len(writes) == 1
+
+
+def test_same_version_changed_digest_is_conflict() -> None:
+    from dataclasses import replace
+
+    svc = RepairService()
+    base, _ = _valid_proposal(svc)
+    svc.validate("p1")
+    svc.submit_for_approval("p1")
+    svc.approve("p1", approver="reviewer", approval_record="r")
+    p, _ = svc.promote("p1", current_formal=replace(base, title="changed on disk"))
+    assert p.state == "PROMOTION_FAILED"
+    assert p.promotion_record == {}
+
+
 def test_rollback_records_target_reason_operator() -> None:
     svc = RepairService()
     base, p = _valid_proposal(svc, "p-rollback")
