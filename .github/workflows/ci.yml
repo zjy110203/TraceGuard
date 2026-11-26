@@ -5,7 +5,7 @@ on:
     # R5-5.1: the development branch must be able to trigger CI on its own
     # push. Without it a push to the branch under review produced no run at
     # all, so "CI is green" could only ever be claimed for main/develop.
-    branches: [main, develop, r5-5-product-completion]
+    branches: [main, develop, r5-5-product-completion, r5-5-product-integration-closure]
   pull_request:
   workflow_dispatch:
 
