@@ -7,6 +7,7 @@ health checks and DB connectivity. No business modules yet (per stage 0
 
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,7 @@ from apps.api.evidence_api import register_evidence_api
 from apps.api.explorer_api import recover_expired_scenario_data, register_explorer
 from apps.api.extensions import register_extensions
 from apps.api.workbench import register_workbench
+from packages.agents.secret_resolver import SecretResolver
 from packages.core import database
 from packages.core.config import Settings, get_settings, require_authorized_startup
 from packages.core.errors import DomainError
@@ -50,6 +52,15 @@ def build_app(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(RequestIdMiddleware)
     app.state.settings = settings
     app.state.engine = engine
+    secret_environment = dict(os.environ)
+    if settings.app_env.value == "test":
+        # Tests use isolated Settings values; this explicit mapping is confined
+        # to APP_ENV=test and cannot supply a development or production secret.
+        secret_environment["TG_SECRET_TEAMFLOW_PASSWORD"] = settings.teamflow_test_password
+    app.state.secret_resolver = SecretResolver(
+        approved_refs={"teamflow.password": "TG_SECRET_TEAMFLOW_PASSWORD"},
+        environ=secret_environment,
+    )
     # Secrets referenced by compiled cases are resolved here, from the
     # deployment's test-data configuration — never from the case file itself.
     app.state.test_data_provider = build_provider(

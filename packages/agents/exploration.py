@@ -21,6 +21,7 @@ import hashlib
 import json
 import re
 import time
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -387,13 +388,82 @@ ALLOWED_TOOLS = frozenset(TOOL_SPECS)
 class ToolGateway:
     """Validates every tool call against whitelist, origin, params and budget."""
 
-    def __init__(self, budget: Budget, *, tool_version: str = "1.0.0") -> None:
+    def __init__(
+        self,
+        budget: Budget,
+        *,
+        tool_version: str = "1.0.0",
+        authorization_manager: Any | None = None,
+        run_id: str = "",
+    ) -> None:
         budget.validate()
         self.budget = budget
         self.tool_version = tool_version
         self.tool_calls = 0
         self.steps = 0
         self._started = time.monotonic()
+        self.authorization_manager = authorization_manager
+        self.run_id = run_id
+        self._execution_context: ContextVar[tuple[str, str, str] | None] = ContextVar(
+            "traceguard_execution_context", default=None
+        )
+
+    def issue_authorization(self, call: ToolCall, *, ttl_s: int = 30) -> str:
+        if self.authorization_manager is None or not self.run_id:
+            raise ForbiddenError("ToolGateway has no execution authorization manager")
+        self.authorize(call)
+        return self.authorization_manager.issue(
+            run_id=self.run_id,
+            action=call.tool,
+            arguments=dict(call.args),
+            budget_units=1,
+            ttl_s=ttl_s,
+        )
+
+    def execute_authorized(
+        self,
+        call: ToolCall,
+        grant_id: str,
+        executor: Any,
+    ) -> dict[str, Any]:
+        """Consume a one-use run/action/arguments grant around browser execution."""
+        if self.authorization_manager is None or not self.run_id:
+            raise ForbiddenError("browser execution requires an authorization manager")
+        self.authorize(call)
+        with self.authorization_manager.consume(
+            grant_id,
+            run_id=self.run_id,
+            action=call.tool,
+            arguments=dict(call.args),
+            required_budget_units=1,
+        ):
+            digest = hashlib.sha256(
+                json.dumps(
+                    {"action": call.tool, "arguments": call.args},
+                    sort_keys=True,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ).encode()
+            ).hexdigest()
+            token = self._execution_context.set((self.run_id, call.tool, digest))
+            try:
+                return executor(call)
+            finally:
+                self._execution_context.reset(token)
+
+    def execution_authorized(self, call: ToolCall) -> bool:
+        context = self._execution_context.get()
+        if context is None:
+            return False
+        digest = hashlib.sha256(
+            json.dumps(
+                {"action": call.tool, "arguments": call.args},
+                sort_keys=True,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        return context == (self.run_id, call.tool, digest)
 
     @property
     def elapsed(self) -> float:
@@ -872,6 +942,8 @@ class ExplorationTrace:
     observations: list[dict[str, Any]] = field(default_factory=list)
     agent_decisions: list[dict[str, Any]] = field(default_factory=list)
     decision_records: list[dict[str, Any]] = field(default_factory=list)
+    authorization_events: list[dict[str, Any]] = field(default_factory=list)
+    post_action_records: list[dict[str, Any]] = field(default_factory=list)
     # Every security refusal, with its reason: a reviewer must be able to see
     # that a call was blocked and why, not just that the trace ended early.
     security_events: list[dict[str, Any]] = field(default_factory=list)

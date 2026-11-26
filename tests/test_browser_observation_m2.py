@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from http.server import BaseHTTPRequestHandler
 
-from packages.agents.exploration import ExplorationTrace, ToolCall
+from packages.agents.authorization import ExecutionAuthorizationManager
+from packages.agents.exploration import Budget, ExplorationTrace, ToolCall, ToolGateway
 from packages.agents.explorer import PlaywrightAdapter
 from packages.agents.goal_assertions import evaluate_assertions
 from tests.netutil import serve_http
@@ -84,13 +85,21 @@ def test_real_browser_redacts_url_and_evaluates_attrs_and_multistep_history() ->
         prompt_version="none",
         tool_version="1.0.0",
     )
+    budget = Budget(allowed_domains=("127.0.0.1", "localhost"))
+    manager = ExecutionAuthorizationManager(
+        run_budgets={trace.exploration_id: budget.max_tool_calls}
+    )
+    gateway = ToolGateway(budget, authorization_manager=manager, run_id=trace.exploration_id)
     with (
         serve_http(Handler) as base,
-        PlaywrightAdapter(trace, count_selectors=("input[type=email]",)) as adapter,
+        PlaywrightAdapter(trace, budget, count_selectors=("input[type=email]",)) as adapter,
     ):
         adapter._page.goto(f"{base}/start?access_token=secret123#password=abc")
         first = adapter.observe(0).to_record()
-        adapter.execute(ToolCall("click", {"selector": "[data-testid=next]"}))
+        call = ToolCall("click", {"selector": "[data-testid=next]"})
+        adapter.authorization_check = gateway.execution_authorized
+        grant = gateway.issue_authorization(call)
+        gateway.execute_authorized(call, grant, adapter._execute)
         second = adapter.observe(1).to_record()
 
     serialized = str([first, second])

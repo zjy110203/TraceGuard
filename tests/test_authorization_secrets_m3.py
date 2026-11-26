@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 from packages.agents.authorization import ExecutionAuthorizationManager
+from packages.agents.exploration import Budget, ToolCall, ToolGateway
 from packages.agents.secret_resolver import SecretResolver
 from packages.core.errors import ForbiddenError
 
@@ -73,6 +74,22 @@ def test_execution_grants_are_atomic_and_same_run_is_serialized() -> None:
         with pytest.raises(ForbiddenError, match="already executing"):
             with manager.consume(second_token, run_id="run-1", action="snapshot", arguments={}):
                 pass
+
+
+def test_tool_gateway_requires_and_consumes_run_action_authorization() -> None:
+    manager = ExecutionAuthorizationManager(run_budgets={"run-a": 2, "run-b": 2})
+    gateway = ToolGateway(Budget(), authorization_manager=manager, run_id="run-a")
+    call = ToolCall("click", {"selector": "#save"})
+    grant = gateway.issue_authorization(call)
+    observed: list[str] = []
+    assert gateway.execute_authorized(call, grant, lambda _: observed.append("done") or {}) == {}
+    assert observed == ["done"]
+    with pytest.raises(ForbiddenError, match="missing, expired or already consumed"):
+        gateway.execute_authorized(call, grant, lambda _: {})
+
+    no_authority = ToolGateway(Budget())
+    with pytest.raises(ForbiddenError, match="requires an authorization manager"):
+        no_authority.execute_authorized(call, "forged", lambda _: {})
 
 
 def test_secret_resolver_is_ledger_scoped_server_only_and_never_echoes_missing() -> None:

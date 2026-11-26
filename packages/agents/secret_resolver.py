@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from packages.core.errors import ForbiddenError
 
 _REF = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
+SECRET_VALUE_MARKER = "[TG_SECRET_REF]"
 
 
 class SecretResolver:

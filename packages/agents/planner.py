@@ -34,10 +34,51 @@ class MockProvider:
 
     is_real_model = False
 
-    def __init__(self, rules: dict[str, dict[str, Any]]) -> None:
-        self._rules = {str(key): dict(value) for key, value in rules.items()}
+    def __init__(
+        self,
+        rules: dict[str, dict[str, Any]] | None = None,
+        *,
+        steps: tuple[dict[str, Any], ...] = (),
+    ) -> None:
+        self._rules = {str(key): dict(value) for key, value in (rules or {}).items()}
+        self._steps = tuple(dict(step) for step in steps)
 
     def propose(self, context: DecisionContext) -> ActionProposal | None:
+        if self._steps:
+            index = len(context.history)
+            if index >= len(self._steps):
+                return None
+            step = self._steps[index]
+            observation = context.observation
+            visible = set(str(item) for item in observation.get("visible_testids", []))
+            selector = str((step.get("args") or {}).get("selector") or "")
+            testid = selector.removeprefix("[data-testid=").removesuffix("]")
+            if testid and testid != selector and testid not in visible:
+                # Observation changed away from the expected control: stop the
+                # proposal stream instead of blindly replaying a stale action.
+                return None
+            body: dict[str, Any] = {
+                "action_type": str(step["tool"]),
+                "arguments": dict(step.get("args") or {}),
+                "expected_outcome": str(step.get("expected_outcome") or ""),
+                "decision_reason": str(
+                    step.get("rationale") or "mock planner matched current observation"
+                ),
+                "observation_ref": str(observation.get("observation_ref") or ""),
+                "decision_source": "mock",
+            }
+            proposal_id = (
+                "prop_"
+                + hashlib.sha256(
+                    json.dumps(
+                        {"context_id": context.context_id, **body},
+                        sort_keys=True,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ).encode()
+                ).hexdigest()[:24]
+            )
+            return ActionProposal(proposal_id=proposal_id, **body)
         keys = (
             str(context.observation.get("state_summary") or ""),
             str(context.observation.get("url_path") or ""),
@@ -108,6 +149,11 @@ class PlannerPolicy:
 
     def bind_gateway(self, gateway: ToolGateway) -> None:
         self.gateway = gateway
+
+    @property
+    def remaining_actions(self) -> int:
+        steps = getattr(self.planner, "_steps", ())
+        return max(0, len(steps) - len(self.history)) if steps else 1
 
     def next_action(self, observation: Observation) -> ToolCall | None:
         self.last_proposal = None

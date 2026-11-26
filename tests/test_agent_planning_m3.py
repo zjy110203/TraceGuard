@@ -149,6 +149,29 @@ def test_policy_validator_checks_run_action_schema_denial_budget_and_replay() ->
     assert not validator.validate(unknown, **kwargs).allowed
 
 
+def test_policy_validator_rejects_plaintext_password_proposals() -> None:
+    proposal = ActionProposal(
+        "p-secret",
+        "fill",
+        {"selector": "[data-testid=password]", "value": "plaintext-password"},
+        "filled",
+        "test",
+        "obs-1",
+        "mock",
+    )
+    decision = PolicyValidator().validate(
+        proposal,
+        run_id="run-1",
+        bound_run_id="run-1",
+        allowed_actions={"fill"},
+        denied_actions=set(),
+        gateway=ToolGateway(Budget()),
+        remaining_budget=2,
+    )
+    assert decision.allowed is False
+    assert "password values must use an approved secret_ref" in decision.reasons
+
+
 @pytest.mark.parametrize(
     "options,expected",
     [

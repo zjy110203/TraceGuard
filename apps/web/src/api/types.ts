@@ -383,6 +383,7 @@ export interface PolicyRow {
   label: string
   kind: string
   is_llm: boolean
+  is_real_model?: boolean
   verified: boolean
   agent_version: string
   note: string
@@ -415,6 +416,7 @@ export interface ExplorationSummary {
   policy: string
   policy_label: string
   is_llm: boolean
+  is_real_model?: boolean
   /** Execution status of the exploration process: COMPLETED / FAILED / ... */
   status: string
   /** Why the loop stopped — never a goal verdict by itself. */

@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import time
 import uuid
+from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright
 
+from packages.agents.authorization import ExecutionAuthorizationManager
 from packages.agents.decision_records import make_decision_record
 from packages.agents.exploration import (
     Budget,
@@ -32,6 +34,8 @@ from packages.agents.exploration import (
     sanitize_page_text,
     sanitize_url,
 )
+from packages.agents.post_action import evaluate_post_action
+from packages.agents.secret_resolver import SECRET_VALUE_MARKER, SecretResolver
 from packages.core.errors import ForbiddenError
 from packages.core.logging import get_logger
 from packages.execution.browser import browser_channel, launch_args
@@ -60,11 +64,13 @@ class PlaywrightAdapter:
         *,
         sensitive_selectors: tuple[str, ...] = (),
         count_selectors: tuple[str, ...] = (),
+        authorization_check: Any | None = None,
     ) -> None:
         self.trace = trace
         self.budget = budget or Budget()
         self.sensitive_selectors = sensitive_selectors
         self.count_selectors = tuple(dict.fromkeys(count_selectors))[:32]
+        self.authorization_check = authorization_check
         # The route guard uses the SAME OriginPolicy implementation as the
         # formal BrowserManager (R5-4.7): one network boundary, two consumers.
         # A Budget without explicit origins stays hostname-scoped — inventing a
@@ -254,7 +260,9 @@ class PlaywrightAdapter:
             phase=phase,
         )
 
-    def execute(self, call: ToolCall) -> dict[str, Any]:
+    def _execute(self, call: ToolCall) -> dict[str, Any]:
+        if self.authorization_check is None or not self.authorization_check(call):
+            raise ForbiddenError("browser execution requires a consumed authorization grant")
         assert self._page is not None
         page = self._page
         detail = ""
@@ -323,6 +331,7 @@ class Explorer:
         browser_version: str = "system-chrome",
         sensitive_selectors: tuple[str, ...] = (),
         count_selectors: tuple[str, ...] = (),
+        secret_resolver: SecretResolver | None = None,
         trace_hash_version: int = 2,
     ) -> None:
         self.policy = policy or ScriptedPolicy()
@@ -331,6 +340,7 @@ class Explorer:
         self.browser_version = browser_version
         self.sensitive_selectors = sensitive_selectors
         self.count_selectors = count_selectors
+        self.secret_resolver = secret_resolver
         self.trace = ExplorationTrace(
             exploration_id=f"exp_{uuid.uuid4().hex[:12]}",
             test_intent_ref="",
@@ -365,28 +375,42 @@ class Explorer:
         """
         self.trace.test_intent_ref = test_intent_ref
         self.trace.test_intent = intent_of(intent)
-        gateway = ToolGateway(self.budget, tool_version=self.trace.tool_version)
+        authorization = ExecutionAuthorizationManager(
+            run_budgets={self.trace.exploration_id: self.budget.max_tool_calls}
+        )
+        gateway = ToolGateway(
+            self.budget,
+            tool_version=self.trace.tool_version,
+            authorization_manager=authorization,
+            run_id=self.trace.exploration_id,
+        )
         bind_gateway = getattr(self.policy, "bind_gateway", None)
         if callable(bind_gateway):
             bind_gateway(gateway)
         stop = StopReason.POLICY_STOP
+        pending_observation: Observation | None = None
         with PlaywrightAdapter(
             self.trace,
             self.budget,
             sensitive_selectors=self.sensitive_selectors,
             count_selectors=self.count_selectors,
+            authorization_check=gateway.execution_authorized,
         ) as adapter:
             while True:
                 reason = gateway.check_budget()
                 if reason is not None:
                     stop = reason
                     break
-                observation = adapter.observe(gateway.steps)
-                if observation.url and not observation.url.startswith("about:"):
-                    self.trace.page_state_ref = sanitize_url(observation.url)
-                    # Structured, bounded, redacted-by-construction: page text
-                    # is truncated data, never a permission source.
-                    self.trace.record_observation(observation)
+                if pending_observation is not None:
+                    observation = pending_observation
+                    pending_observation = None
+                else:
+                    observation = adapter.observe(gateway.steps)
+                    if observation.url and not observation.url.startswith("about:"):
+                        self.trace.page_state_ref = sanitize_url(observation.url)
+                        # Structured, bounded, redacted-by-construction: page text
+                        # is truncated data, never a permission source.
+                        self.trace.record_observation(observation)
                 try:
                     call = self.policy.next_action(observation)
                 except Exception as exc:  # noqa: BLE001 - a policy error is trace data
@@ -414,7 +438,12 @@ class Explorer:
                     # A script (or an agent's "finish") simply ran out of plan.
                     # That is NOT goal evidence; only the goal evaluator can
                     # say the business outcome was reached.
-                    stop = StopReason.PLAN_EXHAUSTED
+                    stop = (
+                        StopReason.GOAL_VERIFIED
+                        if evaluate_goal(self.trace.test_intent, self.trace.observations).status
+                        == GoalStatus.VERIFIED
+                        else StopReason.PLAN_EXHAUSTED
+                    )
                     break
                 try:
                     gateway.authorize(call)
@@ -449,7 +478,27 @@ class Explorer:
                     stop = StopReason.POLICY_STOP
                     break
                 try:
-                    raw_result = adapter.execute(call)
+                    grant_id = gateway.issue_authorization(call)
+                    adapter.authorization_check = lambda executed, authorized_call=call: (
+                        executed.tool == authorized_call.tool
+                        and set(executed.args) == set(authorized_call.args)
+                        and gateway.execution_authorized(authorized_call)
+                    )
+                    raw_result = gateway.execute_authorized(
+                        call,
+                        grant_id,
+                        lambda authorized_call: adapter._execute(
+                            self._resolve_secret_call(authorized_call)
+                        ),
+                    )
+                    self.trace.authorization_events.append(
+                        {
+                            "run_id": self.trace.exploration_id,
+                            "action": call.tool,
+                            "consumed": True,
+                            "at": _now(),
+                        }
+                    )
                 except Exception as exc:  # noqa: BLE001 - a failed action is trace data
                     # The action failed in the browser; record it (with the same
                     # redaction as a success) and let the policy see the new
@@ -473,8 +522,36 @@ class Explorer:
                         }
                     )
                     gateway.record(call)
+                    pending_observation = adapter.observe(gateway.steps, phase="post")
+                    self.trace.record_observation(pending_observation)
+                    self._record_post_action(
+                        call=call,
+                        actual_result={"error": detail},
+                        before=observation,
+                        after=pending_observation,
+                        goal_status=evaluate_goal(
+                            self.trace.test_intent, self.trace.observations
+                        ).status,
+                        gateway=gateway,
+                        execution_error=detail,
+                    )
                     continue
                 gateway.record(call)
+                pending_observation = adapter.observe(gateway.steps, phase="post")
+                self.trace.record_observation(pending_observation)
+                post_goal = evaluate_goal(self.trace.test_intent, self.trace.observations)
+                stop_after_post = (
+                    post_goal.status == GoalStatus.VERIFIED
+                    and int(getattr(self.policy, "remaining_actions", 1)) == 0
+                )
+                self._record_post_action(
+                    call=call,
+                    actual_result=raw_result,
+                    before=observation,
+                    after=pending_observation,
+                    goal_status=post_goal.status,
+                    gateway=gateway,
+                )
                 # Redact before the action enters the trace: the in-memory trace
                 # never holds a plaintext credential, not just the persisted one.
                 safe_result, _ = sanitize_action(raw_result)
@@ -493,6 +570,9 @@ class Explorer:
                         "prompt_version": self.trace.prompt_version,
                     }
                 )
+                if stop_after_post:
+                    stop = StopReason.GOAL_VERIFIED
+                    break
         # Network-level refusals the page tried to make (subresource / redirect
         # egress) are part of the security record even though no tool call was
         # involved.
@@ -538,3 +618,52 @@ class Explorer:
                 decision_source=proposal.decision_source,
             ).to_dict()
         )
+
+    def _record_post_action(
+        self,
+        *,
+        call: ToolCall,
+        actual_result: dict[str, Any],
+        before: Observation,
+        after: Observation,
+        goal_status: str,
+        gateway: Any,
+        execution_error: str = "",
+    ) -> None:
+        proposal = getattr(self.policy, "last_proposal", None)
+        expected = str(getattr(proposal, "expected_outcome", "") or "")
+        remaining = max(0, self.budget.max_tool_calls - gateway.tool_calls)
+        plan_remaining = int(getattr(self.policy, "remaining_actions", 1))
+        result = evaluate_post_action(
+            actual_result={
+                key: sanitize_page_text(value) if isinstance(value, str) else value
+                for key, value in actual_result.items()
+            },
+            expected_outcome=expected,
+            before_observation=before.to_record(),
+            after_observation=after.to_record(),
+            goal_status=goal_status,
+            execution_error=execution_error,
+            budget_remaining=remaining,
+            plan_remaining=plan_remaining,
+        )
+        self.trace.post_action_records.append(
+            {
+                **asdict(result),
+                "action": call.tool,
+                "before_observation_ref": before.to_record()["observation_ref"],
+                "after_observation_ref": after.to_record()["observation_ref"],
+            }
+        )
+
+    def _resolve_secret_call(self, call: ToolCall) -> ToolCall:
+        args = dict(call.args)
+        if args.get("value") != SECRET_VALUE_MARKER:
+            return call
+        if self.secret_resolver is None:
+            raise ForbiddenError("approved server-side secret resolver is unavailable")
+        secret_ref = str(args.get("value_ref") or "")
+        args["value"] = self.secret_resolver.resolve(
+            secret_ref, principal="server", permission=True
+        )
+        return ToolCall(call.tool, args, call.rationale)

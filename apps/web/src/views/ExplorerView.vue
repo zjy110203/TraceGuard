@@ -299,7 +299,7 @@ function actionSummary(action: { tool?: string; args?: Record<string, unknown> }
               <span class="mono">{{ selected.exploration_id }}</span>
               <StatusPill :value="selected.status" />
               <span class="tag">{{ selected.policy_label }}</span>
-              <span v-if="!selected.is_llm" class="pill plain neutral">非 LLM · 确定性</span>
+              <span v-if="!selected.is_real_model" class="pill plain neutral">非真实模型调用</span>
               <span v-if="rejectedCount" class="pill bad">{{ rejectedCount }} 次拒绝</span>
               <span v-if="selected.redacted_fields" class="pill plain warn" :title="'凭据类参数已在服务端脱敏'">
                 {{ selected.redacted_fields }} 个敏感字段已脱敏

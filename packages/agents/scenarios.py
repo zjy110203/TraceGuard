@@ -369,6 +369,16 @@ class Scenario:
                             f"paths[{path_kind!r}][{step_index}] uses a tool "
                             "outside allowed_actions"
                         )
+                    args = step.get("args") if isinstance(step.get("args", {}), dict) else {}
+                    if args.get("secret_ref") not in (None, "teamflow.password"):
+                        problems.append(
+                            f"paths[{path_kind!r}][{step_index}] uses an unapproved secret_ref"
+                        )
+                    if args.get("secret_ref") and "value" in args:
+                        problems.append(
+                            f"paths[{path_kind!r}][{step_index}] mixes secret_ref and "
+                            "plaintext value"
+                        )
                 if len(path_steps) > self.max_steps:
                     problems.append(f"paths[{path_kind!r}] exceeds max_steps")
         if self.implemented and not self.steps:
@@ -381,6 +391,11 @@ class Scenario:
             tool = str(step.get("tool") or "")
             if tool not in self.allowed_actions:
                 problems.append(f"steps[{index}] uses {tool!r} outside allowed_actions")
+            args = step.get("args") if isinstance(step.get("args", {}), dict) else {}
+            if args.get("secret_ref") not in (None, "teamflow.password"):
+                problems.append(f"steps[{index}] uses an unapproved secret_ref")
+            if args.get("secret_ref") and "value" in args:
+                problems.append(f"steps[{index}] mixes secret_ref and plaintext value")
         return problems
 
 
@@ -460,8 +475,8 @@ _LOGIN_STEPS: tuple[dict[str, Any], ...] = (
     },
     {
         "tool": "fill",
-        "args": {"selector": "[data-testid=password]", "value": "{password}"},
-        "rationale": "fill the password from trusted config (redacted in the trace)",
+        "args": {"selector": "[data-testid=password]", "secret_ref": "teamflow.password"},
+        "rationale": "fill the password from the approved server-side secret reference",
     },
     {
         "tool": "click",
@@ -579,7 +594,10 @@ def build_default_registry() -> ScenarioRegistry:
                     },
                     {
                         "tool": "fill",
-                        "args": {"selector": "[data-testid=password]", "value": "{password}"},
+                        "args": {
+                            "selector": "[data-testid=password]",
+                            "secret_ref": "teamflow.password",
+                        },
                         "rationale": "fill password",
                     },
                     {
@@ -598,7 +616,10 @@ def build_default_registry() -> ScenarioRegistry:
                     },
                     {
                         "tool": "fill",
-                        "args": {"selector": "[data-testid=password]", "value": "{password}"},
+                        "args": {
+                            "selector": "[data-testid=password]",
+                            "secret_ref": "teamflow.password",
+                        },
                         "rationale": "correct the password",
                     },
                     {

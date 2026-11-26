@@ -47,8 +47,10 @@ from packages.agents.exploration import (
 )
 from packages.agents.explorer import Explorer
 from packages.agents.goal_assertions import evaluate_assertions, evaluate_test_case_verdict
+from packages.agents.planner import MockProvider, PlannerPolicy
 from packages.agents.scenarios import Scenario, default_registry
 from packages.agents.scripted_agent import AgentStep, ScriptedAgentPolicy
+from packages.agents.secret_resolver import SECRET_VALUE_MARKER
 from packages.core import database
 from packages.core.errors import ConflictError, NotFoundError, ValidationError
 from packages.core.logging import get_logger
@@ -104,6 +106,16 @@ POLICIES: list[dict[str, Any]] = [
         ),
     },
     {
+        "id": "mock-agent",
+        "label": "Mock Planner Agent",
+        "kind": "planner",
+        "is_llm": False,
+        "is_real_model": False,
+        "verified": True,
+        "agent_version": "mock-agent-1.0.0-NOT-REAL-MODEL",
+        "note": "MockProvider 根据真实 Observation 生成 Proposal；不调用任何模型。",
+    },
+    {
         "id": "llm",
         "label": "LLM Policy",
         "kind": "llm",
@@ -156,6 +168,7 @@ def scenario_steps(
     username: str,
     password: str,
     seed_values: dict[str, str] | None = None,
+    use_secret_refs: bool = False,
 ) -> list[AgentStep]:
     """Turn a scenario's declared decisions into provider steps.
 
@@ -179,6 +192,11 @@ def scenario_steps(
     steps: list[AgentStep] = []
     for step in scenario.steps:
         args = _substitute(dict(step.get("args") or {}), mapping)
+        secret_ref = str(args.pop("secret_ref", "") or "")
+        if secret_ref:
+            args["value"] = SECRET_VALUE_MARKER if use_secret_refs else password
+            if use_secret_refs:
+                args["value_ref"] = secret_ref
         decision = json.dumps(
             {
                 "action": step["tool"],
@@ -309,6 +327,10 @@ def build_policy(
     base_url: str,
     scenario: Scenario,
     seed_values: dict[str, str] | None = None,
+    *,
+    run_id: str = "",
+    test_intent: dict[str, Any] | None = None,
+    budget: Budget | None = None,
 ) -> tuple[Any, str]:
     """Build the named policy. Returns (policy, agent_version).
 
@@ -321,22 +343,7 @@ def build_policy(
     """
     if policy_id == "scripted":
         script = tuple(
-            ToolCall(
-                str(step["tool"]),
-                _substitute(
-                    dict(step.get("args") or {}),
-                    {
-                        "base_url": base_url,
-                        "username": str(settings.teamflow_test_user),
-                        "password": str(settings.teamflow_test_password),
-                        "wrong_password": "invalid-password-for-negative-path",
-                        "boundary_username": "U" * 120,
-                        "unique_suffix": uuid.uuid4().hex[:8],
-                        **(seed_values or {}),
-                    },
-                ),
-                str(step.get("rationale") or ""),
-            )
+            _scenario_tool_call(step, base_url, seed_values, str(settings.teamflow_test_user))
             for step in scenario.steps
         )
         return ScriptedPolicy(script), "scripted-policy-1.0.0-NOT-LLM"
@@ -345,8 +352,32 @@ def build_policy(
             scenario,
             base_url=base_url,
             username=str(settings.teamflow_test_user),
-            password=str(settings.teamflow_test_password),
+            password="",
             seed_values=seed_values,
+            use_secret_refs=True,
+        )
+    if policy_id == "mock-agent":
+        if not run_id or test_intent is None or budget is None:
+            raise ValidationError("mock-agent requires a run-bound intent and budget")
+        steps = tuple(
+            {
+                "tool": str(step["tool"]),
+                "args": _scenario_tool_args(
+                    step, base_url, seed_values, str(settings.teamflow_test_user)
+                ),
+                "rationale": str(step.get("rationale") or ""),
+            }
+            for step in scenario.steps
+        )
+        return (
+            PlannerPolicy(
+                planner=MockProvider(steps=steps),
+                scenario=scenario.to_dict(),
+                test_intent=test_intent,
+                budget=budget,
+                run_id=run_id,
+            ),
+            "mock-agent-1.0.0-NOT-REAL-MODEL",
         )
         return (
             ScriptedAgentPolicy(steps, goal=scenario.description),
@@ -356,9 +387,60 @@ def build_policy(
         "policy is not available in this build",
         details={
             "policy": policy_id,
-            "available": ["scripted", "scripted-agent"],
+            "available": ["scripted", "scripted-agent", "mock-agent"],
             "llm_reason": "真实 LLM 调用未获批（D8）。",
         },
+    )
+
+
+def _scenario_tool_args(
+    step: dict[str, Any],
+    base_url: str,
+    seed_values: dict[str, str] | None,
+    username: str,
+) -> dict[str, Any]:
+    args = dict(step.get("args") or {})
+    secret_ref = str(args.pop("secret_ref", "") or "")
+    value = args.get("value")
+    selector = str(args.get("selector") or "").casefold()
+    if secret_ref or ("password" in selector and value == "{password}"):
+        secret_ref = secret_ref or "teamflow.password"
+        args["value"] = SECRET_VALUE_MARKER
+        args["value_ref"] = secret_ref
+        return _substitute(
+            args,
+            {
+                "base_url": base_url,
+                "username": username,
+                "wrong_password": "invalid-password-for-negative-path",
+                "boundary_username": "U" * 120,
+                "unique_suffix": uuid.uuid4().hex[:8],
+                **(seed_values or {}),
+            },
+        )
+    return _substitute(
+        args,
+        {
+            "base_url": base_url,
+            "username": username,
+            "wrong_password": "invalid-password-for-negative-path",
+            "boundary_username": "U" * 120,
+            "unique_suffix": uuid.uuid4().hex[:8],
+            **(seed_values or {}),
+        },
+    )
+
+
+def _scenario_tool_call(
+    step: dict[str, Any],
+    base_url: str,
+    seed_values: dict[str, str] | None,
+    username: str,
+) -> ToolCall:
+    return ToolCall(
+        str(step["tool"]),
+        _scenario_tool_args(step, base_url, seed_values, username),
+        str(step.get("rationale") or ""),
     )
 
 
@@ -446,6 +528,7 @@ def _summary(record: dict[str, Any]) -> dict[str, Any]:
         "policy": record.get("policy") or "scripted",
         "policy_label": record.get("policy_label") or "",
         "is_llm": bool(record.get("is_llm")),
+        "is_real_model": bool(record.get("is_real_model", False)),
         # execution status of the exploration process: COMPLETED/FAILED/CANCELLED
         "status": record.get("status") or "UNKNOWN",
         "stop_reason": record.get("stop_reason") or "",
@@ -612,6 +695,7 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
 
     explorer = Explorer(
         sensitive_selectors=scenario.sensitive_selectors,
+        secret_resolver=request.app.state.secret_resolver,
         count_selectors=_selector_count_targets(
             [*scenario.goal_definition, *list(path_spec.get("expect") or [])]
         ),
@@ -630,6 +714,19 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
     run_id = explorer.trace.exploration_id
     lease_token = lease_manager.setup(run_id, scenario.data_setup or {})
     lease_manager.start_heartbeat(run_id, lease_token)
+    test_intent: dict[str, Any] = {
+        "intent_id": body.intent_ref or f"i-{explorer.trace.exploration_id}",
+        "description": body.goal or body.intent_ref or scenario.description,
+        "source_ref": body.intent_ref,
+        "scenario": body.scenario,
+        "goal": body.goal,
+        "expected_outcomes": [str(o) for o in body.expected_outcomes if str(o).strip()],
+        "target": str(body.target or "").strip(),
+        "required_assertions": [str(a) for a in body.required_assertions if str(a).strip()],
+        "constraints": [
+            str(c) for c in (body.constraints or scenario.constraints) if str(c).strip()
+        ],
+    }
     try:
         seed_values = _prepare_scenario_data(request, scenario, run_id, lease_token)
         policy, agent_version = build_policy(
@@ -638,10 +735,17 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
             body.base_url,
             execution_scenario,
             seed_values=seed_values,
+            run_id=run_id,
+            test_intent=test_intent,
+            budget=explorer.budget,
         )
         explorer.policy = policy
         explorer.trace.agent_version = agent_version
-        explorer.trace.prompt_version = "none-scripted" if body.policy == "scripted" else "external"
+        if body.policy == "mock-agent":
+            explorer.trace.hash_version = 3
+        explorer.trace.prompt_version = (
+            "none-real-model" if body.policy == "mock-agent" else "none-scripted"
+        )
     except Exception:
         lease_manager.stop_heartbeat(run_id)
         try:
@@ -649,31 +753,6 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
         finally:
             lease_manager.cleanup(run_id, lease_token)
         raise
-    # The TestIntent is assembled ONCE here, embedded into the trace before
-    # finalize (so the v2 hash covers it), and is the exact input the compiler
-    # and the reviewer see later.
-    test_intent: dict[str, Any] = {
-        "intent_id": body.intent_ref or f"i-{explorer.trace.exploration_id}",
-        "description": body.goal or body.intent_ref or scenario.description,
-        "source_ref": body.intent_ref,
-        "scenario": body.scenario,
-        # R5-4.6 semantics preserved: the scenario's intent *template* is a
-        # suggestion the caller can read from /explorations/policies and send
-        # explicitly. It must NOT be injected here, or a goal-less request would
-        # silently acquire a goal and "NOT_EVALUATED" could never happen again.
-        "goal": body.goal,
-        "expected_outcomes": [str(o) for o in body.expected_outcomes if str(o).strip()],
-        # No silent fallback to base_url: an undeclared target stays undeclared,
-        # so a goal-less exploration evaluates to NOT_EVALUATED instead of being
-        # "verified" against the entry page it started on. A scenario may
-        # *declare* a target; that is registered data, not an inference.
-        "target": str(body.target or "").strip(),
-        "required_assertions": [str(a) for a in body.required_assertions if str(a).strip()],
-        "constraints": [
-            str(c) for c in (body.constraints or scenario.constraints) if str(c).strip()
-        ],
-    }
-
     status = "COMPLETED"
     error: str | None = None
     try:
@@ -729,6 +808,7 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
         "policy": body.policy,
         "policy_label": title,
         "is_llm": False,
+        "is_real_model": bool(getattr(explorer.policy, "is_real_model", False)),
         "agent_version": payload.get("agent_version") or agent_version,
         "target": sanitize_url(body.base_url),
         "scenario_id": scenario.scenario_id,

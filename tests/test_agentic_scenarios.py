@@ -910,8 +910,12 @@ def test_api_test_case_verdict_distinguishes_expected_negative_login(
             normal = client.post("/api/v1/explorations", json={**request, "path": "normal"}).json()
             assert normal["goal_status"] == "VERIFIED"
             assert normal["test_case_verdict"] == "PASSED"
-            assert "secret123" not in str(normal)
-            assert "password=abc" not in str(normal)
+            leaked_fields = {
+                key: str(value)
+                for key, value in normal.items()
+                if "secret123" in str(value) or "password=abc" in str(value)
+            }
+            assert not leaked_fields, leaked_fields
             reread = client.get(f"/api/v1/explorations/{normal['exploration_id']}").json()
             assert reread["test_case_verdict"] == "PASSED"
             assert reread["trace_integrity_verified"] is True
@@ -956,3 +960,54 @@ def test_api_test_case_verdict_distinguishes_expected_negative_login(
             ).json()
             assert regression["goal_status"] == "VERIFIED"
             assert regression["test_case_verdict"] == "FAILED"
+
+
+def test_mock_agent_runs_real_api_browser_authorization_and_post_action(
+    tmp_path: Path,
+) -> None:
+    with _isolated_teamflow(tmp_path) as base:
+        settings = Settings(
+            app_env="test",
+            database_url=f"sqlite:///{(tmp_path / 'teamflow.db').as_posix()}",
+            exploration_data_dir=str(tmp_path / "explorations"),
+            candidate_data_dir=str(tmp_path / "candidates"),
+            case_dir=str(tmp_path / "cases"),
+            benchmark_data_dir=str(tmp_path / "benchmark"),
+            chain_data_dir=str(tmp_path / "chains"),
+            blob_dir=str(tmp_path / "blobs"),
+        )
+        with TestClient(build_platform_app(settings)) as client:
+            catalogue = client.get("/api/v1/explorations/policies").json()
+            mock_policy = next(p for p in catalogue["policies"] if p["id"] == "mock-agent")
+            assert mock_policy["verified"] is True
+            assert mock_policy["is_real_model"] is False
+            response = client.post(
+                "/api/v1/explorations",
+                json={
+                    "scenario": "teamflow-login",
+                    "scenario_version": "2.0.0",
+                    "path": "normal",
+                    "goal": "Log in and reach the project list",
+                    "target": "/projects",
+                    "expected_outcomes": ["项目列表"],
+                    "base_url": base,
+                    "policy": "mock-agent",
+                    "max_steps": 8,
+                },
+            )
+            assert response.status_code == 201, response.text
+            trace = response.json()
+            assert trace["status"] == "COMPLETED"
+            assert trace["goal_status"] == "VERIFIED"
+            assert trace["test_case_verdict"] == "PASSED"
+            assert trace["is_real_model"] is False
+            assert trace["authorization_events"]
+            assert all(item["consumed"] for item in trace["authorization_events"])
+            assert len(trace["authorization_events"]) == len(trace["action_sequence"])
+            assert trace["post_action_records"]
+            assert any(item["page_changed"] for item in trace["post_action_records"])
+            assert trace["decision_records"]
+            assert all(item["decision_source"] == "mock" for item in trace["decision_records"])
+            assert len({item["observation_ref"] for item in trace["decision_records"]}) > 1
+            serialized = str(trace)
+            assert settings.teamflow_test_password not in serialized

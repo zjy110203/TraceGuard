@@ -9,6 +9,7 @@ from typing import Any
 
 from packages.agents.exploration import _DESTRUCTIVE_INTENT, TOOL_SPECS, ToolGateway
 from packages.agents.planner import ActionProposal
+from packages.agents.secret_resolver import SECRET_VALUE_MARKER
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,12 @@ class PolicyValidator:
             args = proposal.arguments
             if set(args) - set(spec.allowed) or set(spec.required) - set(args):
                 reasons.append("action parameters do not match the strict schema")
+            selector = str(args.get("selector") or "").casefold()
+            value_ref = str(args.get("value_ref") or "")
+            if "password" in selector and (
+                str(args.get("value") or "") != SECRET_VALUE_MARKER or not value_ref
+            ):
+                reasons.append("password values must use an approved secret_ref")
         else:
             args = proposal.arguments
         if _contains_destructive_intent(args):
