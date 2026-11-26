@@ -18,3 +18,5 @@ Verifier test import spacing failed Ruff in run 20261126-195712-all-47748. Stopp
 
 ## 2026-11-26 final acceptance
 Code baseline ef49bc7: full all-mode aggregate PASS in .traceguard-tmp\r5\verify\20261126-195754-all-41256; Python 852 passed / 1 skipped (Windows symlink WinError 1314), Security 101, Product 24, Browser 150. All 10 stages ran in this one aggregate. Code CI run 45815263410 success, 5/5 jobs. Final same-lineage Chromium E2E data/screenshot/hash archive at docs/r5/evidence/f6-f7-final-20261126. Historical records retained; D8 BLOCKED, M4 NOT_RUN. Final documentation-only push CI will be verified separately.
+
+Evidence integrity follow-up: Git autocrlf normalized 18 archived text files relative to their original byte SHA-256. Scoped .gitattributes disables text conversion only for the final evidence directory; re-added the original bytes and verify committed Git blobs against the manifest. Product code and executed gate scope remain unchanged.
