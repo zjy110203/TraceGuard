@@ -22,10 +22,14 @@ Guards implemented literally from v1.1 §阶段10:
 
 from __future__ import annotations
 
+import hashlib
+import json
+import os
 import threading
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from packages.core.errors import ConflictError, ValidationError
@@ -167,14 +171,98 @@ class OracleIntegrityChecker:
         return notes
 
 
+class RepairStore:
+    """Append-only JSON snapshot store for proposals, versions and replay evidence."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    def append(self, snapshot: dict[str, Any]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        with self.path.open("a", encoding="utf-8", newline="\n") as stream:
+            stream.write(line + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+
+    def latest(self) -> dict[str, Any] | None:
+        if not self.path.exists():
+            return None
+        latest: dict[str, Any] | None = None
+        with self.path.open(encoding="utf-8") as stream:
+            for line in stream:
+                if line.strip():
+                    latest = json.loads(line)
+        return latest
+
+
 class RepairService:
     """State machine + validation + sandbox + gated CAS promotion + rollback."""
 
-    def __init__(self) -> None:
+    def __init__(self, store_path: Path | None = None) -> None:
         self._lock = threading.RLock()
         self._proposals: dict[str, RepairProposal] = {}
         self._candidates: dict[str, TestCaseVersion] = {}
         self._lock_version: dict[str, int] = {}
+        self.store_path = store_path
+        self.store = RepairStore(store_path) if store_path is not None else None
+        self._replays: dict[str, dict[str, Any]] = {}
+        if store_path is not None:
+            self._restore()
+
+    def _snapshot(self) -> dict[str, Any]:
+        return {
+            "proposals": [p.to_dict() for p in self._proposals.values()],
+            "candidates": {k: v.to_dict() for k, v in self._candidates.items()},
+            "replays": self._replays,
+        }
+
+    def _persist(self) -> None:
+        if self.store is None:
+            return
+        self.store.append(self._snapshot())
+
+    def _restore(self) -> None:
+        if self.store is None:
+            return
+        from packages.execution.models import case_from_dict
+
+        latest = self.store.latest()
+        if latest is None:
+            return
+        for raw in latest.get("proposals", []):
+            data = dict(raw)
+            data["change_kinds"] = tuple(data.get("change_kinds", []))
+            data["diff"] = [DiffEntry(**item) for item in data.get("diff", [])]
+            data["validation_notes"] = tuple(data.get("validation_notes", []))
+            data["source_evidence_refs"] = tuple(data.get("source_evidence_refs", []))
+            proposal = RepairProposal(**data)
+            self._proposals[proposal.proposal_id] = proposal
+        self._candidates = {
+            key: case_from_dict(value) for key, value in latest.get("candidates", {}).items()
+        }
+        self._replays = dict(latest.get("replays", {}))
+
+    def save_replay(self, proposal_id: str, replay: dict[str, Any]) -> None:
+        with self._lock:
+            self._get(proposal_id)
+            self._replays[proposal_id] = replay
+            self._persist()
+
+    def get_replay(self, proposal_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            return self._replays.get(proposal_id)
+
+    @staticmethod
+    def case_digest(case: TestCaseVersion) -> str:
+        canonical = json.dumps(
+            case.to_dict(),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     def create_proposal(
         self,
@@ -219,6 +307,7 @@ class RepairService:
             self._proposals[proposal_id] = proposal
             self._candidates[proposal_id] = candidate
             self._candidates[f"__base__{proposal_id}"] = base
+            self._persist()
             return proposal
 
     def _transition(self, proposal: RepairProposal, target: str) -> None:
@@ -245,12 +334,14 @@ class RepairService:
             except (ValidationError, ValueError) as exc:
                 p.failure_reason = f"VALIDATION_FAILED: {exc}"[:500]
                 self._transition(p, "VALIDATION_FAILED")
+            self._persist()
             return p
 
     def submit_for_approval(self, proposal_id: str) -> RepairProposal:
         with self._lock:
             p = self._get(proposal_id)
             self._transition(p, "PENDING_APPROVAL")
+            self._persist()
             return p
 
     def approve(self, proposal_id: str, *, approver: str, approval_record: str) -> RepairProposal:
@@ -265,6 +356,7 @@ class RepairService:
             self._transition(p, "APPROVED")
             p.approved_by = approver
             p.approval_record = approval_record
+            self._persist()
             return p  # APPROVED != PROMOTED
 
     def reject(self, proposal_id: str, reason: str, rejected_by: str = "human") -> RepairProposal:
@@ -279,6 +371,7 @@ class RepairService:
             self._transition(p, "REJECTED")
             p.failure_reason = reason[:500]
             p.rejected_by = rejected_by.strip()
+            self._persist()
             return p
 
     def promote(
@@ -289,6 +382,8 @@ class RepairService:
         sandbox_replay: Callable[[TestCaseVersion], bool] | None = None,
         operator: str = "",
         promotion_reason: str = "",
+        persist_formal: Callable[[TestCaseVersion], None] | None = None,
+        rollback_formal: Callable[[TestCaseVersion], None] | None = None,
     ) -> tuple[RepairProposal, TestCaseVersion]:
         """Atomic CAS promotion under a lock. One attempt per base version."""
         with self._lock:
@@ -297,7 +392,6 @@ class RepairService:
                 raise ConflictError(f"promotion requires APPROVED, got {p.state}")
             if is_self_approver(p.approved_by):
                 raise ValidationError("no valid human approval for promotion")
-            self._transition(p, "PROMOTING")
             # CAS: current formal version MUST equal the proposal's base.
             if current_formal.version != p.base_testcase_version:
                 p.failure_reason = (
@@ -305,17 +399,43 @@ class RepairService:
                     f"current={current_formal.version}"
                 )[:500]
                 p.state = "PROMOTION_FAILED"  # existing state; no new enum
+                self._persist()
                 return p, current_formal
             # Re-run guards at promotion time (defence in depth).
             base_case, candidate = self._candidate_pair(proposal_id)
             AssertionPreservationChecker().check(base_case, candidate)
             OracleIntegrityChecker().check(base_case, candidate)
-            if sandbox_replay is not None and not sandbox_replay(candidate):
+            replay = self._replays.get(proposal_id)
+            evidence = replay.get("evidence") if replay else None
+            evidence_digest = (
+                hashlib.sha256(
+                    json.dumps(evidence, ensure_ascii=False, indent=2, sort_keys=True).encode(
+                        "utf-8"
+                    )
+                ).hexdigest()
+                if isinstance(evidence, dict)
+                else ""
+            )
+            replay_matches = bool(
+                replay
+                and replay.get("status") == "PASSED"
+                and replay.get("proposal_id") == proposal_id
+                and replay.get("candidate_digest") == self.case_digest(candidate)
+                and replay.get("base_version") == p.base_testcase_version
+                and replay.get("evidence_hash") == replay.get("evidence_sha256") == evidence_digest
+            )
+            if (self.store_path is not None and not replay_matches) or (
+                sandbox_replay is not None and not sandbox_replay(candidate)
+            ):
                 p.failure_reason = "PROMOTION_FAILED: sandbox replay did not pass"
                 p.state = "PROMOTION_FAILED"
+                self._persist()
                 return p, current_formal
             # Atomic: append new immutable version + pointer + record together.
             promoted = replace(candidate, version=p.promotion_target_version)
+            if persist_formal is not None:
+                persist_formal(promoted)
+            self._transition(p, "PROMOTING")
             self._candidates[f"__formal__{p.case_id}"] = promoted
             self._lock_version[p.case_id] = promoted.version
             p.promotion_record = {
@@ -327,6 +447,16 @@ class RepairService:
                 "cas_check": "passed",
             }
             self._transition(p, "PROMOTED")
+            try:
+                self._persist()
+            except Exception:
+                self._candidates.pop(f"__formal__{p.case_id}", None)
+                self._lock_version.pop(p.case_id, None)
+                p.state = "APPROVED"
+                p.promotion_record = {}
+                if rollback_formal is not None:
+                    rollback_formal(promoted)
+                raise
             return p, promoted
 
     def rollback(
@@ -346,6 +476,7 @@ class RepairService:
             }
             self._candidates[f"__formal__{p.case_id}"] = target_version
             self._lock_version[p.case_id] = target_version.version
+            self._persist()
             return p
 
     def formal_version(self, case_id: str) -> TestCaseVersion | None:

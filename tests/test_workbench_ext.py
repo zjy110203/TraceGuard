@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import tempfile
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -117,6 +118,100 @@ def test_diagnosis_endpoint_requires_an_existing_run(client: Any) -> None:
     assert client.get("/api/v1/runs/run-does-not-exist/diagnosis").status_code == 404
 
 
+def test_real_run_diagnosis_is_the_only_repair_evidence_source(tmp_path: Path) -> None:
+    from apps.teamflow.main import build_app as build_teamflow_app
+    from tests.netutil import serve_uvicorn
+
+    case_id = "TC-CREATE-001"
+    cases = tmp_path / "cases"
+    cases.mkdir()
+    for filename in (f"{case_id}.json", "locators.json"):
+        shutil.copy(CASES_SRC / filename, cases / filename)
+    case_path = cases / f"{case_id}.json"
+    formal = json.loads(case_path.read_text(encoding="utf-8"))
+    drifted = json.loads(json.dumps(formal))
+    step = next(item for item in drifted["steps"] if item["step_id"] == "s6")
+    step["target"] = "[data-testid=traceguard-missing-project-link]"
+    case_path.write_text(json.dumps(drifted), encoding="utf-8")
+
+    teamflow_settings = Settings(
+        app_env="test", database_url=f"sqlite:///{(tmp_path / 'teamflow.db').as_posix()}"
+    )
+    with serve_uvicorn(build_teamflow_app(teamflow_settings)) as teamflow_url:
+        teamflow_port = int(teamflow_url.rsplit(":", 1)[1])
+        settings = Settings(
+            app_env="test",
+            database_url=f"sqlite:///{(tmp_path / 'api.db').as_posix()}",
+            teamflow_port=teamflow_port,
+            case_dir=str(cases),
+            benchmark_data_dir=str(tmp_path / "benchmark"),
+            exploration_data_dir=str(tmp_path / "explorations"),
+            candidate_data_dir=str(tmp_path / "candidates"),
+            chain_data_dir=str(tmp_path / "chains"),
+            blob_dir=str(tmp_path / "blobs"),
+        )
+        app = build_app(settings)
+        with TestClient(app) as client:
+            created_task = client.post(
+                "/api/v1/tasks",
+                json={
+                    "task_id": "task-real-diagnosis",
+                    "case_id": case_id,
+                    "title": "real diagnosis",
+                },
+            )
+            assert created_task.status_code == 201, created_task.text
+            submitted = client.post(
+                "/api/v1/tasks/task-real-diagnosis/runs", json={"timeout_s": 30}
+            )
+            assert submitted.status_code == 202, submitted.text
+            run_id = submitted.json()["run_id"]
+            deadline = time.monotonic() + 45
+            while time.monotonic() < deadline:
+                run = client.get(f"/api/v1/runs/{run_id}").json()
+                if run.get("status") in {"COMPLETED", "FAILED", "CANCELLED"}:
+                    break
+                time.sleep(0.1)
+            report = client.get(f"/api/v1/runs/{run_id}/report").json()
+            assert report.get("test_verdict") == "FAILED", report
+            diagnosis_response = client.get(f"/api/v1/runs/{run_id}/diagnosis")
+            assert diagnosis_response.status_code == 200, diagnosis_response.text
+            diagnosis = diagnosis_response.json()
+            supported = next(
+                (
+                    item
+                    for item in diagnosis["hypotheses"]
+                    if item["status"] in {"SUPPORTED", "CONFIRMED"}
+                ),
+                None,
+            )
+            assert supported is not None, diagnosis
+            evidence_refs = [item["ref_id"] for item in supported["supporting"]]
+            assert evidence_refs
+
+            candidate = json.loads(json.dumps(formal))
+            candidate["version"] = formal["version"] + 1
+            original_step = next(item for item in candidate["steps"] if item["step_id"] == "s6")
+            original_step["target"] = next(
+                item for item in formal["steps"] if item["step_id"] == "s6"
+            )["target"]
+            proposal = client.post(
+                "/api/v1/repairs",
+                json={
+                    "case_id": case_id,
+                    "candidate": candidate,
+                    "change_kinds": ["locator_update"],
+                    "diff": [],
+                    "source_run_id": run_id,
+                    "hypothesis_id": supported["hypothesis_id"],
+                    "evidence_refs": evidence_refs,
+                },
+            )
+            assert proposal.status_code == 201, proposal.text
+            assert proposal.json()["source_run_id"] == run_id
+            assert proposal.json()["source_hypothesis_id"] == supported["hypothesis_id"]
+
+
 def test_self_approval_of_repair_is_refused(client: Any) -> None:
     resp = client.post(
         "/api/v1/repairs/rp-1/approve",
@@ -171,6 +266,12 @@ def test_repair_api_requires_supported_evidence_and_advances_review_state(
     created = client.post("/api/v1/repairs", json=payload)
     assert created.status_code == 201, created.text
     proposal_id = created.json()["proposal_id"]
+    from packages.execution.repair import RepairService
+
+    store_path = client.app.state.repair_service.store_path
+    assert store_path is not None
+    client.app.state.repair_service = RepairService(store_path)
+    assert client.get(f"/api/v1/repairs/{proposal_id}").json()["state"] == "DRAFT"
     assert created.json()["source_run_id"] == "run-1"
     assert created.json()["source_evidence_refs"] == ["ev-1"]
     assert client.post(f"/api/v1/repairs/{proposal_id}/validate").json()["state"] == "VALIDATED"
@@ -201,7 +302,7 @@ def test_repair_api_replays_and_promotes_append_only_version(
     drifted = json.loads(json.dumps(formal))
     for step in drifted["steps"]:
         if step["step_id"] == "s6":
-            step["target"] = "[data-testid=legacy-new-project-link]"
+            step["target"] = "[data-testid=traceguard-missing-project-link]"
     case_path.write_text(json.dumps(drifted), encoding="utf-8")
 
     monkeypatch.setattr(
@@ -227,7 +328,7 @@ def test_repair_api_replays_and_promotes_append_only_version(
             {
                 "kind": "locator_update",
                 "target": "s6",
-                "before": "[data-testid=legacy-new-project-link]",
+                "before": "[data-testid=traceguard-missing-project-link]",
                 "after": "[data-testid=new-project-link]",
             }
         ],

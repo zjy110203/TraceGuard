@@ -12,6 +12,9 @@ Verifies:
 
 from __future__ import annotations
 
+import hashlib
+import json
+
 import pytest
 
 from packages.core.errors import ValidationError
@@ -154,6 +157,65 @@ def test_full_lifecycle_to_promoted() -> None:
     assert version.version == 2
     assert promoted.promotion_record["cas_check"] == "passed"
     assert svc.formal_version("TC-REPAIR").version == 2
+
+
+def test_repair_store_restores_proposal_and_requires_matching_replay(tmp_path) -> None:
+    store_path = tmp_path / "repairs.jsonl"
+    svc = RepairService(store_path)
+    base, proposal = _valid_proposal(svc, "p-persist")
+    svc.validate(proposal.proposal_id)
+    svc.submit_for_approval(proposal.proposal_id)
+    svc.approve(proposal.proposal_id, approver="reviewer", approval_record="approval-1")
+
+    restored = RepairService(store_path)
+    assert restored.get(proposal.proposal_id)["state"] == "APPROVED"
+    restored_candidate = restored._candidate_pair(proposal.proposal_id)[1]
+    replay_evidence = {"proposal": proposal.proposal_id, "result": "validated"}
+    replay_evidence_hash = hashlib.sha256(
+        json.dumps(replay_evidence, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    restored.save_replay(
+        proposal.proposal_id,
+        {
+            "proposal_id": proposal.proposal_id,
+            "candidate_digest": restored.case_digest(restored_candidate),
+            "base_version": 1,
+            "evidence": replay_evidence,
+            "evidence_sha256": replay_evidence_hash,
+            "evidence_hash": replay_evidence_hash,
+            "status": "PASSED",
+        },
+    )
+    restored = RepairService(store_path)
+    replay = restored.get_replay(proposal.proposal_id)
+    assert replay and replay["evidence_hash"] == replay_evidence_hash
+    promoted, version = restored.promote(
+        proposal.proposal_id,
+        current_formal=base,
+        sandbox_replay=lambda _candidate: True,
+    )
+    assert promoted.state == "PROMOTED" and version.version == 2
+
+
+def test_persist_formal_failure_does_not_mark_repair_promoted() -> None:
+    svc = RepairService()
+    base, proposal = _valid_proposal(svc, "p-write-failure")
+    svc.validate(proposal.proposal_id)
+    svc.submit_for_approval(proposal.proposal_id)
+    svc.approve(proposal.proposal_id, approver="reviewer", approval_record="approval-2")
+
+    def fail_write(_candidate):
+        raise OSError("simulated disk failure")
+
+    with pytest.raises(OSError, match="simulated disk failure"):
+        svc.promote(
+            proposal.proposal_id,
+            current_formal=base,
+            sandbox_replay=lambda _candidate: True,
+            persist_formal=fail_write,
+        )
+    assert svc.get(proposal.proposal_id)["state"] == "APPROVED"
+    assert svc.formal_version(base.case_id) is None
 
 
 def test_agent_cannot_self_approve() -> None:

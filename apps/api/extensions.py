@@ -431,7 +431,7 @@ def _repair_view(request: Request, proposal_id: str) -> dict[str, Any]:
         record = service.get(proposal_id)
     except ConflictError as exc:
         raise NotFoundError(str(exc)) from exc
-    replay = getattr(request.app.state, "repair_replay_results", {}).get(proposal_id)
+    replay = request.app.state.repair_service.get_replay(proposal_id)
     record["sandbox_replay"] = replay
     return record
 
@@ -584,17 +584,22 @@ def sandbox_repair(proposal_id: str, request: Request) -> dict[str, Any]:
         root=root,
     ).run()
     replay = {
+        "proposal_id": proposal_id,
+        "candidate_digest": service.case_digest(candidate),
+        "base_version": record["base_testcase_version"],
         "verdict": result.verdict,
         "reason": result.reason,
         "cleanup_error": result.cleanup_error,
         "evidence_sha256": result.evidence_sha256,
+        "evidence_hash": result.evidence_sha256,
         "evidence": result.evidence,
+        "replay_result": {"verdict": result.verdict, "reason": result.reason},
         "replayed_at": datetime.now(UTC).isoformat(),
         "status": "PASSED"
         if result.verdict == "VALIDATED" and not result.cleanup_error
         else "FAILED",
     }
-    request.app.state.repair_replay_results[proposal_id] = replay
+    service.save_replay(proposal_id, replay)
     if replay["status"] != "PASSED":
         raise ValidationError(f"sandbox replay did not pass: {result.reason}")
     return {**_repair_view(request, proposal_id), "sandbox_replay": replay}
@@ -611,14 +616,52 @@ def promote_repair(proposal_id: str, body: RepairOperatorBody, request: Request)
     record = _repair_view(request, proposal_id)
     if record["state"] != "APPROVED":
         raise ValidationError("promotion requires a human-approved proposal")
-    replay = request.app.state.repair_replay_results.get(proposal_id)
+    replay = request.app.state.repair_service.get_replay(proposal_id)
     if not replay or replay.get("status") != "PASSED":
         raise ValidationError("promotion requires a successful sandbox replay")
     case_id = str(record["case_id"])
     current, _ = _find_case(_case_dir(request), case_id)
     target_path = _case_dir(request) / f"{case_id}.v{record['candidate_testcase_version']}.json"
+    recovered_file = False
     if target_path.exists():
-        raise ConflictError("formal version file already exists; refusing overwrite")
+        base_candidate, candidate = request.app.state.repair_service._candidate_pair(proposal_id)
+        expected = {**candidate.to_dict(), "version": int(record["candidate_testcase_version"])}
+        try:
+            recovered_file = json.loads(target_path.read_text(encoding="utf-8")) == expected
+        except (OSError, ValueError):
+            recovered_file = False
+        if not recovered_file:
+            raise ConflictError("formal version file already exists; refusing overwrite")
+        if current.version == int(record["candidate_testcase_version"]):
+            current = base_candidate
+        elif current.version > int(record["candidate_testcase_version"]):
+            raise ConflictError("a later formal version exists; refusing repair recovery")
+    else:
+        recovered_file = False
+
+    def persist_formal(version: Any) -> None:
+        nonlocal recovered_file
+        if target_path.exists():
+            if json.loads(target_path.read_text(encoding="utf-8")) == version.to_dict():
+                recovered_file = True
+                return
+            raise ConflictError("formal version file already exists; refusing overwrite")
+        temp_path = target_path.with_name(f".{target_path.name}.{uuid.uuid4().hex}.tmp")
+        temp_path.write_text(
+            json.dumps(version.to_dict(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        os.replace(temp_path, target_path)
+        recovered_file = False
+
+    def rollback_formal(version: Any) -> None:
+        if not recovered_file and target_path.exists():
+            try:
+                existing = json.loads(target_path.read_text(encoding="utf-8"))
+                if existing == version.to_dict():
+                    target_path.unlink()
+            except (OSError, ValueError):
+                pass
+
     try:
         promoted, version = request.app.state.repair_service.promote(
             proposal_id,
@@ -626,20 +669,15 @@ def promote_repair(proposal_id: str, body: RepairOperatorBody, request: Request)
             sandbox_replay=lambda _candidate: True,
             operator=body.operator.strip(),
             promotion_reason=body.reason.strip(),
+            persist_formal=persist_formal,
+            rollback_formal=rollback_formal,
         )
     except ConflictError as exc:
         raise ValidationError(str(exc)) from exc
+    except OSError as exc:
+        raise ValidationError(f"promotion asset write failed: {type(exc).__name__}") from exc
     if promoted.state != "PROMOTED":
         raise ConflictError(promoted.failure_reason or "formal version changed during promotion")
-    temp_path = target_path.with_name(f".{target_path.name}.{uuid.uuid4().hex}.tmp")
-    try:
-        temp_path.write_text(
-            json.dumps(version.to_dict(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
-        os.replace(temp_path, target_path)
-    except OSError as exc:
-        temp_path.unlink(missing_ok=True)
-        raise ValidationError(f"promotion asset write failed: {type(exc).__name__}") from exc
     return _repair_view(request, proposal_id)
 
 
@@ -673,8 +711,8 @@ def register_extensions(
     experiment evaluation receives scenario ids, never GT objects.
     """
     app.state.probe_engine = build_default_engine()
-    app.state.repair_service = RepairService()
-    app.state.repair_replay_results = {}
+    repair_store_root = benchmark_data_dir or Path("benchmark") / "data"
+    app.state.repair_service = RepairService(repair_store_root / "repairs.jsonl")
 
     gt = GroundTruthManager()
     datasets = DatasetManager(gt)
