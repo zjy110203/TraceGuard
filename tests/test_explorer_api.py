@@ -214,6 +214,43 @@ def test_startup_recovery_cleans_stale_run_data_only(client: TestClient) -> None
     assert (client.app.state.data_lease_manager.root / "exp_active_owner").exists()
 
 
+def test_startup_recovery_retries_database_outage_without_losing_lease(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import time
+
+    from apps.api import explorer_api
+
+    TeamFlowBase.metadata.create_all(client.app.state.engine)
+    session_factory = database.make_session_factory(client.app.state.engine)
+    with session_factory() as session:
+        teamflow_service.seed_default(session, "tester", "test-pass-123")
+    manager = client.app.state.data_lease_manager
+    token = manager.setup("exp_db_retry", now=time.time() - 61)
+    request = type("RequestStub", (), {"app": client.app})()
+    scenario = default_registry().require("project-edit", "2.0.0")
+    values = _prepare_scenario_data(request, scenario, "exp_db_retry", token)
+
+    original = explorer_api._cleanup_app_scenario_data
+    monkeypatch.setattr(
+        explorer_api,
+        "_cleanup_app_scenario_data",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("database unavailable")),
+    )
+    recover_expired_scenario_data(client.app)
+    lease = manager.lease("exp_db_retry")
+    assert lease["state"] == "CLEANUP_FAILED"
+    assert (manager.root / "exp_db_retry" / "lease.json").exists()
+    with session_factory() as session:
+        assert session.get(Project, values["project_target_id"]) is not None
+
+    monkeypatch.setattr(explorer_api, "_cleanup_app_scenario_data", original)
+    recover_expired_scenario_data(client.app)
+    with session_factory() as session:
+        assert session.get(Project, values["project_target_id"]) is None
+    assert not (manager.root / "exp_db_retry").exists()
+
+
 def test_redact_actions_masks_credentials_only() -> None:
     actions = [
         {"tool": "fill", "args": {"selector": "[data-testid=password]", "value": "hunter2"}},

@@ -150,9 +150,9 @@ Python 3.13.14｜FastAPI 0.165.0｜uvicorn 0.54.0｜Pydantic 2.14.3｜SQLAlchemy
 依赖已在项目内 `.venv`。启动命令（Windows，工作区 `D:/桌面/TraceGuard/traceguard`）：
 
 ```
-.\.venv\Scripts\python.exe -m uvicorn apps.teamflow.main:app --app-dir . --port 8001
-.\.venv\Scripts\python.exe -m uvicorn apps.api.main:app --app-dir . --port 8000
+.\.venv\Scripts\python.exe -m scripts.serve
 ```
+`scripts.serve` 是唯一正式本机启动入口；API 与 TeamFlow 的 ASGI 模块会拒绝绕过该入口的开发/生产启动。测试环境使用隔离的 `APP_ENV=test` 配置。
 平台 API 默认装配 workbench + evidence + graph（Settings.workbench_enabled=True），TeamFlow URL 由 `teamflow_host/port` 推导。
 Docker Compose 配置存在于 `infra/docker-compose.yml`，但 daemon 未启动，**未做容器化验证**。
 

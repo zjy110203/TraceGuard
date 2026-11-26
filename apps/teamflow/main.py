@@ -12,7 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from packages.core import database
-from packages.core.config import Settings, get_settings
+from packages.core.config import Settings, get_settings, require_authorized_startup
 from packages.core.errors import DomainError
 from packages.core.http import RequestIdMiddleware
 from packages.core.logging import get_logger, setup_logging
@@ -26,6 +26,8 @@ logger = get_logger("tg.teamflow")
 
 def build_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
+    settings.validate_for_prod()
+    require_authorized_startup(settings)
     setup_logging(settings.log_level, settings.log_json)
 
     engine = database.create_db_engine(settings.database_url)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from types import SimpleNamespace
 
@@ -56,6 +57,32 @@ def test_platform_app_rejects_production_without_authentication() -> None:
     )
     with pytest.raises(RuntimeError, match="authentication is not implemented"):
         build_app(settings)
+
+
+@pytest.mark.parametrize("app_path", [serve.PLATFORM_APP, serve.TEAMFLOW_APP])
+def test_direct_uvicorn_non_loopback_startup_is_rejected(app_path: str) -> None:
+    env = os.environ.copy()
+    env["APP_ENV"] = "dev"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            app_path,
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "0",
+            "--lifespan",
+            "off",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=15,
+    )
+    assert result.returncode != 0
+    assert "validated official scripts.serve" in result.stderr
 
 
 def test_serve_refuses_non_loopback_before_binding(

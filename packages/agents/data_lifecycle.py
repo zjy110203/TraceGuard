@@ -148,12 +148,12 @@ class DataLeaseManager:
                 # The directory is owned exclusively by this run. No glob or prefix
                 # matching against the parent is used.
                 for child in folder.iterdir():
+                    if child.is_symlink():
+                        raise OSError("refusing to follow symlink in lease directory")
                     if child.is_file():
                         child.unlink()
                     elif child.is_dir():
-                        import shutil
-
-                        shutil.rmtree(child)
+                        raise OSError("unexpected directory in lease directory")
                 folder.rmdir()
                 return True
             except OSError as exc:
@@ -174,14 +174,22 @@ class DataLeaseManager:
             return ()
         expired: list[str] = []
         for folder in self.root.iterdir():
+            # Do not follow paths that could lead outside the lease root.
+            if folder.is_symlink() or not folder.is_dir():
+                continue
             lease_path = folder / "lease.json"
             try:
                 lease = json.loads(lease_path.read_text(encoding="utf-8"))
-                if (
-                    lease.get("state") == "ACTIVE"
+                run_id = str(lease["run_id"])
+                self._validate_run_id(run_id)
+                if run_id != folder.name:
+                    continue
+                state = lease.get("state")
+                if state == "CLEANUP_FAILED" or (
+                    state == "ACTIVE"
                     and timestamp - float(lease["heartbeat_at"]) > self.timeout_seconds
                 ):
-                    expired.append(str(lease["run_id"]))
+                    expired.append(run_id)
             except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
                 continue
         return tuple(sorted(expired))

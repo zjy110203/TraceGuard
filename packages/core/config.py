@@ -58,6 +58,29 @@ def is_loopback_host(host: str) -> bool:
         return False
 
 
+# Capability is process-local, so an environment variable or arbitrary Uvicorn
+# option cannot authorize the application. Only the validated official launcher
+# can issue it. Test settings are explicitly isolated and do not grant this
+# capability to development or production configuration.
+_local_startup_authorized = False
+
+
+def authorize_local_startup(*, api_host: str, teamflow_host: str, settings: Settings) -> None:
+    settings.validate_for_prod()
+    settings.validate_local_deployment(api_host=api_host, teamflow_host=teamflow_host)
+    global _local_startup_authorized
+    _local_startup_authorized = True
+
+
+def require_authorized_startup(settings: Settings) -> None:
+    if settings.app_env == AppEnv.TEST:
+        return
+    if not _local_startup_authorized:
+        raise RuntimeError(
+            "services must be started by the validated official scripts.serve entrypoint"
+        )
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",

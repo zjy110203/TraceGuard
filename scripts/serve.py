@@ -106,7 +106,12 @@ def main() -> int:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     # Expose provider keys from .env (DEEPSEEK_API_KEY etc.) before anything
     # builds an LLM provider. Never overrides explicitly set variables.
-    from packages.core.config import ensure_env_file_vars, get_settings, reset_settings_cache
+    from packages.core.config import (
+        authorize_local_startup,
+        ensure_env_file_vars,
+        get_settings,
+        reset_settings_cache,
+    )
 
     ensure_env_file_vars()
     from packages.agents.llm import validate_provider_config
@@ -124,6 +129,7 @@ def main() -> int:
     settings = get_settings()
     try:
         api_host, teamflow_host = _resolve_hosts(args.host, settings)
+        authorize_local_startup(api_host=api_host, teamflow_host=teamflow_host, settings=settings)
     except RuntimeError as exc:
         print(f"[x] 本机部署边界拒绝启动：{exc}")
         return 1

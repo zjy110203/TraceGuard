@@ -30,7 +30,6 @@ from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
-from sqlalchemy import select
 
 from apps.teamflow import service as teamflow_service
 from apps.teamflow.models import Project
@@ -258,13 +257,6 @@ def _cleanup_app_scenario_data(app: Any, run_id: str, token: str) -> None:
             ).startswith(marker):
                 raise RuntimeError("run-owned project identity changed; refusing cleanup")
             session.delete(project)
-        run_prefix = f"TG_RUN_{run_id}_"
-        owner_marker = f"traceguard-run:{run_id}"
-        for project in session.scalars(select(Project)).all():
-            if project.name.startswith(run_prefix) and (project.description or "").startswith(
-                owner_marker
-            ):
-                session.delete(project)
         session.commit()
 
 
@@ -731,5 +723,4 @@ def register_explorer(app: Any, *, exploration_dir: Path) -> None:
         heartbeat_seconds=settings.data_lease_heartbeat_seconds,
         timeout_seconds=settings.data_lease_timeout_seconds,
     )
-    app.state.data_lease_manager.recover_orphans()
     app.include_router(router)

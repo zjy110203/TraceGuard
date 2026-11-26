@@ -34,6 +34,16 @@ def test_active_run_is_not_orphaned_and_stale_run_recovers(tmp_path) -> None:
     assert not (tmp_path / "stale-run").exists()
 
 
+def test_cleanup_failed_is_retained_and_retried_idempotently(tmp_path, monkeypatch) -> None:
+    manager = DataLeaseManager(tmp_path)
+    token = manager.setup("retry-run", now=100)
+    manager.add_resource("retry-run", token, {"kind": "teamflow-project", "id": "p-1"})
+    manager.mark_cleanup_failed("retry-run", token, "database unavailable")
+    assert manager.expired_runs(now=101) == ("retry-run",)
+    assert manager.recover_orphans(now=101) == ("retry-run",)
+    assert not (tmp_path / "retry-run").exists()
+
+
 def test_cleanup_rejects_foreign_token_without_touching_run(tmp_path) -> None:
     manager = DataLeaseManager(tmp_path)
     token = manager.setup("protected-run", {"data": [1]})

@@ -438,7 +438,7 @@ TRACEGUARD_DATABASE_URL="postgresql+psycopg://u:p@h:5432/db" ./.venv/Scripts/pyt
 cd apps/web && npm run build && npx vue-tsc --noEmit && cd ../..
 
 # 启动（API 同时托管构建后的工作台）
-./.venv/Scripts/python.exe -m uvicorn apps.api.main:app --port 8000
+./.venv/Scripts/python.exe -m scripts.serve --no-teamflow
 ```
 
 ---

@@ -40,6 +40,11 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+# Module-level ASGI objects are imported during collection. Give them an
+# explicit isolated test configuration so production/development startup still
+# requires the official launch capability.
+os.environ["APP_ENV"] = "test"
+
 if TYPE_CHECKING:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
