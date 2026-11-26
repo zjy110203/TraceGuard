@@ -40,8 +40,44 @@ def test_cleanup_failed_is_retained_and_retried_idempotently(tmp_path, monkeypat
     manager.add_resource("retry-run", token, {"kind": "teamflow-project", "id": "p-1"})
     manager.mark_cleanup_failed("retry-run", token, "database unavailable")
     assert manager.expired_runs(now=101) == ("retry-run",)
-    assert manager.recover_orphans(now=101) == ("retry-run",)
-    assert not (tmp_path / "retry-run").exists()
+    # The standalone manager cannot clean database resources; only the app
+    # coordinator may remove this lease after cleaning those resources.
+    assert manager.recover_orphans(now=101) == ()
+    assert manager.resources("retry-run", token) == [{"kind": "teamflow-project", "id": "p-1"}]
+
+
+def test_cleanup_failure_preserves_manifest_for_retry(tmp_path) -> None:
+    manager = DataLeaseManager(tmp_path)
+    token = manager.setup("retry-run", {"seed": "one"})
+    manager.add_resource("retry-run", token, {"kind": "teamflow-project", "id": "p-1"})
+    folder = tmp_path / "retry-run"
+    (folder / "unexpected").mkdir()
+
+    assert not manager.cleanup("retry-run", token)
+    assert manager.lease("retry-run")["state"] == "CLEANUP_FAILED"
+    assert manager.resources("retry-run", token)[0]["id"] == "p-1"
+    (folder / "unexpected").rmdir()
+    assert manager.cleanup("retry-run", token)
+
+
+def test_rmdir_failure_restores_manifest(tmp_path, monkeypatch) -> None:
+    manager = DataLeaseManager(tmp_path)
+    token = manager.setup("retry-run")
+    folder = tmp_path / "retry-run"
+    from pathlib import Path
+
+    original = Path.rmdir
+
+    def fail_once(path: Path) -> None:
+        if path == folder:
+            raise OSError("directory temporarily locked")
+        original(path)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "rmdir", fail_once)
+        assert not manager.cleanup("retry-run", token)
+    assert manager.lease("retry-run")["state"] == "CLEANUP_FAILED"
+    assert manager.cleanup("retry-run", token)
 
 
 def test_cleanup_rejects_foreign_token_without_touching_run(tmp_path) -> None:

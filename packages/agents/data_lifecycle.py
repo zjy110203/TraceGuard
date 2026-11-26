@@ -141,27 +141,33 @@ class DataLeaseManager:
             if run_id in self._cleaning:
                 return False
             self._cleaning.add(run_id)
+            lease: dict[str, Any] | None = None
             try:
+                if folder.is_symlink() or lease_path.is_symlink():
+                    raise OSError("refusing symlink lease path")
                 lease = json.loads(lease_path.read_text(encoding="utf-8"))
                 if lease.get("token") != token:
                     raise ValueError("lease token mismatch; refusing cleanup")
                 # The directory is owned exclusively by this run. No glob or prefix
                 # matching against the parent is used.
-                for child in folder.iterdir():
+                children = list(folder.iterdir())
+                for child in children:
                     if child.is_symlink():
                         raise OSError("refusing to follow symlink in lease directory")
-                    if child.is_file():
-                        child.unlink()
-                    elif child.is_dir():
+                    if not child.is_file():
                         raise OSError("unexpected directory in lease directory")
+                for child in children:
+                    if child != lease_path:
+                        child.unlink()
+                lease_path.unlink()
                 folder.rmdir()
                 return True
             except OSError as exc:
                 try:
-                    lease = json.loads(lease_path.read_text(encoding="utf-8"))
-                    lease["state"] = "CLEANUP_FAILED"
-                    lease["cleanup_error"] = str(exc)
-                    self._write_lease(run_id, lease)
+                    if lease is not None and not folder.is_symlink():
+                        lease["state"] = "CLEANUP_FAILED"
+                        lease["cleanup_error"] = str(exc)
+                        self._write_lease(run_id, lease)
                 except (OSError, json.JSONDecodeError):
                     pass
                 return False
@@ -200,6 +206,10 @@ class DataLeaseManager:
         for run_id in self.expired_runs(now=timestamp):
             try:
                 lease = json.loads((self._run_dir(run_id) / "lease.json").read_text("utf-8"))
+                # Resource-bearing leases require the app coordinator to clean
+                # the database first. This standalone helper cannot do that.
+                if lease.get("resources"):
+                    continue
                 if self.cleanup(run_id, str(lease["token"]), now=timestamp):
                     cleaned.append(run_id)
             except (OSError, KeyError, ValueError, json.JSONDecodeError):

@@ -269,6 +269,30 @@ def test_startup_recovery_retries_database_outage_without_losing_lease(
     assert not (manager.root / "exp_db_retry").exists()
 
 
+def test_setup_failure_retains_lease_when_database_cleanup_fails(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from apps.api import explorer_api
+
+    manager = client.app.state.data_lease_manager
+
+    def fail_setup(request, scenario, run_id, token):
+        manager.add_resource(run_id, token, {"kind": "teamflow-project", "id": "p-1"})
+        raise RuntimeError("setup failed")
+
+    def fail_cleanup(*args):
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(explorer_api, "_prepare_scenario_data", fail_setup)
+    monkeypatch.setattr(explorer_api, "_cleanup_scenario_data", fail_cleanup)
+    with pytest.raises(RuntimeError, match="setup failed"):
+        client.post("/api/v1/explorations", json={"policy": "scripted"})
+    (run_id,) = manager.expired_runs()
+    lease = manager.lease(run_id)
+    assert lease["state"] == "CLEANUP_FAILED"
+    assert lease["resources"][0]["id"] == "p-1"
+
+
 def test_redact_actions_masks_credentials_only() -> None:
     actions = [
         {"tool": "fill", "args": {"selector": "[data-testid=password]", "value": "hunter2"}},

@@ -754,7 +754,9 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
         lease_manager.stop_heartbeat(run_id)
         try:
             _cleanup_scenario_data(request, run_id, lease_token)
-        finally:
+        except Exception as cleanup_exc:  # noqa: BLE001 - retain ownership for recovery
+            lease_manager.mark_cleanup_failed(run_id, lease_token, type(cleanup_exc).__name__)
+        else:
             lease_manager.cleanup(run_id, lease_token)
         raise
     status = "COMPLETED"
