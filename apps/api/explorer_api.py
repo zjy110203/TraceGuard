@@ -19,6 +19,7 @@ benchmark store's approach; no database schema change is introduced.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import uuid
@@ -28,12 +29,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+import httpx
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
-from sqlalchemy import select
 
-from apps.teamflow import service as teamflow_service
-from apps.teamflow.models import Project
 from packages.agents.data_lifecycle import DataLeaseManager
 from packages.agents.exploration import (
     Budget,
@@ -55,7 +54,6 @@ from packages.agents.planner import MockProvider, PlannerPolicy
 from packages.agents.scenarios import Scenario, default_registry
 from packages.agents.scripted_agent import AgentStep, ScriptedAgentPolicy
 from packages.agents.secret_resolver import SECRET_VALUE_MARKER
-from packages.core import database
 from packages.core.errors import ConflictError, NotFoundError, ValidationError
 from packages.core.logging import get_logger
 from packages.execution.dataref import REDACTED_MARKER
@@ -223,7 +221,7 @@ def scenario_steps(
 def _prepare_scenario_data(
     request: Request, scenario: Scenario, run_id: str, token: str
 ) -> dict[str, str]:
-    """Create only package-declared, per-run fixtures and record exact ownership."""
+    """Seed package-declared fixtures in the configured TeamFlow SUT only."""
     setup = scenario.data_setup or {}
     unknown = set(setup) - {"projects"}
     if unknown:
@@ -231,44 +229,40 @@ def _prepare_scenario_data(
     projects = setup.get("projects", [])
     if not isinstance(projects, list):
         raise ValidationError("scenario data_setup.projects must be a list")
-    session_factory = database.make_session_factory(request.app.state.engine)
     values: dict[str, str] = {}
     run_prefix = f"TG_RUN_{run_id}_"
     values["run_prefix"] = run_prefix
     values["owner_marker"] = f"traceguard-run:{run_id}"
     values["boundary_name"] = f"{run_prefix}{'B' * (200 - len(run_prefix))}"
     values["overlong_name"] = f"{run_prefix}{'B' * (201 - len(run_prefix))}"
-    with session_factory() as session:
-        for index, spec in enumerate(projects):
-            if not isinstance(spec, dict) or set(spec) - {"name", "description", "key"}:
-                raise ValidationError("scenario project seed has an invalid structure")
-            key = str(spec.get("key") or f"project_{index}")
-            seed_name = str(spec.get("name") or "").strip()
-            if not seed_name:
-                raise ValidationError("scenario project seed name must not be empty")
-            owned_name = f"{run_prefix}{seed_name}"[:200]
-            marker = f"traceguard-run:{run_id}"
-            project = Project(
-                id=uuid.uuid4().hex,
-                workspace_id=teamflow_service.WS_ID,
-                name=owned_name,
-                description=f"{marker}; {str(spec.get('description') or '')}",
+    for index, spec in enumerate(projects):
+        if not isinstance(spec, dict) or set(spec) - {"name", "description", "key"}:
+            raise ValidationError("scenario project seed has an invalid structure")
+        key = str(spec.get("key") or f"project_{index}")
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", key):
+            raise ValidationError("scenario project seed key is invalid")
+        seed_name = str(spec.get("name") or "").strip()
+        if not seed_name:
+            raise ValidationError("scenario project seed name must not be empty")
+        owned_name = f"{run_prefix}{seed_name}"[:200]
+        try:
+            result = _teamflow_eval_request(
+                request.app,
+                "POST",
+                f"/__eval__/runs/{run_id}/projects",
+                {"key": key, "name": owned_name, "description": spec.get("description", "")},
             )
-            session.add(project)
-            session.flush()
-            request.app.state.data_lease_manager.add_resource(
-                run_id,
-                token,
-                {
-                    "kind": "teamflow-project",
-                    "id": project.id,
-                    "name": owned_name,
-                    "marker": marker,
-                },
-            )
-            session.commit()
-            values[key] = owned_name
-            values[f"{key}_id"] = project.id
+        except Exception as exc:  # noqa: BLE001 - keep failed remote seed recoverable
+            raise RuntimeError(f"TeamFlow fixture seed failed: {type(exc).__name__}") from None
+        marker = str(result["owner_marker"])
+        project_id = str(result["id"])
+        request.app.state.data_lease_manager.add_resource(
+            run_id,
+            token,
+            {"kind": "teamflow-project", "id": project_id, "name": owned_name, "marker": marker},
+        )
+        values[key] = owned_name
+        values[f"{key}_id"] = project_id
     return values
 
 
@@ -282,32 +276,174 @@ def _cleanup_app_scenario_data(app: Any, run_id: str, token: str) -> None:
     """App-level form used by both the request finalizer and startup recovery."""
     manager: DataLeaseManager = app.state.data_lease_manager
     resources = manager.resources(run_id, token)
-    session_factory = database.make_session_factory(app.state.engine)
-    with session_factory() as session:
-        for resource in resources:
-            if resource.get("kind") != "teamflow-project":
-                raise RuntimeError("unknown run-owned resource kind")
-            project = session.get(Project, str(resource.get("id") or ""))
-            if project is None:
-                continue
-            marker = str(resource.get("marker") or "")
-            if not project.name.startswith(f"TG_RUN_{run_id}_") or not (
-                project.description or ""
-            ).startswith(marker):
-                raise RuntimeError("run-owned project identity changed; refusing cleanup")
-            session.delete(project)
-        # Browser actions can create additional data after the initial seed
-        # (for example the boundary path's project). Match both the per-run
-        # name prefix and the per-run description marker for each DB row before
-        # deleting it; never sweep by prefix alone.
-        run_prefix = f"TG_RUN_{run_id}_"
-        owner_marker = f"traceguard-run:{run_id};"
-        for project in session.scalars(select(Project)).all():
-            if project.name.startswith(run_prefix) and (project.description or "").startswith(
-                owner_marker
-            ):
-                session.delete(project)
-        session.commit()
+    for resource in resources:
+        if resource.get("kind") != "teamflow-project":
+            raise RuntimeError("unknown run-owned resource kind")
+        if not str(resource.get("id") or "") or not str(resource.get("marker") or "").startswith(
+            f"traceguard-run:{run_id}:"
+        ):
+            raise RuntimeError("run-owned project reference is invalid")
+    try:
+        _teamflow_eval_request(
+            app,
+            "POST",
+            f"/__eval__/runs/{run_id}/cleanup",
+            {"resource_ids": [str(r["id"]) for r in resources]},
+        )
+    except Exception as exc:  # noqa: BLE001 - preserve lease for restart retry
+        raise RuntimeError(f"TeamFlow cleanup failed: {type(exc).__name__}") from None
+
+
+def _teamflow_eval_request(
+    app: Any, method: str, path: str, payload: dict[str, Any]
+) -> dict[str, Any]:
+    """Call only the configured SUT's narrow, token-gated run fixture API."""
+    base_url = str(
+        getattr(app.state, "teamflow_base_url", app.state.settings.teamflow_base_url)
+    ).rstrip("/")
+    eval_token = getattr(app.state, "eval_token", app.state.settings.eval_control_token)
+    headers = {"X-Eval-Token": str(eval_token)}
+    injected = getattr(app.state, "teamflow_eval_client", None)
+    if injected is not None:
+        response = injected.request(method, path, json=payload, headers=headers)
+    else:
+        with httpx.Client(base_url=base_url, timeout=10, trust_env=False) as client:
+            response = client.request(method, path, json=payload, headers=headers)
+    if response.status_code < 200 or response.status_code >= 300:
+        raise RuntimeError(f"TeamFlow control API returned {response.status_code}")
+    result = response.json()
+    if not isinstance(result, dict):
+        raise RuntimeError("TeamFlow control API returned an invalid response")
+    return result
+
+
+def _read_independent_business_state(app: Any) -> dict[str, Any]:
+    """Read only TeamFlow's public business plane using the configured test user."""
+    settings = app.state.settings
+    base_url = str(getattr(app.state, "teamflow_base_url", settings.teamflow_base_url)).rstrip("/")
+    with httpx.Client(
+        base_url=base_url,
+        timeout=5,
+        trust_env=False,
+        cookies={"tf_session": str(settings.teamflow_test_user)},
+    ) as client:
+        response = client.get("/api/v1/state/independent")
+    response.raise_for_status()
+    payload = response.json()
+    if payload.get("source") != "teamflow.db/tf_project":
+        raise RuntimeError("independent business state source mismatch")
+    projects = payload.get("projects")
+    if not isinstance(projects, list):
+        raise RuntimeError("independent business state has no project list")
+    normalized = []
+    for project in projects:
+        if not isinstance(project, dict) or not all(
+            isinstance(project.get(key), str) for key in ("id", "name", "status")
+        ):
+            raise RuntimeError("independent business state has an invalid project row")
+        normalized.append(
+            {"id": project["id"], "name": project["name"], "status": project["status"]}
+        )
+    normalized.sort(key=lambda row: row["id"])
+    state = {
+        "source": "teamflow.db/tf_project",
+        "workspace_id": str(payload.get("workspace_id") or ""),
+        "project_count": int(payload.get("project_count", -1)),
+        "projects": normalized,
+    }
+    if state["project_count"] != len(normalized):
+        raise RuntimeError("independent business state count mismatch")
+    digest = hashlib.sha256(
+        json.dumps(state, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+    return {"state": state, "snapshot_sha256": digest}
+
+
+def _append_business_snapshot(
+    app: Any,
+    snapshots: list[dict[str, Any]],
+    phase: str,
+    *,
+    action_index: int | None = None,
+    action: str | None = None,
+    result: str | None = None,
+) -> None:
+    item: dict[str, Any] = {
+        "phase": phase,
+        "observed_at": datetime.now(UTC).isoformat(),
+    }
+    if action_index is not None:
+        item["action_index"] = action_index
+    if action is not None:
+        item["action"] = action
+    if result is not None:
+        item["action_result"] = result
+    try:
+        item.update(_read_independent_business_state(app))
+        item["status"] = "AVAILABLE"
+    except Exception as exc:  # noqa: BLE001 - missing proof stays explicit
+        item["status"] = "UNAVAILABLE"
+        item["error_type"] = type(exc).__name__
+    previous = next(
+        (entry["state"] for entry in reversed(snapshots) if entry.get("status") == "AVAILABLE"),
+        None,
+    )
+    current = item.get("state")
+    if previous is not None and current is not None:
+        old = {row["id"]: row for row in previous["projects"]}
+        new = {row["id"]: row for row in current["projects"]}
+        item["delta"] = {
+            "added_ids": sorted(new.keys() - old.keys()),
+            "removed_ids": sorted(old.keys() - new.keys()),
+            "changed_ids": sorted(key for key in old.keys() & new.keys() if old[key] != new[key]),
+        }
+    snapshots.append(item)
+
+
+def _business_state_audit(
+    snapshots: list[dict[str, Any]], run_id: str, cleanup_state: str
+) -> dict[str, Any]:
+    required_phases = {"before_setup", "after_setup", "final_before_cleanup"}
+    required_ok = all(
+        any(item.get("phase") == phase and item.get("status") == "AVAILABLE" for item in snapshots)
+        for phase in required_phases
+    )
+    all_observed = all(item.get("status") == "AVAILABLE" for item in snapshots)
+    cleanup_snapshot = next(
+        (item for item in reversed(snapshots) if item.get("phase") == "after_cleanup"), None
+    )
+    prefix = f"TG_RUN_{run_id}_"
+    remaining = []
+    if cleanup_snapshot and cleanup_snapshot.get("status") == "AVAILABLE":
+        remaining = [
+            row["id"]
+            for row in cleanup_snapshot["state"]["projects"]
+            if row["name"].startswith(prefix)
+        ]
+    cleanup_verdict = (
+        "PASS"
+        if cleanup_state == "CLEANED"
+        and cleanup_snapshot is not None
+        and cleanup_snapshot.get("status") == "AVAILABLE"
+        and not remaining
+        else "FAIL"
+        if remaining
+        else "INCONCLUSIVE"
+    )
+    return {
+        "schema_version": 1,
+        "source": "GET /api/v1/state/independent",
+        "verdict_scope": "evidence availability and run-owned cleanup only",
+        "verdict": "PASS" if required_ok and all_observed else "INCONCLUSIVE",
+        "required_snapshots_available": required_ok,
+        "every_snapshot_available": all_observed,
+        "cleanup": {
+            "state": cleanup_state,
+            "verdict": cleanup_verdict,
+            "remaining_run_project_ids": remaining,
+        },
+        "snapshots": snapshots,
+    }
 
 
 def recover_expired_scenario_data(app: Any) -> None:
@@ -704,6 +840,18 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
                 "allowed_hosts": sorted(_LOCAL_HOSTS),
             },
         )
+    configured_base_url = str(
+        getattr(
+            request.app.state,
+            "teamflow_base_url",
+            request.app.state.settings.teamflow_base_url,
+        )
+    )
+    if origin_of(body.base_url) != origin_of(configured_base_url):
+        raise ValidationError(
+            "exploration target does not match the configured TeamFlow SUT origin",
+            details={"base_url": sanitize_url(body.base_url)},
+        )
     if not 1 <= body.max_steps <= 30:
         raise ValidationError("max_steps must be between 1 and 30")
 
@@ -737,6 +885,8 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
     run_id = explorer.trace.exploration_id
     lease_token = lease_manager.setup(run_id, scenario.data_setup or {})
     lease_manager.start_heartbeat(run_id, lease_token)
+    business_snapshots: list[dict[str, Any]] = []
+    _append_business_snapshot(request.app, business_snapshots, "before_setup")
     # Only explicitly versioned path templates supply defaults. Legacy request
     # semantics and all user-supplied non-empty requirements remain unchanged.
     path_intent = path_spec.get("intent_templates") or {}
@@ -763,6 +913,7 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
     }
     try:
         seed_values = _prepare_scenario_data(request, scenario, run_id, lease_token)
+        _append_business_snapshot(request.app, business_snapshots, "after_setup")
         policy, agent_version = build_policy(
             body.policy,
             request.app.state.settings,
@@ -790,7 +941,19 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
     status = "COMPLETED"
     error: str | None = None
     try:
-        trace = explorer.explore(body.intent_ref, body.base_url, intent=test_intent)
+        trace = explorer.explore(
+            body.intent_ref,
+            body.base_url,
+            intent=test_intent,
+            on_action=lambda index, action, result: _append_business_snapshot(
+                request.app,
+                business_snapshots,
+                "after_action",
+                action_index=index,
+                action=action,
+                result=result,
+            ),
+        )
         payload = trace.to_dict()
     except Exception as exc:  # noqa: BLE001 - surface target/execution failure honestly
         status = "FAILED"
@@ -799,6 +962,8 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
         explorer.trace.stop_reason = explorer.trace.stop_reason or "ERROR"
         explorer.trace.finalize()
         payload = explorer.trace.to_dict()
+
+    _append_business_snapshot(request.app, business_snapshots, "final_before_cleanup")
 
     # R5-5.2 §15: structured goal assertions, evaluated against the LAST
     # observed page only. Every assertion gets its own verdict + evidence, and an
@@ -875,6 +1040,12 @@ def run_exploration(request: Request, body: RunExplorationRequest) -> dict[str, 
         "state": "CLEANED" if cleanup_ok else "CLEANUP_FAILED",
         "cleanup_error": cleanup_error,
     }
+    _append_business_snapshot(request.app, business_snapshots, "after_cleanup")
+    record["business_state_evidence"] = _business_state_audit(
+        business_snapshots,
+        run_id,
+        str(record["data_lifecycle"]["state"]),
+    )
     store: ExplorationStore = request.app.state.exploration_store
     store.save(record)
     # Verify against what the store actually holds (post JSON round-trip): the

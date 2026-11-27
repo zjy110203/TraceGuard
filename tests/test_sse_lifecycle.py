@@ -562,18 +562,22 @@ def test_disconnect_unsubscribes_and_leaks_nothing(live_platform: dict[str, Any]
     )
     # Repeated connect/disconnect cycles must not accumulate subscribers.
     for _ in range(3):
+        before = bus.subscriber_count
         other = socket.create_connection((host, port), timeout=10)
-        other.sendall(request.encode())
-        time.sleep(0.2)  # let the server accept and subscribe this connection
-        other.close()
-    try:
+        try:
+            other.sendall(request.encode())
+            _wait_until(
+                lambda count=before: bus.subscriber_count > count,
+                10,
+                "subscription to appear on reconnect",
+            )
+        finally:
+            other.close()
         _wait_until(
-            lambda: bus.subscriber_count <= baseline,
+            lambda count=before: bus.subscriber_count <= count,
             15,
-            "no subscriber accumulation across reconnects",
+            "subscriber queue to be released after reconnect",
         )
-    except AssertionError as exc:
-        raise AssertionError(f"{exc} (baseline={baseline}, now={bus.subscriber_count})") from exc
 
 
 # ------------------------------------------------------- §4.1 independence

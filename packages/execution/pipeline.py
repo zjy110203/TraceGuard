@@ -143,6 +143,7 @@ class FullChain:
         fault_events_provider=None,
         locators: LocatorRegistry | None = None,
         data_provider: Any | None = None,
+        teamflow_test_user: str = "tester",
         progress: Callable[[str, str, str], None] | None = None,
         allowed_hosts: tuple[str, ...] = ("127.0.0.1", "localhost"),
     ) -> None:
@@ -157,6 +158,7 @@ class FullChain:
         # Resolves value_ref secrets (R5-4.1). Same provider the workbench uses,
         # so a chain and a workbench run bind identical credentials.
         self.data_provider = data_provider
+        self.teamflow_test_user = teamflow_test_user
         self.progress = progress
         self.allowed_hosts = allowed_hosts
         self.diagnosis_service = DiagnosisService()
@@ -301,6 +303,7 @@ class FullChain:
             eval_token=self.eval_token,
             locators=self.locators,
             data_provider=self.data_provider,
+            session_cookie=("tf_session", self.teamflow_test_user),
         )
         try:
             if self._check_cancel(cancel_check, report, "execution"):

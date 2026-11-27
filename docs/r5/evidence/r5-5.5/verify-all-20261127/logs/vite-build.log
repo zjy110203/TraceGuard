@@ -1,0 +1,16 @@
+# npm.cmd run build
+exit=0 duration=4.2s
+
+
+> traceguard-web@0.1.0-m0 build
+> vue-tsc --noEmit && vite build
+
+vite v6.4.6 building for production...
+transforming...
+✓ 109 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.73 kB │ gzip:  0.44 kB
+dist/assets/index-D4rHno03.css   47.45 kB │ gzip:  9.28 kB
+dist/assets/index-ClUdNT0O.js   227.46 kB │ gzip: 76.15 kB
+✓ built in 1.04s

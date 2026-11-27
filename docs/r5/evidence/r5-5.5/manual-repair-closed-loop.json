@@ -1,0 +1,24 @@
+{
+  "candidate_id": "cand_7a7d999cd6",
+  "evidence_refs": [
+    "evd_d63f2786e725",
+    "evd_d4179702d7e3"
+  ],
+  "exploration_id": "exp_9afd3d5912be",
+  "failed_run_id": "run_20261127053909899769_34ef12",
+  "offline_backup_id": "bk_f19894665a714b979f2c059e3cd62ef6",
+  "proposal_id": "rp_647900ff4a67",
+  "regression_run_id": "run_20261127053958735425_c48181",
+  "restore_report": "restore-report.json",
+  "rollback_run_id": "run_20261127054002682835_959273",
+  "stages": {
+    "explorer_candidate_human_review_run": "PASS",
+    "manual_locator_review_sandbox_promotion": "PASS",
+    "persisted_lineage_evidence_and_repair_history": "PASS",
+    "real_failed_run_and_supported_diagnosis": "PASS",
+    "restart_and_regression": "PASS",
+    "rollback_restart_historical_run": "PASS"
+  },
+  "status": "PASS",
+  "workspace": "<isolated pytest temporary directory>"
+}

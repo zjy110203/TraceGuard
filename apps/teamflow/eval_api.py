@@ -9,8 +9,10 @@ makes Ground Truth isolation structural rather than a convention.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Generator
 from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from sqlalchemy import select
@@ -21,8 +23,22 @@ from packages.core.errors import DomainError
 
 from . import faults, service
 from .eval_models import EventLog, GroundTruth, Scenario
+from .models import Project
 
 router = APIRouter(prefix="/__eval__", tags=["eval-control"])
+
+_RUN_ID = re.compile(r"[A-Za-z0-9_-]{1,100}\Z")
+_SEED_KEY = re.compile(r"[A-Za-z0-9_-]{1,64}\Z")
+
+
+def _run_marker(run_id: str) -> str:
+    if not _RUN_ID.fullmatch(run_id):
+        raise HTTPException(status_code=422, detail="invalid run id")
+    return f"traceguard-run:{run_id}"
+
+
+def _belongs_to_run(description: str, marker: str) -> bool:
+    return description == marker or description.startswith((f"{marker}:", f"{marker};"))
 
 
 def get_settings(request: Request) -> Settings:
@@ -94,6 +110,90 @@ def clear_faults(db: Session = Depends(get_db)) -> dict[str, Any]:  # type: igno
 def reset_data(db: Session = Depends(get_db)) -> dict[str, Any]:  # type: ignore[assignment]
     settings = get_settings_from_db(db)
     return service.reset_data(db, settings.teamflow_test_user, settings.teamflow_test_password)
+
+
+@router.post("/runs/{run_id}/projects", dependencies=[Depends(require_eval_token)])
+def seed_run_project(
+    run_id: str,
+    payload: dict[str, Any],
+    db: Session = Depends(get_db),  # type: ignore[assignment]
+) -> dict[str, Any]:
+    """Create an explicitly run-owned fixture; never accepts arbitrary IDs."""
+    marker = _run_marker(run_id)
+    key = str(payload.get("key") or "")
+    name = str(payload.get("name") or "").strip()
+    description = str(payload.get("description") or "")
+    if not _SEED_KEY.fullmatch(key):
+        raise HTTPException(status_code=422, detail="invalid seed key")
+    if not name or len(name) > 200 or not name.startswith(f"TG_RUN_{run_id}_"):
+        raise HTTPException(status_code=422, detail="invalid run-owned project name")
+    if len(description) > 4000:
+        raise HTTPException(status_code=422, detail="project description is too long")
+    owner = f"{marker}:{key}"
+    existing = next(
+        (
+            row
+            for row in db.execute(
+                select(Project).where(Project.workspace_id == service.WS_ID)
+            ).scalars()
+            if (row.description or "").startswith(f"{owner};")
+        ),
+        None,
+    )
+    if existing is not None:
+        if existing.name != name:
+            raise HTTPException(status_code=409, detail="run seed identity conflict")
+        return {"id": existing.id, "name": existing.name, "owner_marker": owner}
+    project = Project(
+        id=uuid4().hex,
+        workspace_id=service.WS_ID,
+        name=name,
+        description=f"{owner}; {description}" if description else owner,
+        status="ACTIVE",
+    )
+    db.add(project)
+    db.commit()
+    return {"id": project.id, "name": project.name, "owner_marker": owner}
+
+
+@router.post("/runs/{run_id}/cleanup", dependencies=[Depends(require_eval_token)])
+def cleanup_run_projects(
+    run_id: str,
+    payload: dict[str, Any],
+    db: Session = Depends(get_db),  # type: ignore[assignment]
+) -> dict[str, Any]:
+    """Idempotently remove only rows carrying this run's name and owner marker."""
+    marker = _run_marker(run_id)
+    resource_ids = payload.get("resource_ids", [])
+    if not isinstance(resource_ids, list) or len(resource_ids) > 500:
+        raise HTTPException(status_code=422, detail="invalid resource id list")
+    prefix = f"TG_RUN_{run_id}_"
+    rows: dict[str, Project] = {}
+    for raw_id in resource_ids:
+        project_id = str(raw_id)
+        project = db.get(Project, project_id)
+        if project is None:
+            continue
+        description = project.description or ""
+        if (
+            project.workspace_id != service.WS_ID
+            or not project.name.startswith(prefix)
+            or not _belongs_to_run(description, marker)
+        ):
+            raise HTTPException(status_code=409, detail="run-owned project identity changed")
+        rows[project.id] = project
+    # Browser-created rows have no platform lease resource ID. They are still
+    # eligible only when both independent ownership fields match this run.
+    for project in db.execute(
+        select(Project).where(Project.workspace_id == service.WS_ID)
+    ).scalars():
+        if project.name.startswith(prefix) and _belongs_to_run(project.description or "", marker):
+            rows[project.id] = project
+    removed = sorted(rows)
+    for project in rows.values():
+        db.delete(project)
+    db.commit()
+    return {"run_id": run_id, "deleted_ids": removed, "deleted_count": len(removed)}
 
 
 def get_settings_from_db(_db: Session) -> Settings:

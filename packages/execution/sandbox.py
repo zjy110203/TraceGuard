@@ -128,6 +128,7 @@ class RepairSandbox:
         ui_revision: str = "v1",
         source_base_url: str = "",
         data_provider: TestDataProvider | None = None,
+        session_user: str = "tester",
     ) -> None:
         self.sandbox_id = f"sb_{uuid.uuid4().hex[:12]}"
         self.proposal_id = proposal_id
@@ -137,6 +138,7 @@ class RepairSandbox:
         self.ui_revision = ui_revision
         self.source_base_url = source_base_url
         self.data_provider = data_provider
+        self.session_user = session_user
         self.on_evidence = on_evidence
         # The root is injectable so tests can isolate each sandbox under their
         # own tmp_path. The previous fixed root accumulated one directory per
@@ -185,6 +187,12 @@ class RepairSandbox:
         env = _child_env(
             {
                 "PYTHONPATH": str(ROOT),
+                # A restore or production deployment may explicitly separate
+                # the SUT database from the Platform database. Sandbox replays
+                # must override both settings so they always use this throwaway
+                # database instead of mutating either live database.
+                "DATABASE_URL": f"sqlite:///{db_path.as_posix()}",
+                "TEAMFLOW_DATABASE_URL": f"sqlite:///{db_path.as_posix()}",
                 "TRACEGUARD_DATABASE_URL": f"sqlite:///{db_path.as_posix()}",
                 "TEAMFLOW_DISABLE_SEED": "1",
             }
@@ -317,6 +325,7 @@ class RepairSandbox:
             self._target_url,
             report_dir=self._dir / "reports" / label,
             eval_token=EVAL_TOKEN,
+            session_cookie=("tf_session", self.session_user),
             data_provider=self.data_provider,
         )
         # Bind the source deployment's exact origin to our isolated deployment.

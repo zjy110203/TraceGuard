@@ -599,6 +599,7 @@ def sandbox_repair(proposal_id: str, request: Request) -> dict[str, Any]:
         ui_revision=revision.json()["revision"],
         source_base_url=request.app.state.teamflow_base_url,
         data_provider=request.app.state.orchestrator.data_provider,
+        session_user=request.app.state.settings.teamflow_test_user,
     ).run()
     replay = {
         "replay_id": f"replay_{uuid.uuid4().hex}",

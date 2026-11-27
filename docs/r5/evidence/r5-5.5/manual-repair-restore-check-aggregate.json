@@ -1,0 +1,102 @@
+{
+  "result": "PASS",
+  "topology": "separate",
+  "backup": {
+    "payload_files": 22,
+    "sqlite_integrity_roles": [
+      "platform_database",
+      "teamflow_database"
+    ]
+  },
+  "restore_copy_activated": false,
+  "platform_schema_tables": 12,
+  "teamflow_schema_tables": 7,
+  "restored_historical_assets": {
+    "explorations": 1,
+    "candidates": 1,
+    "candidate_transactions": 1,
+    "chains": 4,
+    "run_ids": [
+      "run_20261127071136977827_2d9b88",
+      "run_20261127071140141933_aaa01e",
+      "run_20261127071229198451_88bc59",
+      "run_20261127071233258844_746142"
+    ],
+    "repair_ids": [
+      "rp_3aa70585dd6f"
+    ],
+    "repair_snapshots": 11,
+    "formal_case_versions": 5,
+    "verified_blobs": 4
+  },
+  "history_api": {
+    "chains": 4,
+    "candidates": 1,
+    "repairs": 1,
+    "run_ids": 4
+  },
+  "product_endpoints": "PASS",
+  "browser_business_run": {
+    "http_status": 201,
+    "goal_status": "VERIFIED",
+    "test_case_verdict": "PASSED",
+    "business_state_verdict": "PASS",
+    "cleanup_verdict": "PASS",
+    "eval_token_leaked": false
+  },
+  "teamflow_login_and_state": "PASS",
+  "steps": [
+    {
+      "step": "backup-verified",
+      "ok": true
+    },
+    {
+      "step": "restore-copy",
+      "ok": true
+    },
+    {
+      "step": "database-topology",
+      "ok": true
+    },
+    {
+      "step": "alembic-upgrade-head",
+      "ok": true
+    },
+    {
+      "step": "teamflow-started",
+      "ok": true
+    },
+    {
+      "step": "platform-started",
+      "ok": true
+    },
+    {
+      "step": "platform-schema",
+      "ok": true
+    },
+    {
+      "step": "teamflow-schema",
+      "ok": true
+    },
+    {
+      "step": "restored-historical-assets",
+      "ok": true
+    },
+    {
+      "step": "restored-history-api",
+      "ok": true
+    },
+    {
+      "step": "restored-product-endpoints",
+      "ok": true
+    },
+    {
+      "step": "restored-browser-business-run",
+      "ok": true
+    },
+    {
+      "step": "restored-teamflow-state-clean",
+      "ok": true
+    }
+  ]
+}

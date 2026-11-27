@@ -125,6 +125,7 @@ def build_app(settings: Settings | None = None) -> FastAPI:
             case_dir=Path(settings.case_dir),
             teamflow_base_url=settings.teamflow_base_url,
             eval_token=settings.eval_control_token,
+            teamflow_test_user=settings.teamflow_test_user,
             max_workers=settings.workbench_workers,
             data_provider=app.state.test_data_provider,
             # The chain writes graph nodes through the orchestrator; without the

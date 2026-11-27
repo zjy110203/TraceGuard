@@ -5,7 +5,8 @@ Event/Evidence 证据链 + 多假设诊断 + 证据图 + Oracle 保护的自愈�
 UI-FaultBench 评测 + 产品级 Vue3 工作台。
 
 > 设计依据：`docs/design/`（11 篇规格）+ `docs/roadmap/`（十四阶段实施路线）。
-> 当前状态（2026-11-26）：R5-5.3 产品级集成闭环在 Windows 本机冻结范围完成。F6 并发 CAS、中断恢复、正式不可变 Rollback 和同源 Chromium F7 E2E PASS；最终完整 aggregate PASS（Python 852 passed / 1 skipped、Security 101、Product 24、Browser 150），验收代码 `ef49bc7` CI 5/5 success。单进程/单 Worker；D8 BLOCKED、M4 NOT_RUN。见 [最终验收记录](docs/r5/R5-5.3-F6-F7-最终攻坚验收记录.md)。
+> 当前交付（2026-11-27）：R5-5.5 实施了独立业务状态证据、TeamFlow/Sandbox 数据库隔离、shared/separate 离线备份及恢复语义检查，并完成真实浏览器手工 Repair、Promotion、Rollback 与恢复闭环。`verify_all.py --mode all --build-web` 在干净 R5-only worktree 全部通过：Python 973 passed / 4 skipped、Security 216、Product 24、Browser 150，Ruff / format / MyPy / Vue typecheck / Vite build 通过。Repair Generator（C）和 Benchmark GT 激活治理（D）本轮仅交付决策包；GT 准确率仍 `null / BLOCKED`，D8 真实 LLM 仍 `BLOCKED`。完整结果见 [R5-5.5 实施与验收总报告](docs/r5/R5-5.5-实施与验收总报告.md)；新提交 CI 状态将在推送后另行核实。
+> 最近一次已完成的历史基线：R5-5.3 F6 并发 CAS、中断恢复、正式不可变 Rollback 和同源 Chromium E2E PASS；其完整 aggregate 为 Python 852 passed / 1 skipped、Security 101、Product 24、Browser 150，代码 `ef49bc7` CI 5/5。见 [R5-5.3 最终验收记录](docs/r5/R5-5.3-F6-F7-最终攻坚验收记录.md)。
 > 历史门禁快照：此前 802 passed / 1 skipped、Security 100、Product 24、Browser 142 / 2 个条件 SKIP 的记录保留在 [F1–F7 历史报告](docs/r5/R5-5.3-F1-F7-实施补充与验收状态.md)，不当作当前完整 aggregate 结果。
 > 以下 Git 起点及历史 CI 为历史快照；当前工作分支为 `r5-5-product-integration-closure`。
 > **Git 状态（三基线分列，不得混用）**：

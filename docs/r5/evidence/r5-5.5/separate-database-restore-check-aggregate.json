@@ -1,0 +1,95 @@
+{
+  "result": "PASS",
+  "topology": "separate",
+  "backup": {
+    "payload_files": 2,
+    "sqlite_integrity_roles": [
+      "platform_database",
+      "teamflow_database"
+    ]
+  },
+  "restore_copy_activated": false,
+  "platform_schema_tables": 12,
+  "teamflow_schema_tables": 7,
+  "restored_historical_assets": {
+    "explorations": 0,
+    "candidates": 0,
+    "candidate_transactions": 0,
+    "chains": 0,
+    "run_ids": [],
+    "repair_ids": [],
+    "repair_snapshots": 0,
+    "formal_case_versions": 0,
+    "verified_blobs": 0
+  },
+  "history_api": {
+    "chains": 0,
+    "candidates": 0,
+    "repairs": 0,
+    "run_ids": 0
+  },
+  "product_endpoints": "PASS",
+  "browser_business_run": {
+    "http_status": 201,
+    "goal_status": "VERIFIED",
+    "test_case_verdict": "PASSED",
+    "business_state_verdict": "PASS",
+    "cleanup_verdict": "PASS",
+    "eval_token_leaked": false
+  },
+  "teamflow_login_and_state": "PASS",
+  "steps": [
+    {
+      "step": "backup-verified",
+      "ok": true
+    },
+    {
+      "step": "restore-copy",
+      "ok": true
+    },
+    {
+      "step": "database-topology",
+      "ok": true
+    },
+    {
+      "step": "alembic-upgrade-head",
+      "ok": true
+    },
+    {
+      "step": "teamflow-started",
+      "ok": true
+    },
+    {
+      "step": "platform-started",
+      "ok": true
+    },
+    {
+      "step": "platform-schema",
+      "ok": true
+    },
+    {
+      "step": "teamflow-schema",
+      "ok": true
+    },
+    {
+      "step": "restored-historical-assets",
+      "ok": true
+    },
+    {
+      "step": "restored-history-api",
+      "ok": true
+    },
+    {
+      "step": "restored-product-endpoints",
+      "ok": true
+    },
+    {
+      "step": "restored-browser-business-run",
+      "ok": true
+    },
+    {
+      "step": "restored-teamflow-state-clean",
+      "ok": true
+    }
+  ]
+}

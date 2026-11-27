@@ -88,6 +88,7 @@ def test_direct_uvicorn_non_loopback_startup_is_rejected(app_path: str) -> None:
 def test_serve_refuses_non_loopback_before_binding(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    monkeypatch.delenv("TEAMFLOW_DATABASE_URL", raising=False)
     settings = Settings()
     monkeypatch.setattr("packages.core.config.get_settings", lambda: settings)
     monkeypatch.setattr(sys, "argv", ["serve", "--host", "0.0.0.0", "--no-teamflow"])
@@ -99,6 +100,7 @@ def test_serve_refuses_non_loopback_before_binding(
 def test_serve_starts_on_localhost_with_aligned_app_settings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delenv("TEAMFLOW_DATABASE_URL", raising=False)
     settings = Settings()
     starts: list[tuple[str, str, int, str]] = []
     fake_server = SimpleNamespace(should_exit=False)
@@ -126,3 +128,4 @@ def test_serve_starts_on_localhost_with_aligned_app_settings(
     assert os.environ["TEAMFLOW_HOST"] == "localhost"
     assert os.environ["API_PORT"] == "8000"
     assert os.environ["TEAMFLOW_PORT"] == "8001"
+    assert "TEAMFLOW_DATABASE_URL" not in os.environ

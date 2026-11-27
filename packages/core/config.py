@@ -96,6 +96,9 @@ class Settings(BaseSettings):
     # Database: SQLite by default so M0 runs with zero external services.
     # Switch to PostgreSQL via DATABASE_URL (see .env.example).
     database_url: str = "sqlite:///./data/traceguard.db"
+    # TeamFlow shares DATABASE_URL by default. Set this explicitly only when
+    # Platform and the system under test are stored in separate databases.
+    teamflow_database_url: str | None = None
 
     # Used by scripts.serve; kept configurable only within the loopback boundary.
     api_host: str = "127.0.0.1"

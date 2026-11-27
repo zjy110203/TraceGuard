@@ -1,0 +1,55 @@
+# npm.cmd ls --depth=0
+exit=0 duration=2.9s
+
+traceguard-web@0.1.0-m0 <clean-r5-worktree>\apps\web
+├── @babel/helper-string-parser@7.29.14 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\@babel\helper-string-parser
+├── @babel/helper-validator-identifier@7.29.7 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\@babel\helper-validator-identifier
+├── @babel/parser@7.29.14 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\@babel\parser
+├── @babel/types@7.29.14 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\@babel\types
+├── @esbuild/win32-x64@0.25.12 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\@esbuild\win32-x64
+├── @jridgewell/sourcemap-codec@1.6.0 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\@jridgewell\sourcemap-codec
+├── @rollup/rollup-win32-x64-gnu@4.68.7 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\@rollup\rollup-win32-x64-gnu
+├── @rollup/rollup-win32-x64-msvc@4.68.7 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\@rollup\rollup-win32-x64-msvc
+├── @types/estree@1.0.10 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\@types\estree
+├── @vitejs/plugin-vue@5.2.4 -> .\..\..\..\traceguard\apps\web\node_modules\@vitejs\plugin-vue
+├── @volar/language-core@2.4.15 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\@volar\language-core
+├── @volar/source-map@2.4.15 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\@volar\source-map
+├── @volar/typescript@2.4.15 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\@volar\typescript
+├── @vue/compiler-core@3.5.45 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\@vue\compiler-core
+├── @vue/compiler-dom@3.5.45 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\@vue\compiler-dom
+├── @vue/compiler-sfc@3.5.45 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\@vue\compiler-sfc
+├── @vue/compiler-ssr@3.5.45 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\@vue\compiler-ssr
+├── @vue/compiler-vue2@2.7.16 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\@vue\compiler-vue2
+├── @vue/language-core@2.2.12 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\@vue\language-core
+├── @vue/reactivity@3.5.45 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\@vue\reactivity
+├── @vue/runtime-core@3.5.45 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\@vue\runtime-core
+├── @vue/runtime-dom@3.5.45 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\@vue\runtime-dom
+├── @vue/server-renderer@3.5.45 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\@vue\server-renderer
+├── @vue/shared@3.5.45 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\@vue\shared
+├── alien-signals@1.0.13 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\alien-signals
+├── balanced-match@1.0.2 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\balanced-match
+├── brace-expansion@2.1.8 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\brace-expansion
+├── csstype@3.2.4 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\csstype
+├── de-indent@1.0.2 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\de-indent
+├── entities@7.0.1 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\entities
+├── esbuild@0.25.12 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\esbuild
+├── estree-walker@2.0.2 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\estree-walker
+├── fdir@6.5.0 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\fdir
+├── he@1.2.0 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\he
+├── magic-string@0.30.21 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\magic-string
+├── minimatch@9.0.9 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\minimatch
+├── muggle-string@0.4.1 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\muggle-string
+├── nanoid@3.3.20 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\nanoid
+├── path-browserify@1.0.1 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\path-browserify
+├── picocolors@1.1.1 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\picocolors
+├── picomatch@4.0.7 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\picomatch
+├── postcss@8.5.33 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\postcss
+├── rollup@4.68.7 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\rollup
+├── source-map-js@1.2.3 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\source-map-js
+├── tinyglobby@0.2.17 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\tinyglobby
+├── typescript@5.9.3 -> .\..\..\..\traceguard\apps\web\node_modules\typescript
+├── vite@6.4.6 -> .\..\..\..\traceguard\apps\web\node_modules\vite
+├── vscode-uri@3.2.0 extraneous -> .\..\..\..\traceguard\apps\web\node_modules\vscode-uri
+├── vue-tsc@2.2.12 -> .\..\..\..\traceguard\apps\web\node_modules\vue-tsc
+└── vue@3.5.45 -> .\..\..\..\traceguard\apps\web\node_modules\vue
+

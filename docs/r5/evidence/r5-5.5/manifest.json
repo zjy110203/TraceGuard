@@ -1,0 +1,95 @@
+{
+  "source": "R5-5.5 acceptance evidence; sanitized, generated reports and gate logs",
+  "files": [
+    {
+      "file": ".gitattributes",
+      "sha256": "44de1c400fbf981689257d46e4ff3fe6a7796292dd5551642680fb7822f2dd97",
+      "bytes": 21
+    },
+    {
+      "file": "manual-repair-closed-loop.json",
+      "sha256": "70d4fdc98bbc1d10c21b6b81d8751561a119e19fb80a52751c9f114d2fbf8a81",
+      "bytes": 863
+    },
+    {
+      "file": "manual-repair-restore-check-aggregate.json",
+      "sha256": "64d25788507cbfd884b92038bc57447fdb87d771e51880a963da2ecdbd71cdcc",
+      "bytes": 2022
+    },
+    {
+      "file": "separate-database-restore-check-aggregate.json",
+      "sha256": "3111a8a82aaaa1abe8759770f55de29d982c02fbf8bea375ba973285610f326e",
+      "bytes": 1823
+    },
+    {
+      "file": "separate-database-restore-check.json",
+      "sha256": "edb413e1e6c960f23a63c7697f45eca4a7108747f127f3b4c613402c4333ab8a",
+      "bytes": 7326
+    },
+    {
+      "file": "shared-database-restore-check-aggregate.json",
+      "sha256": "1be223a102e08916614d339a9cc3ed4137fed51791d9b7f1e8ceaaa7a79b2088",
+      "bytes": 1785
+    },
+    {
+      "file": "verify-all-20261127/logs/browser.log",
+      "sha256": "74275a32739cc66841c5d3de943ddefa8129d86daf0bbe39d36ee747800ccb45",
+      "bytes": 10173
+    },
+    {
+      "file": "verify-all-20261127/logs/mypy.log",
+      "sha256": "341e2352dc8c5b65f5b7fd002f3a5551e3bfeb9cebb5dd0610c919f8521c386d",
+      "bytes": 136
+    },
+    {
+      "file": "verify-all-20261127/logs/npm-ls.log",
+      "sha256": "b4da75123aecb95b8645c370f100a9a44774681db3329f20517488f1358734d2",
+      "bytes": 5267
+    },
+    {
+      "file": "verify-all-20261127/logs/product-e2e.log",
+      "sha256": "2c3c49d7ce88a9097b6b71f94c9ef3ebeabb58e17f30193a6401332a6eb47527",
+      "bytes": 6484
+    },
+    {
+      "file": "verify-all-20261127/logs/pytest-security.log",
+      "sha256": "1bf8a33fb6e981ea9e5b02b1244afd701f603f4ffa165b5ca9f28b6034a3d054",
+      "bytes": 1747
+    },
+    {
+      "file": "verify-all-20261127/logs/pytest.log",
+      "sha256": "5af3e7881554c341fe15e9e6d6a6f7542836ce78c28e82af88276e69bf625e3c",
+      "bytes": 2409
+    },
+    {
+      "file": "verify-all-20261127/logs/ruff-check.log",
+      "sha256": "3d41e4d6e81c376e56129e02eb60fb8067c03128dfa5130c73aa2f944c52f1aa",
+      "bytes": 70
+    },
+    {
+      "file": "verify-all-20261127/logs/ruff-format-check.log",
+      "sha256": "1a9efca41fbb26878c1eb33eb9cb41d1a89e711a4bfc7d934baf2332df0578c8",
+      "bytes": 88
+    },
+    {
+      "file": "verify-all-20261127/logs/vite-build.log",
+      "sha256": "0d602fc133b53df6b046e697eafe2f00b1dcd51e2ef0227a4f4f4649146a23eb",
+      "bytes": 438
+    },
+    {
+      "file": "verify-all-20261127/logs/vue-tsc.log",
+      "sha256": "0abaa6903137b2f6b72986dd33a15c7aff5b058b04d1dc5e8f7f4dfd4db347d4",
+      "bytes": 45
+    },
+    {
+      "file": "verify-all-20261127.json",
+      "sha256": "45b753e8f2c4725cca89e13583556dc91e19e22d9a7710ccecf687c374020fdc",
+      "bytes": 2124
+    },
+    {
+      "file": "verify-all-20261127.md",
+      "sha256": "f6d27e0e0c468f4fe5562531975bb0ed0fd30a7889fbd13421026b106cd98ce9",
+      "bytes": 1186
+    }
+  ]
+}

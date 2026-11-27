@@ -1,0 +1,181 @@
+{
+  "backup": "<isolated-temp>\\r55-offline-backup",
+  "browser_run": {
+    "business_state_verdict": "PASS",
+    "cleanup_verdict": "PASS",
+    "eval_token_leaked": false,
+    "exploration_id": "exp_a45a43519742",
+    "goal_status": "VERIFIED",
+    "http_status": 201,
+    "test_case_verdict": "PASSED"
+  },
+  "finished_at": "2026-11-27T05:40:32.395887+00:00",
+  "historical_assets": {
+    "candidate_ids": [
+      "cand_7a7d999cd6"
+    ],
+    "candidate_transactions": 1,
+    "candidates": 1,
+    "chain_ids": [
+      "chain_20261127053906797206_TC-CAND-B735C4CF73",
+      "chain_20261127053909944524_TC-CAND-B735C4CF73",
+      "chain_20261127053958757778_TC-CAND-B735C4CF73",
+      "chain_20261127054002706340_TC-CAND-B735C4CF73"
+    ],
+    "chains": 4,
+    "evidence_by_run": {
+      "run_20261127053906760054_339598": [
+        "evd_0e544c5b736d",
+        "evd_21e00c5cf766",
+        "evd_26edf17ae520",
+        "evd_2ec0c83d098a",
+        "evd_438d691aee17",
+        "evd_494972ed19c5",
+        "evd_566d039855bc",
+        "evd_6d3f7df91e09",
+        "evd_839a5797d9ab",
+        "evd_a1960c2c77b6",
+        "evd_af848832f413",
+        "evd_afb108a18d52",
+        "evd_b6b320656f7d",
+        "evd_d03e04474d6f",
+        "evd_fe7ac88956e5"
+      ],
+      "run_20261127053909899769_34ef12": [
+        "evd_00c7047caaaa",
+        "evd_359d90e55f92",
+        "evd_35b0cbec95ef",
+        "evd_621097bcab30",
+        "evd_7b0df0875fd0",
+        "evd_808561edb26d",
+        "evd_909c5e4e589d",
+        "evd_a21f3e444b53",
+        "evd_ac60e075fafc",
+        "evd_b64df6f3e8b0",
+        "evd_cf0a7df02bc4",
+        "evd_d4179702d7e3",
+        "evd_d63f2786e725",
+        "evd_ed267e455bf9",
+        "evd_fbb5d2fd3dfd"
+      ],
+      "run_20261127053958735425_c48181": [
+        "evd_0cbb76a2f928",
+        "evd_1bf76c2e07ab",
+        "evd_253ffa116d16",
+        "evd_4a074de91323",
+        "evd_4ac1f29249b2",
+        "evd_8b2429127c23",
+        "evd_90c9ed9a0ab2",
+        "evd_a5ef49e2d3b7",
+        "evd_a70faed0d044",
+        "evd_ab7969b4eb91",
+        "evd_b3f9f669b0ca",
+        "evd_d0e119a7cbd9",
+        "evd_e6e8e52647b1",
+        "evd_eab9ddc8596b",
+        "evd_f62d5b1d0b4b"
+      ],
+      "run_20261127054002682835_959273": [
+        "evd_2ba0678a7bd1",
+        "evd_2def27293a3f",
+        "evd_3ebbbde90f7f",
+        "evd_49fe0948e7a6",
+        "evd_4d949c7db5cd",
+        "evd_4ef4a1ad25a3",
+        "evd_6aff92a12742",
+        "evd_966be5131939",
+        "evd_a5a4afc39510",
+        "evd_b0643d2180a9",
+        "evd_bc03bd0d2555",
+        "evd_c25d0dc25d82",
+        "evd_db104aabe782",
+        "evd_dea648c7109c",
+        "evd_eb76d66c24fb"
+      ]
+    },
+    "explorations": 1,
+    "formal_case_versions": 5,
+    "repair_ids": [
+      "rp_647900ff4a67"
+    ],
+    "repair_snapshots": 11,
+    "run_ids": [
+      "run_20261127053906760054_339598",
+      "run_20261127053909899769_34ef12",
+      "run_20261127053958735425_c48181",
+      "run_20261127054002682835_959273"
+    ],
+    "verified_blobs": 4
+  },
+  "ok": true,
+  "restored_root": "<isolated-temp>\\r55-restore-check\\restored-20261127054026-e6279d",
+  "started_at": "2026-11-27T05:40:26.276354+00:00",
+  "steps": [
+    {
+      "detail": "payload_files=22 sqlite={'platform_database': 'ok', 'teamflow_database': 'ok'}",
+      "ok": true,
+      "step": "backup-verified"
+    },
+    {
+      "detail": "activated=False root=<isolated-temp>\\r55-restore-check\\restored-20261127054026-e6279d",
+      "ok": true,
+      "step": "restore-copy"
+    },
+    {
+      "detail": "topology=separate platform=platform.db teamflow=teamflow.db",
+      "ok": true,
+      "step": "database-topology"
+    },
+    {
+      "detail": "stamped_base=True detail=INFO  [alembic.runtime.migration] Will assume non-transactional DDL. INFO  [alembic.runtime.migration] Running stamp_revision  -> 7c1a4e2b9f31",
+      "ok": true,
+      "step": "alembic-upgrade-head"
+    },
+    {
+      "detail": "http://127.0.0.1:59145",
+      "ok": true,
+      "step": "teamflow-started"
+    },
+    {
+      "detail": "http://127.0.0.1:59146",
+      "ok": true,
+      "step": "platform-started"
+    },
+    {
+      "detail": "required=12 topology=separate",
+      "ok": true,
+      "step": "platform-schema"
+    },
+    {
+      "detail": "required=7 topology=separate",
+      "ok": true,
+      "step": "teamflow-schema"
+    },
+    {
+      "detail": "{\"candidate_ids\": [\"cand_7a7d999cd6\"], \"candidate_transactions\": 1, \"candidates\": 1, \"chain_ids\": [\"chain_20261127053906797206_TC-CAND-B735C4CF73\", \"chain_20261127053909944524_TC-CAND-B735C4CF73\", \"chain_20261127053958757778_TC-CAND-B735C4CF73\", \"chain_20261127054002706340_TC-CAND-B735C4CF73\"], \"chains\": 4, \"evidence_by_run\": {\"run_20261127053906760054_339598\": [\"evd_0e544c5b736d\", \"evd_21e00c5cf766\", \"evd_26edf17ae520\", \"evd_2ec0c83d098a\", \"evd_438d691aee17\", \"evd_494972ed19c5\", \"evd_566d039855bc\", \"evd_6d3f7df91e09\", \"evd_839a5797d9ab\", \"evd_a1960c2c77b6\", \"evd_af848832f413\", \"evd_afb108a18d52\", \"evd_b6b320656f7d\", \"evd_d03e04474d6f\", \"evd_fe7ac88956e5\"], \"run_20261127053909899769_34ef12\": [\"evd_00c7047caaaa\", \"evd_359d90e55f92\", \"evd_35b0cbec95ef\", \"evd_621097bcab30\", \"evd_7b0df0875fd0\", \"evd_808561edb26d\", \"evd_909c5e4e589d\", \"evd_a21f3e444b53\", \"evd_ac60e075fafc\", \"evd_b64df6f3e8b0\", \"evd_cf0a7df02bc4\", \"evd_d4179702d7e3\", \"evd_d63f2786e725\", \"evd_ed267e455bf9\", \"evd_fbb5d2fd3dfd\"], \"run_20261127053958735425_c48181\": [\"evd_0cbb76a2f928\", \"evd_1bf76c2e07ab\", \"evd_253ffa116d16\", \"evd_4a074de91323\", \"evd_4ac1f29249b2\", \"evd_8b2429127c23\", \"evd_90c9ed9a0ab2\", \"evd_a5ef49e2d3b7\", \"evd_a70faed0d044\", \"evd_ab7969b4eb91\", \"evd_b3f9f669b0ca\", \"evd_d0e119a7cbd9\", \"evd_e6e8e52647b1\", \"evd_eab9ddc8596b\", \"evd_f62d5b1d0b4b\"], \"run_20261127054002682835_959273\": [\"evd_2ba0678a7bd1\", \"evd_2def27293a3f\", \"evd_3ebbbde90f7f\", \"evd_49fe0948e7a6\", \"evd_4d949c7db5cd\", \"evd_4ef4a1ad25a3\", \"evd_6aff92a12742\", \"evd_966be5131939\", \"evd_a5a4afc39510\", \"evd_b0643d2180a9\", \"evd_bc03bd0d2555\", \"evd_c25d0dc25d82\", \"evd_db104aabe782\", \"evd_dea648c7109c\", \"evd_eb76d66c24fb\"]}, \"explorations\": 1, \"formal_case_versions\": 5, \"repair_ids\": [\"rp_647900ff4a67\"], \"repair_snapshots\": 11, \"run_ids\": [\"run_20261127053906760054_339598\", \"run_20261127053909899769_34ef12\", \"run_20261127053958735425_c48181\", \"run_20261127054002682835_959273\"], \"verified_blobs\": 4}",
+      "ok": true,
+      "step": "restored-historical-assets"
+    },
+    {
+      "detail": "{\"chains\": 4, \"candidates\": 1, \"repairs\": 1, \"run_ids\": 4}",
+      "ok": true,
+      "step": "restored-history-api"
+    },
+    {
+      "detail": "overview=200 cases=200 tasks=200",
+      "ok": true,
+      "step": "restored-product-endpoints"
+    },
+    {
+      "detail": "{\"http_status\": 201, \"exploration_id\": \"exp_a45a43519742\", \"goal_status\": \"VERIFIED\", \"test_case_verdict\": \"PASSED\", \"business_state_verdict\": \"PASS\", \"cleanup_verdict\": \"PASS\", \"eval_token_leaked\": false}",
+      "ok": true,
+      "step": "restored-browser-business-run"
+    },
+    {
+      "detail": "login=200 state=200",
+      "ok": true,
+      "step": "restored-teamflow-state-clean"
+    }
+  ],
+  "topology": "separate"
+}

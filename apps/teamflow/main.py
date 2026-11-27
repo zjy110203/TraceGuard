@@ -7,9 +7,11 @@ Wires: DB + seed -> business API (/api/v1) -> Web UI (/) -> eval control
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from typing import Any, cast
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from sqlalchemy import Table
 
 from packages.core import database
 from packages.core.config import Settings, get_settings, require_authorized_startup
@@ -19,7 +21,9 @@ from packages.core.logging import get_logger, setup_logging
 
 from . import api, eval_api, service, web
 from .eval_models import Base as EvalBase
+from .eval_models import EventLog, FaultConfig, GroundTruth, Scenario
 from .models import Base as BusinessBase
+from .models import Project, TestUser, Workspace
 
 logger = get_logger("tg.teamflow")
 
@@ -30,14 +34,32 @@ def build_app(settings: Settings | None = None) -> FastAPI:
     require_authorized_startup(settings)
     setup_logging(settings.log_level, settings.log_json)
 
-    engine = database.create_db_engine(settings.database_url)
+    engine = database.create_db_engine(settings.teamflow_database_url or settings.database_url)
     session_factory = database.make_session_factory(engine)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         # Create all tables (M0 skeleton; alembic migration added in task 2).
-        BusinessBase.metadata.create_all(engine)
-        EvalBase.metadata.create_all(engine)
+        # TeamFlow shares the process-wide ORM registry with Platform models.
+        # Limit table creation to SUT-owned tables so a separate SUT database
+        # cannot acquire Platform task, event, or evidence tables by accident.
+        BusinessBase.metadata.create_all(
+            engine,
+            tables=[
+                cast(Table[Any], Workspace.__table__),
+                cast(Table[Any], TestUser.__table__),
+                cast(Table[Any], Project.__table__),
+            ],
+        )
+        EvalBase.metadata.create_all(
+            engine,
+            tables=[
+                cast(Table[Any], FaultConfig.__table__),
+                cast(Table[Any], Scenario.__table__),
+                cast(Table[Any], GroundTruth.__table__),
+                cast(Table[Any], EventLog.__table__),
+            ],
+        )
         with session_factory() as session:
             service.seed_default(
                 session, settings.teamflow_test_user, settings.teamflow_test_password

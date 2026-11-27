@@ -1,0 +1,95 @@
+{
+  "source": "scripts/verify_all.py --mode all --build-web",
+  "date": "2026-11-27",
+  "mode": "all",
+  "result": "PASS",
+  "platform": "Windows",
+  "checkout": "isolated clean R5-only worktree; pre-existing R6 worktree changes excluded",
+  "gates": [
+    {
+      "name": "ruff-check",
+      "status": "PASS",
+      "exit_code": 0,
+      "duration_s": 1.8,
+      "passed": null,
+      "skipped": 0
+    },
+    {
+      "name": "ruff-format-check",
+      "status": "PASS",
+      "exit_code": 0,
+      "duration_s": 0.1,
+      "passed": null,
+      "skipped": 0
+    },
+    {
+      "name": "mypy",
+      "status": "PASS",
+      "exit_code": 0,
+      "duration_s": 0.6,
+      "passed": null,
+      "skipped": 0
+    },
+    {
+      "name": "pytest",
+      "status": "PASS",
+      "exit_code": 0,
+      "duration_s": 1062.9,
+      "passed": 973,
+      "skipped": 4
+    },
+    {
+      "name": "npm-ls",
+      "status": "PASS",
+      "exit_code": 0,
+      "duration_s": 2.9,
+      "passed": null,
+      "skipped": 0
+    },
+    {
+      "name": "vue-tsc",
+      "status": "PASS",
+      "exit_code": 0,
+      "duration_s": 2.3,
+      "passed": null,
+      "skipped": 0
+    },
+    {
+      "name": "vite-build",
+      "status": "PASS",
+      "exit_code": 0,
+      "duration_s": 4.2,
+      "passed": null,
+      "skipped": 0
+    },
+    {
+      "name": "pytest-security",
+      "status": "PASS",
+      "exit_code": 0,
+      "duration_s": 248.8,
+      "passed": 216,
+      "skipped": 0
+    },
+    {
+      "name": "product-e2e",
+      "status": "PASS",
+      "exit_code": 0,
+      "duration_s": 13.4,
+      "passed": 24,
+      "skipped": 0
+    },
+    {
+      "name": "browser",
+      "status": "PASS",
+      "exit_code": 0,
+      "duration_s": 65.6,
+      "passed": 150,
+      "skipped": 0
+    }
+  ],
+  "notes": [
+    "Explicit short pytest basetemp/output paths avoid Windows MAX_PATH failures seen with deeply nested temp paths.",
+    "The Python gate emitted one Starlette/httpx deprecation warning.",
+    "Four tests skipped: three require the absent formal database; one requires symlink privilege unavailable in this environment."
+  ]
+}

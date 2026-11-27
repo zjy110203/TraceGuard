@@ -609,6 +609,7 @@ class Orchestrator:
         case_dir: Path,
         teamflow_base_url: str,
         eval_token: str,
+        teamflow_test_user: str = "tester",
         max_workers: int = 2,
         locators: LocatorRegistry | None = None,
         trace_dir: Path | None = None,
@@ -623,6 +624,7 @@ class Orchestrator:
         self.case_dir = case_dir
         self.base_url = teamflow_base_url
         self.eval_token = eval_token
+        self.teamflow_test_user = teamflow_test_user
         self.locators = locators
         self.trace_dir = trace_dir
         self.reset_before_run = reset_before_run
@@ -760,6 +762,7 @@ class Orchestrator:
             base_url=self.base_url,
             graph=graph,
             eval_token=self.eval_token,
+            teamflow_test_user=self.teamflow_test_user,
             locators=self.locators,
             data_provider=self.data_provider,
             progress=progress,
@@ -927,6 +930,7 @@ class Orchestrator:
                 locators=self.locators,
                 trace_dir=self.trace_dir,
                 eval_token=self.eval_token,
+                session_cookie=("tf_session", self.teamflow_test_user),
                 data_provider=self.data_provider,
             )
             report = runner.run(

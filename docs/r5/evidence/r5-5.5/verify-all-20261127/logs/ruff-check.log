@@ -1,0 +1,4 @@
+# python.exe -m ruff check .
+exit=0 duration=1.8s
+
+All checks passed!

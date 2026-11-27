@@ -402,6 +402,7 @@ class ProductFlow:
         def tf_env_for(port: int) -> dict[str, str]:
             return common | {
                 "TEAMFLOW_PORT": str(port),
+                "TEAMFLOW_DATABASE_URL": f"sqlite:///{teamflow_db.as_posix()}",
                 "DATABASE_URL": f"sqlite:///{teamflow_db.as_posix()}",
                 "TRACEGUARD_DATABASE_URL": f"sqlite:///{teamflow_db.as_posix()}",
             }
@@ -423,6 +424,7 @@ class ProductFlow:
         def api_env_for(port: int) -> dict[str, str]:
             return common | {
                 "TEAMFLOW_PORT": str(tf_port),
+                "TEAMFLOW_DATABASE_URL": f"sqlite:///{teamflow_db.as_posix()}",
                 "DATABASE_URL": f"sqlite:///{platform_db.as_posix()}",
                 "TRACEGUARD_DATABASE_URL": f"sqlite:///{platform_db.as_posix()}",
                 "CASE_DIR": str(dirs["cases"]),

@@ -24,6 +24,7 @@ from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 import pytest
@@ -547,17 +548,32 @@ def test_wrong_password_scenario_is_not_verified(teamflow_server: None) -> None:
 
 
 @contextlib.contextmanager
-def _isolated_teamflow(tmp_path: Path) -> Iterator[str]:
+def _isolated_teamflow(
+    tmp_path: Path,
+    *,
+    test_user: str = "tester",
+    test_password: str = "test-pass-123",
+) -> Iterator[str]:
     """A fresh TeamFlow on its own database (empty project list)."""
     from apps.teamflow.main import build_app as build_teamflow_app
 
     settings = Settings(
         app_env="test",
         database_url=f"sqlite:///{(tmp_path / 'teamflow.db').as_posix()}",
+        teamflow_test_user=test_user,
+        teamflow_test_password=test_password,
     )
     with serve_uvicorn(build_teamflow_app(settings)) as base:
         assert httpx.get(f"{base}/health", timeout=5, trust_env=False).status_code == 200
         yield base
+
+
+def _configured_teamflow_origin(base: str) -> dict[str, Any]:
+    parsed = urlsplit(base)
+    return {
+        "teamflow_host": parsed.hostname or "127.0.0.1",
+        "teamflow_port": parsed.port or 8001,
+    }
 
 
 def _create_project(base_url: str, name: str, description: str = "") -> str:
@@ -724,6 +740,7 @@ def test_project_edit_paths_run_through_api_and_cleanup_owned_data(tmp_path: Pat
         settings = Settings(
             app_env="test",
             database_url=f"sqlite:///{database_path}",
+            **_configured_teamflow_origin(base),
             exploration_data_dir=str(tmp_path / "explorations"),
             candidate_data_dir=str(tmp_path / "candidates"),
             case_dir=str(tmp_path / "cases"),
@@ -789,6 +806,7 @@ def test_form_validation_paths_repeat_with_run_scoped_seed_cleanup(tmp_path: Pat
         settings = Settings(
             app_env="test",
             database_url=f"sqlite:///{database_path}",
+            **_configured_teamflow_origin(base),
             exploration_data_dir=str(tmp_path / "explorations"),
             candidate_data_dir=str(tmp_path / "candidates"),
             case_dir=str(tmp_path / "cases"),
@@ -844,6 +862,7 @@ def test_four_path_matrix_for_existing_scenarios_through_real_browser_api(
         settings = Settings(
             app_env="test",
             database_url=f"sqlite:///{database_path}",
+            **_configured_teamflow_origin(base),
             exploration_data_dir=str(tmp_path / "explorations"),
             candidate_data_dir=str(tmp_path / "candidates"),
             case_dir=str(tmp_path / "cases"),
@@ -901,6 +920,7 @@ def test_api_test_case_verdict_distinguishes_expected_negative_login(
         settings = Settings(
             app_env="test",
             database_url=f"sqlite:///{(tmp_path / 'teamflow.db').as_posix()}",
+            **_configured_teamflow_origin(base),
             exploration_data_dir=str(tmp_path / "explorations"),
             candidate_data_dir=str(tmp_path / "candidates"),
             case_dir=str(tmp_path / "cases"),
@@ -983,6 +1003,7 @@ def test_mock_agent_runs_real_api_browser_authorization_and_post_action(
         settings = Settings(
             app_env="test",
             database_url=f"sqlite:///{(tmp_path / 'teamflow.db').as_posix()}",
+            **_configured_teamflow_origin(base),
             exploration_data_dir=str(tmp_path / "explorations"),
             candidate_data_dir=str(tmp_path / "candidates"),
             case_dir=str(tmp_path / "cases"),

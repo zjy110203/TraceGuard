@@ -19,14 +19,16 @@ from fastapi.testclient import TestClient
 
 from apps.api.explorer_api import (
     REDACTED,
+    _append_business_snapshot,
+    _business_state_audit,
     _cleanup_scenario_data,
     _prepare_scenario_data,
+    _read_independent_business_state,
     recover_expired_scenario_data,
     redact_actions,
 )
 from apps.api.main import build_app
-from apps.teamflow import service as teamflow_service
-from apps.teamflow.models import Base as TeamFlowBase
+from apps.teamflow.main import build_app as build_teamflow_app
 from apps.teamflow.models import Project
 from packages.agents.scenarios import default_registry
 from packages.core import database
@@ -35,15 +37,25 @@ from packages.core.config import Settings
 
 @pytest.fixture()
 def client(tmp_path: Path) -> Iterator[TestClient]:
+    sut_settings = Settings(
+        app_env="test",
+        database_url=f"sqlite:///{(tmp_path / 'teamflow.db').as_posix()}",
+        teamflow_test_user="qa_runner",
+        teamflow_test_password="test-pass-123",
+    )
     settings = Settings(
         app_env="test",
-        database_url="sqlite:///:memory:",
+        database_url=f"sqlite:///{(tmp_path / 'platform.db').as_posix()}",
+        teamflow_test_user="qa_runner",
+        teamflow_test_password="test-pass-123",
         exploration_data_dir=str(tmp_path / "explorations"),
         benchmark_data_dir=str(tmp_path / "benchmark"),
     )
-    app = build_app(settings)
-    with TestClient(app) as c:
-        yield c
+    with TestClient(build_teamflow_app(sut_settings)) as sut_client:
+        app = build_app(settings)
+        app.state.teamflow_eval_client = sut_client
+        with TestClient(app) as c:
+            yield c
 
 
 def test_policies_state_llm_is_not_available(client: TestClient) -> None:
@@ -161,10 +173,8 @@ def test_unknown_scenario_digest_algorithm_is_rejected(client: TestClient) -> No
 
 
 def test_run_data_seed_cleanup_isolated_to_own_run(client: TestClient) -> None:
-    TeamFlowBase.metadata.create_all(client.app.state.engine)
-    session_factory = database.make_session_factory(client.app.state.engine)
-    with session_factory() as session:
-        teamflow_service.seed_default(session, "tester", "test-pass-123")
+    sut_engine = client.app.state.teamflow_eval_client.app.state.engine
+    session_factory = database.make_session_factory(sut_engine)
     manager = client.app.state.data_lease_manager
     first = manager.setup("exp_run_one")
     second = manager.setup("exp_run_two")
@@ -187,10 +197,8 @@ def test_run_data_seed_cleanup_isolated_to_own_run(client: TestClient) -> None:
 
 
 def test_run_data_cleanup_refuses_modified_project_identity(client: TestClient) -> None:
-    TeamFlowBase.metadata.create_all(client.app.state.engine)
-    session_factory = database.make_session_factory(client.app.state.engine)
-    with session_factory() as session:
-        teamflow_service.seed_default(session, "tester", "test-pass-123")
+    sut_engine = client.app.state.teamflow_eval_client.app.state.engine
+    session_factory = database.make_session_factory(sut_engine)
     manager = client.app.state.data_lease_manager
     token = manager.setup("exp_identity_guard")
     request = type("RequestStub", (), {"app": client.app})()
@@ -202,7 +210,7 @@ def test_run_data_cleanup_refuses_modified_project_identity(client: TestClient) 
         project.name = "unowned-project"
         session.commit()
 
-    with pytest.raises(RuntimeError, match="refusing cleanup"):
+    with pytest.raises(RuntimeError, match="TeamFlow cleanup failed"):
         _cleanup_scenario_data(request, "exp_identity_guard", token)
     with session_factory() as session:
         assert session.get(Project, values["project_target_id"]) is not None
@@ -211,10 +219,8 @@ def test_run_data_cleanup_refuses_modified_project_identity(client: TestClient) 
 def test_startup_recovery_cleans_stale_run_data_only(client: TestClient) -> None:
     import time
 
-    TeamFlowBase.metadata.create_all(client.app.state.engine)
-    session_factory = database.make_session_factory(client.app.state.engine)
-    with session_factory() as session:
-        teamflow_service.seed_default(session, "tester", "test-pass-123")
+    sut_engine = client.app.state.teamflow_eval_client.app.state.engine
+    session_factory = database.make_session_factory(sut_engine)
     manager = client.app.state.data_lease_manager
     stale_token = manager.setup("exp_stale_owner", now=time.time() - 61)
     active_token = manager.setup("exp_active_owner")
@@ -239,10 +245,8 @@ def test_startup_recovery_retries_database_outage_without_losing_lease(
 
     from apps.api import explorer_api
 
-    TeamFlowBase.metadata.create_all(client.app.state.engine)
-    session_factory = database.make_session_factory(client.app.state.engine)
-    with session_factory() as session:
-        teamflow_service.seed_default(session, "tester", "test-pass-123")
+    sut_engine = client.app.state.teamflow_eval_client.app.state.engine
+    session_factory = database.make_session_factory(sut_engine)
     manager = client.app.state.data_lease_manager
     token = manager.setup("exp_db_retry", now=time.time() - 61)
     request = type("RequestStub", (), {"app": client.app})()
@@ -291,6 +295,47 @@ def test_setup_failure_retains_lease_when_database_cleanup_fails(
     lease = manager.lease(run_id)
     assert lease["state"] == "CLEANUP_FAILED"
     assert lease["resources"][0]["id"] == "p-1"
+
+
+def test_sut_unavailable_never_becomes_business_state_pass(client: TestClient) -> None:
+    client.app.state.teamflow_base_url = "http://127.0.0.1:1"
+    snapshots: list[dict] = []
+    for phase in ("before_setup", "after_setup", "final_before_cleanup", "after_cleanup"):
+        _append_business_snapshot(client.app, snapshots, phase)
+
+    audit = _business_state_audit(snapshots, "exp_unavailable", "CLEANUP_FAILED")
+
+    assert all(item["status"] == "UNAVAILABLE" for item in snapshots)
+    assert audit["verdict"] == "INCONCLUSIVE"
+    assert audit["required_snapshots_available"] is False
+    assert audit["cleanup"]["verdict"] == "INCONCLUSIVE"
+
+
+def test_wrong_business_state_source_is_rejected(client: TestClient, monkeypatch) -> None:
+    import httpx
+
+    class WrongSourceClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def get(self, *_args, **_kwargs):
+            return httpx.Response(
+                200,
+                json={
+                    "source": "eval_ground_truth",
+                    "workspace_id": "ws-default",
+                    "project_count": 0,
+                    "projects": [],
+                },
+                request=httpx.Request("GET", "http://teamflow/api/v1/state/independent"),
+            )
+
+    monkeypatch.setattr("apps.api.explorer_api.httpx.Client", lambda **_kwargs: WrongSourceClient())
+    with pytest.raises(RuntimeError, match="source mismatch"):
+        _read_independent_business_state(client.app)
 
 
 def test_redact_actions_masks_credentials_only() -> None:

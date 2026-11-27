@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Any
@@ -365,6 +366,7 @@ class Explorer:
         base_url: str = "http://127.0.0.1:8001",
         *,
         intent: object | None = None,
+        on_action: Callable[[int, str, str], None] | None = None,
     ) -> ExplorationTrace:
         """Run the exploration. Budget/stop reasons are real, not cosmetic.
 
@@ -529,6 +531,11 @@ class Explorer:
                         }
                     )
                     gateway.record(call)
+                    if on_action is not None:
+                        try:
+                            on_action(gateway.steps, call.tool, "ERROR")
+                        except Exception:  # noqa: BLE001 - external evidence cannot stop execution
+                            logger.exception("explorer_action_observer_failed")
                     pending_observation = adapter.observe(gateway.steps, phase="post")
                     self.trace.record_observation(pending_observation)
                     self._record_post_action(
@@ -544,6 +551,11 @@ class Explorer:
                     )
                     continue
                 gateway.record(call)
+                if on_action is not None:
+                    try:
+                        on_action(gateway.steps, call.tool, "OK")
+                    except Exception:  # noqa: BLE001 - external evidence cannot stop execution
+                        logger.exception("explorer_action_observer_failed")
                 pending_observation = adapter.observe(gateway.steps, phase="post")
                 self.trace.record_observation(pending_observation)
                 post_goal = evaluate_goal(self.trace.test_intent, self.trace.observations)
