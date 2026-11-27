@@ -1,0 +1,97 @@
+...................................................................F.... [ 92%]
+......                                                                   [100%]
+================================== FAILURES ===================================
+________ test_every_reference_reads_original_fields[spec10-expected10] ________
+
+spec = {'kind': 'element_relation', 'relation': 'row_in_table'}
+expected = [{'relation': 'row_in_table', 'testid': 'row-1'}]
+
+    @pytest.mark.parametrize(
+        "spec,expected",
+        [
+            (_URL, "/projects/42"),
+            ({"kind": "url_regex", "value": "projects"}, "/projects/42"),
+            ({"kind": "testid", "value": "project-link"}, ["project-link"]),
+            ({"kind": "element_exists", "testid": "project-link"}, "project-link"),
+            ({"kind": "element_visible", "testid": "project-link"}, True),
+            ({"kind": "element_text", "testid": "project-link", "contains": "link"}, "link"),
+            (
+                {
+                    "kind": "element_attr",
+                    "testid": "project-link",
+                    "attribute": "href",
+                    "value": "/projects/42",
+                },
+                "/projects/42",
+            ),
+            ({"kind": "form_state", "testid": "project-link", "state": "present"}, "whole"),
+            ({"kind": "form_state", "testid": "missing", "state": "absent"}, "whole"),
+            ({"kind": "page_state", "field": "text", "value": "Alpha"}, "Project Alpha saved"),
+            ({"kind": "element_relation", "relation": "row_in_table"}, OBS["dom_relations"]),
+            ({"kind": "list_item_count", "value": 3}, 3),
+            ({"kind": "table_row_count", "value": 2, "selector": 'tr.a[data-id="a.b"]'}, 2),
+            ({"kind": "dynamic_match", "pattern": "saved"}, "Project Alpha saved"),
+            (
+                {"kind": "page_transition", "to": "/projects/42"},
+                {"previous_url_path": "/projects", "url_path": "/projects/42"},
+            ),
+            ({"kind": "evidence_complete", "evidence_ref": "ev-source-1"}, "refs"),
+            ({"kind": "all_of", "assertions": [_URL]}, "whole"),
+            ({"kind": "any_of", "assertions": [_URL]}, "whole"),
+            ({"kind": "not", "assertions": [_URL]}, "whole"),
+            ({"kind": "url_and_content", "url": "/projects/42", "contains": "Alpha"}, "whole"),
+            (
+                {
+                    "kind": "multi_step_goal",
+                    "assertions": [{"match": "first_after_previous", "assertion": _URL}],
+                },
+                "sequence",
+            ),
+        ],
+    )
+    def test_every_reference_reads_original_fields(spec, expected):
+        import hashlib
+        import json
+    
+        row = {k: v for k, v in OBS.items() if k not in {"observations", "observation_ref"}}
+        row.update(
+            visible_elements=[{"testid": "project-link", "name": "link", "visible": True}],
+            attrs=[{"testid": "project-link", "href": "/projects/42"}],
+            selector_counts={'tr.a[data-id="a.b"]': 2},
+        )
+        row["observation_ref"] = (
+            "obs_"
+            + hashlib.sha256(
+                json.dumps(row, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()
+            ).hexdigest()[:24]
+        )
+>       result = evaluate_assertions([{**spec, "name": "checked"}], row, observations=[row]).results[0]
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_goal_assertions_m2.py:512: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+packages\agents\goal_assertions.py:1117: in evaluate_assertions
+    results = tuple(evaluate_assertion(spec, view) for spec in assertions)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+packages\agents\goal_assertions.py:1117: in <genexpr>
+    results = tuple(evaluate_assertion(spec, view) for spec in assertions)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+packages\agents\goal_assertions.py:531: in evaluate_assertion
+    result = _evaluate_assertion(spec, view)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+spec = {'kind': 'element_relation', 'relation': 'row_in_table', 'name': 'checked'}
+view = _ObservationView(raw={'url': 'http://localhost/projects/42', 'url_path': '/projects/42', 'title': 'Project detail', 't...: '/projects/42'}], 'selector_counts': {'tr.a[data-id="a.b"]': 2}, 'observation_ref': 'obs_e9296dcb6e92ae3b54ed94c0'}])
+
+    def _evaluate_assertion(spec: dict[str, Any], view: _ObservationView) -> AssertionResult:
+        """Evaluate one assertion. Never raises for a well-formed spec."""
+        problems = validate_assertion(spec)
+        if problems:
+>           raise AssertionDefinitionError("; ".join(problems))
+E           packages.agents.goal_assertions.AssertionDefinitionError: element_relation needs a testid
+
+packages\agents\goal_assertions.py:552: AssertionDefinitionError
+=========================== short test summary info ===========================
+FAILED tests/test_goal_assertions_m2.py::test_every_reference_reads_original_fields[spec10-expected10]
+1 failed, 77 passed in 0.20s

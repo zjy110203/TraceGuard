@@ -1,0 +1,4 @@
+# python.exe -m mypy packages apps benchmark --ignore-missing-imports
+exit=0 duration=0.4s
+
+Success: no issues found in 85 source files

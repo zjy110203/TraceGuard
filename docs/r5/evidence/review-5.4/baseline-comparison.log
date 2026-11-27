@@ -1,0 +1,249 @@
+23:11:05 INFO     [apps.api.workbench] event_persistence_enabled
+FFFFFF......FFFF....FFFFFFF                                              [100%]
+================================== FAILURES ===================================
+______________ test_runtime_and_restart_health[approved_missing] ______________
+tests\test_candidate_transactions.py:393: in test_runtime_and_restart_health
+    assert client.get("/health").json()["status"] == "degraded"
+E   AssertionError: assert 'ok' == 'degraded'
+E     
+E     - degraded
+E     + ok
+---------------------------- Captured stdout setup ----------------------------
+23:11:06 INFO     [apps.api.workbench] event_persistence_enabled
+23:11:06 INFO     [tg.api] platform_api_startup
+---------------------------- Captured stdout call -----------------------------
+23:11:06 INFO     [httpx] HTTP Request: POST http://testserver/api/v1/explorations/exp_test_1/compile "HTTP/1.1 201 Created"
+23:11:06 INFO     [httpx] HTTP Request: GET http://testserver/health "HTTP/1.1 200 OK"
+23:11:06 INFO     [httpx] HTTP Request: GET http://testserver/api/v1/candidates/cand_b0c1e319b6 "HTTP/1.1 200 OK"
+23:11:06 INFO     [httpx] HTTP Request: POST http://testserver/api/v1/candidates/cand_b0c1e319b6/approve "HTTP/1.1 200 OK"
+23:11:06 INFO     [httpx] HTTP Request: GET http://testserver/health "HTTP/1.1 200 OK"
+------------------------------ Captured log call ------------------------------
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/v1/explorations/exp_test_1/compile "HTTP/1.1 201 Created"
+INFO     httpx:_client.py:1025 HTTP Request: GET http://testserver/health "HTTP/1.1 200 OK"
+INFO     httpx:_client.py:1025 HTTP Request: GET http://testserver/api/v1/candidates/cand_b0c1e319b6 "HTTP/1.1 200 OK"
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/v1/candidates/cand_b0c1e319b6/approve "HTTP/1.1 200 OK"
+INFO     httpx:_client.py:1025 HTTP Request: GET http://testserver/health "HTTP/1.1 200 OK"
+______________ test_runtime_and_restart_health[rejected_missing] ______________
+tests\test_candidate_transactions.py:393: in test_runtime_and_restart_health
+    assert client.get("/health").json()["status"] == "degraded"
+E   AssertionError: assert 'ok' == 'degraded'
+E     
+E     - degraded
+E     + ok
+---------------------------- Captured stdout setup ----------------------------
+23:11:06 INFO     [apps.api.workbench] event_persistence_enabled
+23:11:06 INFO     [tg.api] platform_api_startup
+---------------------------- Captured stdout call -----------------------------
+23:11:06 INFO     [httpx] HTTP Request: POST http://testserver/api/v1/explorations/exp_test_1/compile "HTTP/1.1 201 Created"
+23:11:06 INFO     [httpx] HTTP Request: GET http://testserver/health "HTTP/1.1 200 OK"
+23:11:06 INFO     [httpx] HTTP Request: POST http://testserver/api/v1/candidates/cand_b0c1e319b6/reject "HTTP/1.1 200 OK"
+23:11:06 INFO     [httpx] HTTP Request: GET http://testserver/health "HTTP/1.1 200 OK"
+------------------------------ Captured log call ------------------------------
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/v1/explorations/exp_test_1/compile "HTTP/1.1 201 Created"
+INFO     httpx:_client.py:1025 HTTP Request: GET http://testserver/health "HTTP/1.1 200 OK"
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/v1/candidates/cand_b0c1e319b6/reject "HTTP/1.1 200 OK"
+INFO     httpx:_client.py:1025 HTTP Request: GET http://testserver/health "HTTP/1.1 200 OK"
+___________________ test_runtime_and_restart_health[empty] ____________________
+tests\test_candidate_transactions.py:393: in test_runtime_and_restart_health
+    assert client.get("/health").json()["status"] == "degraded"
+E   AssertionError: assert 'ok' == 'degraded'
+E     
+E     - degraded
+E     + ok
+---------------------------- Captured stdout setup ----------------------------
+23:11:06 INFO     [apps.api.workbench] event_persistence_enabled
+23:11:06 INFO     [tg.api] platform_api_startup
+---------------------------- Captured stdout call -----------------------------
+23:11:06 INFO     [httpx] HTTP Request: POST http://testserver/api/v1/explorations/exp_test_1/compile "HTTP/1.1 201 Created"
+23:11:06 INFO     [httpx] HTTP Request: GET http://testserver/health "HTTP/1.1 200 OK"
+23:11:06 INFO     [httpx] HTTP Request: GET http://testserver/api/v1/candidates/cand_b0c1e319b6 "HTTP/1.1 200 OK"
+23:11:06 INFO     [httpx] HTTP Request: POST http://testserver/api/v1/candidates/cand_b0c1e319b6/approve "HTTP/1.1 200 OK"
+23:11:06 INFO     [httpx] HTTP Request: GET http://testserver/health "HTTP/1.1 200 OK"
+------------------------------ Captured log call ------------------------------
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/v1/explorations/exp_test_1/compile "HTTP/1.1 201 Created"
+INFO     httpx:_client.py:1025 HTTP Request: GET http://testserver/health "HTTP/1.1 200 OK"
+INFO     httpx:_client.py:1025 HTTP Request: GET http://testserver/api/v1/candidates/cand_b0c1e319b6 "HTTP/1.1 200 OK"
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/v1/candidates/cand_b0c1e319b6/approve "HTTP/1.1 200 OK"
+INFO     httpx:_client.py:1025 HTTP Request: GET http://testserver/health "HTTP/1.1 200 OK"
+__________________ test_runtime_and_restart_health[bad_json] __________________
+tests\test_candidate_transactions.py:393: in test_runtime_and_restart_health
+    assert client.get("/health").json()["status"] == "degraded"
+E   AssertionError: assert 'ok' == 'degraded'
+E     
+E     - degraded
+E     + ok
+---------------------------- Captured stdout setup ----------------------------
+23:11:06 INFO     [apps.api.workbench] event_persistence_enabled
+23:11:06 INFO     [tg.api] platform_api_startup
+---------------------------- Captured stdout call -----------------------------
+23:11:06 INFO     [httpx] HTTP Request: POST http://testserver/api/v1/explorations/exp_test_1/compile "HTTP/1.1 201 Created"
+23:11:06 INFO     [httpx] HTTP Request: GET http://testserver/health "HTTP/1.1 200 OK"
+23:11:06 INFO     [httpx] HTTP Request: GET http://testserver/api/v1/candidates/cand_b0c1e319b6 "HTTP/1.1 200 OK"
+23:11:06 INFO     [httpx] HTTP Request: POST http://testserver/api/v1/candidates/cand_b0c1e319b6/approve "HTTP/1.1 200 OK"
+23:11:06 INFO     [httpx] HTTP Request: GET http://testserver/health "HTTP/1.1 200 OK"
+------------------------------ Captured log call ------------------------------
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/v1/explorations/exp_test_1/compile "HTTP/1.1 201 Created"
+INFO     httpx:_client.py:1025 HTTP Request: GET http://testserver/health "HTTP/1.1 200 OK"
+INFO     httpx:_client.py:1025 HTTP Request: GET http://testserver/api/v1/candidates/cand_b0c1e319b6 "HTTP/1.1 200 OK"
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/v1/candidates/cand_b0c1e319b6/approve "HTTP/1.1 200 OK"
+INFO     httpx:_client.py:1025 HTTP Request: GET http://testserver/health "HTTP/1.1 200 OK"
+_____________________ test_runtime_and_restart_health[id] _____________________
+tests\test_candidate_transactions.py:393: in test_runtime_and_restart_health
+    assert client.get("/health").json()["status"] == "degraded"
+E   AssertionError: assert 'ok' == 'degraded'
+E     
+E     - degraded
+E     + ok
+---------------------------- Captured stdout setup ----------------------------
+23:11:06 INFO     [apps.api.workbench] event_persistence_enabled
+23:11:06 INFO     [tg.api] platform_api_startup
+---------------------------- Captured stdout call -----------------------------
+23:11:06 INFO     [httpx] HTTP Request: POST http://testserver/api/v1/explorations/exp_test_1/compile "HTTP/1.1 201 Created"
+23:11:06 INFO     [httpx] HTTP Request: GET http://testserver/health "HTTP/1.1 200 OK"
+23:11:06 INFO     [httpx] HTTP Request: GET http://testserver/api/v1/candidates/cand_b0c1e319b6 "HTTP/1.1 200 OK"
+23:11:06 INFO     [httpx] HTTP Request: POST http://testserver/api/v1/candidates/cand_b0c1e319b6/approve "HTTP/1.1 200 OK"
+23:11:06 INFO     [httpx] HTTP Request: GET http://testserver/health "HTTP/1.1 200 OK"
+------------------------------ Captured log call ------------------------------
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/v1/explorations/exp_test_1/compile "HTTP/1.1 201 Created"
+INFO     httpx:_client.py:1025 HTTP Request: GET http://testserver/health "HTTP/1.1 200 OK"
+INFO     httpx:_client.py:1025 HTTP Request: GET http://testserver/api/v1/candidates/cand_b0c1e319b6 "HTTP/1.1 200 OK"
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/v1/candidates/cand_b0c1e319b6/approve "HTTP/1.1 200 OK"
+INFO     httpx:_client.py:1025 HTTP Request: GET http://testserver/health "HTTP/1.1 200 OK"
+___________________ test_runtime_and_restart_health[status] ___________________
+tests\test_candidate_transactions.py:393: in test_runtime_and_restart_health
+    assert client.get("/health").json()["status"] == "degraded"
+E   AssertionError: assert 'ok' == 'degraded'
+E     
+E     - degraded
+E     + ok
+---------------------------- Captured stdout setup ----------------------------
+23:11:06 INFO     [apps.api.workbench] event_persistence_enabled
+23:11:06 INFO     [tg.api] platform_api_startup
+---------------------------- Captured stdout call -----------------------------
+23:11:06 INFO     [httpx] HTTP Request: POST http://testserver/api/v1/explorations/exp_test_1/compile "HTTP/1.1 201 Created"
+23:11:06 INFO     [httpx] HTTP Request: GET http://testserver/health "HTTP/1.1 200 OK"
+23:11:06 INFO     [httpx] HTTP Request: GET http://testserver/api/v1/candidates/cand_b0c1e319b6 "HTTP/1.1 200 OK"
+23:11:06 INFO     [httpx] HTTP Request: POST http://testserver/api/v1/candidates/cand_b0c1e319b6/approve "HTTP/1.1 200 OK"
+23:11:06 INFO     [httpx] HTTP Request: GET http://testserver/health "HTTP/1.1 200 OK"
+------------------------------ Captured log call ------------------------------
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/v1/explorations/exp_test_1/compile "HTTP/1.1 201 Created"
+INFO     httpx:_client.py:1025 HTTP Request: GET http://testserver/health "HTTP/1.1 200 OK"
+INFO     httpx:_client.py:1025 HTTP Request: GET http://testserver/api/v1/candidates/cand_b0c1e319b6 "HTTP/1.1 200 OK"
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/v1/candidates/cand_b0c1e319b6/approve "HTTP/1.1 200 OK"
+INFO     httpx:_client.py:1025 HTTP Request: GET http://testserver/health "HTTP/1.1 200 OK"
+_______ test_every_reference_reads_original_fields[spec6-/projects/42] ________
+tests\test_goal_assertions_m2.py:531: in test_every_reference_reads_original_fields
+    value = read(result)
+            ^^^^^^^^^^^^
+tests\test_goal_assertions_m2.py:524: in read
+    return resolve_evidence_reference([row], **ref)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.traceguard-tmp\r5\review54-baseline\packages.agents.goal_assertions.py:310: in resolve_evidence_reference
+    raise ValueError("evidence field path no longer resolves")
+E   ValueError: evidence field path no longer resolves
+___________ test_every_reference_reads_original_fields[spec7-whole] ___________
+tests\test_goal_assertions_m2.py:531: in test_every_reference_reads_original_fields
+    value = read(result)
+            ^^^^^^^^^^^^
+tests\test_goal_assertions_m2.py:524: in read
+    return resolve_evidence_reference([row], **ref)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.traceguard-tmp\r5\review54-baseline\packages.agents.goal_assertions.py:310: in resolve_evidence_reference
+    raise ValueError("evidence field path no longer resolves")
+E   ValueError: evidence field path no longer resolves
+___________ test_every_reference_reads_original_fields[spec8-whole] ___________
+tests\test_goal_assertions_m2.py:531: in test_every_reference_reads_original_fields
+    value = read(result)
+            ^^^^^^^^^^^^
+tests\test_goal_assertions_m2.py:524: in read
+    return resolve_evidence_reference([row], **ref)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.traceguard-tmp\r5\review54-baseline\packages.agents.goal_assertions.py:310: in resolve_evidence_reference
+    raise ValueError("evidence field path no longer resolves")
+E   ValueError: evidence field path no longer resolves
+____ test_every_reference_reads_original_fields[spec9-Project Alpha saved] ____
+tests\test_goal_assertions_m2.py:531: in test_every_reference_reads_original_fields
+    value = read(result)
+            ^^^^^^^^^^^^
+tests\test_goal_assertions_m2.py:524: in read
+    return resolve_evidence_reference([row], **ref)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.traceguard-tmp\r5\review54-baseline\packages.agents.goal_assertions.py:310: in resolve_evidence_reference
+    raise ValueError("evidence field path no longer resolves")
+E   ValueError: evidence field path no longer resolves
+________ test_every_reference_reads_original_fields[spec14-expected14] ________
+tests\test_goal_assertions_m2.py:539: in test_every_reference_reads_original_fields
+    assert value == expected
+E   AssertionError: assert '/projects' == {'previous_url_path': '/projects', 'url_path': '/projects/42'}
+___________ test_every_reference_reads_original_fields[spec15-refs] ___________
+tests\test_goal_assertions_m2.py:537: in test_every_reference_reads_original_fields
+    assert value == {k: row[k] for k in ("observation_ref", "evidence_ref")}
+E   AssertionError: assert 'ev-source-1' == {'observation_ref': 'obs_e9296dcb6e92ae3b54ed94c0', 'evidence_ref': 'ev-source-1'}
+__________ test_every_reference_reads_original_fields[spec16-whole] ___________
+tests\test_goal_assertions_m2.py:531: in test_every_reference_reads_original_fields
+    value = read(result)
+            ^^^^^^^^^^^^
+tests\test_goal_assertions_m2.py:524: in read
+    return resolve_evidence_reference([row], **ref)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.traceguard-tmp\r5\review54-baseline\packages.agents.goal_assertions.py:267: in resolve_evidence_reference
+    raise ValueError("evidence reference digest mismatch")
+E   ValueError: evidence reference digest mismatch
+__________ test_every_reference_reads_original_fields[spec17-whole] ___________
+tests\test_goal_assertions_m2.py:531: in test_every_reference_reads_original_fields
+    value = read(result)
+            ^^^^^^^^^^^^
+tests\test_goal_assertions_m2.py:524: in read
+    return resolve_evidence_reference([row], **ref)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.traceguard-tmp\r5\review54-baseline\packages.agents.goal_assertions.py:267: in resolve_evidence_reference
+    raise ValueError("evidence reference digest mismatch")
+E   ValueError: evidence reference digest mismatch
+__________ test_every_reference_reads_original_fields[spec18-whole] ___________
+tests\test_goal_assertions_m2.py:533: in test_every_reference_reads_original_fields
+    assert value == row
+E   AssertionError: assert '/projects/42' == {'url': 'http://localhost/projects/42', 'url_path': '/projects/42', 'title': 'Project detail', 'text_excerpt': 'Project Alpha saved', ...}
+__________ test_every_reference_reads_original_fields[spec19-whole] ___________
+tests\test_goal_assertions_m2.py:531: in test_every_reference_reads_original_fields
+    value = read(result)
+            ^^^^^^^^^^^^
+tests\test_goal_assertions_m2.py:524: in read
+    return resolve_evidence_reference([row], **ref)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.traceguard-tmp\r5\review54-baseline\packages.agents.goal_assertions.py:267: in resolve_evidence_reference
+    raise ValueError("evidence reference digest mismatch")
+E   ValueError: evidence reference digest mismatch
+_________ test_every_reference_reads_original_fields[spec20-sequence] _________
+tests\test_goal_assertions_m2.py:527: in test_every_reference_reads_original_fields
+    (child,) = result.children
+               ^^^^^^^^^^^^^^^
+E   AttributeError: 'AssertionResult' object has no attribute 'children'
+============================== warnings summary ===============================
+.venv\Lib\site-packages\_pytest\config\__init__.py:1507
+  D:\桌面\TraceGuard\traceguard\.venv\Lib\site-packages\_pytest\config\__init__.py:1507: PytestAssertRewriteWarning: Module already imported so cannot be rewritten; anyio
+    self._mark_plugins_for_rewrite(hook, disable_autoload)
+
+.venv\Lib\site-packages\fastapi\testclient.py:1
+  D:\桌面\TraceGuard\traceguard\.venv\Lib\site-packages\fastapi\testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_candidate_transactions.py::test_runtime_and_restart_health[approved_missing]
+FAILED tests/test_candidate_transactions.py::test_runtime_and_restart_health[rejected_missing]
+FAILED tests/test_candidate_transactions.py::test_runtime_and_restart_health[empty]
+FAILED tests/test_candidate_transactions.py::test_runtime_and_restart_health[bad_json]
+FAILED tests/test_candidate_transactions.py::test_runtime_and_restart_health[id]
+FAILED tests/test_candidate_transactions.py::test_runtime_and_restart_health[status]
+FAILED tests/test_goal_assertions_m2.py::test_every_reference_reads_original_fields[spec6-/projects/42]
+FAILED tests/test_goal_assertions_m2.py::test_every_reference_reads_original_fields[spec7-whole]
+FAILED tests/test_goal_assertions_m2.py::test_every_reference_reads_original_fields[spec8-whole]
+FAILED tests/test_goal_assertions_m2.py::test_every_reference_reads_original_fields[spec9-Project Alpha saved]
+FAILED tests/test_goal_assertions_m2.py::test_every_reference_reads_original_fields[spec14-expected14]
+FAILED tests/test_goal_assertions_m2.py::test_every_reference_reads_original_fields[spec15-refs]
+FAILED tests/test_goal_assertions_m2.py::test_every_reference_reads_original_fields[spec16-whole]
+FAILED tests/test_goal_assertions_m2.py::test_every_reference_reads_original_fields[spec17-whole]
+FAILED tests/test_goal_assertions_m2.py::test_every_reference_reads_original_fields[spec18-whole]
+FAILED tests/test_goal_assertions_m2.py::test_every_reference_reads_original_fields[spec19-whole]
+FAILED tests/test_goal_assertions_m2.py::test_every_reference_reads_original_fields[spec20-sequence]
+17 failed, 10 passed, 2 warnings in 1.09s

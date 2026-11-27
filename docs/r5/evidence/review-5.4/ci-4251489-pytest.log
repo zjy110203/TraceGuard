@@ -1,0 +1,59 @@
+..F..................................................................... [  7%]
+........................................................................ [ 14%]
+........................................................................ [ 22%]
+........................................................................ [ 29%]
+........................................................................ [ 37%]
+...........................s...............ss........................... [ 44%]
+........................................................................ [ 52%]
+........................................................................ [ 59%]
+........................................................................ [ 67%]
+......................s................................................. [ 74%]
+...........................................sss.......................... [ 82%]
+........................................................................ [ 89%]
+........................................................................ [ 97%]
+.........................                                                [100%]
+=================================== FAILURES ===================================
+______________ test_negative_scenario_without_goal_cannot_compile ______________
+
+page = <Page url='http://127.0.0.1:43117/#/explorer'>
+platform = 'http://127.0.0.1:43117', teamflow = 'http://127.0.0.1:36883'
+
+    def test_negative_scenario_without_goal_cannot_compile(
+        page: Page, platform: str, teamflow: str
+    ) -> None:
+        """E2E negative: an exploration with NO declared goal cannot be compiled."""
+        _goto(page, platform, "/explorer")
+        page.fill('[data-testid="exp-intent-ref"]', "journey:no-goal")
+        page.fill('[data-testid="exp-goal"]', "")
+        page.fill('[data-testid="exp-outcomes"]', "")
+        page.fill('[data-testid="exp-target-path"]', "")
+        page.fill('[data-testid="exp-base-url"]', teamflow)
+        page.click("button:has-text('启动探索')")
+        page.wait_for_selector('[data-testid="goal-status"]:has-text("NOT_EVALUATED")', timeout=60000)
+    
+        compile_btn = page.locator('[data-testid="compile-candidate"]')
+        assert compile_btn.is_disabled()
+>       assert "未验证" in page.inner_text(".compile-bar")
+E       AssertionError: assert '未验证' in '编译为候选\n仅业务目标 VERIFIED 可编译。负向路径即使符合预期（PASSED），也不能据此生成正式业务断言。'
+E        +  where '编译为候选\n仅业务目标 VERIFIED 可编译。负向路径即使符合预期（PASSED），也不能据此生成正式业务断言。' = inner_text('.compile-bar')
+E        +    where inner_text = <Page url='http://127.0.0.1:43117/#/explorer'>.inner_text
+
+tests/e2e/test_user_journey.py:274: AssertionError
+=============================== warnings summary ===============================
+../../../../../opt/hostedtoolcache/Python/3.13.18/x64/lib/python3.13/site-packages/fastapi/testclient.py:1
+  /opt/hostedtoolcache/Python/3.13.18/x64/lib/python3.13/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_db_isolation.py:183: formal DB missing at /home/runner/work/TraceGuard/TraceGuard/data/traceguard.db
+SKIPPED [1] tests/test_db_isolation.py:430: formal DB missing at /home/runner/work/TraceGuard/TraceGuard/data/traceguard.db
+SKIPPED [1] tests/test_db_isolation.py:457: formal DB missing at /home/runner/work/TraceGuard/TraceGuard/data/traceguard.db
+SKIPPED [1] tests/test_migrations.py:179: psycopg driver not installed
+SKIPPED [1] tests/test_sandbox_paths.py:66: Windows-specific path semantics
+SKIPPED [1] tests/test_sandbox_paths.py:82: Windows junctions
+SKIPPED [1] tests/test_sandbox_paths.py:115: Windows junctions
+FAILED tests/e2e/test_user_journey.py::test_negative_scenario_without_goal_cannot_compile - AssertionError: assert '未验证' in '编译为候选\n仅业务目标 VERIFIED 可编译。负向路径即使符合预期（PASSED），也不能据此生成正式业务断言。'
+ +  where '编译为候选\n仅业务目标 VERIFIED 可编译。负向路径即使符合预期（PASSED），也不能据此生成正式业务断言。' = inner_text('.compile-bar')
+ +    where inner_text = <Page url='http://127.0.0.1:43117/#/explorer'>.inner_text
+1 failed, 953 passed, 7 skipped, 1 warning in 750.26s (0:12:30)

@@ -1,0 +1,62 @@
+# python.exe D:\桌面\TraceGuard\traceguard\scripts\e2e_product_flow.py --work-dir D:\桌面\TraceGuard\traceguard\.traceguard-tmp\r5\review54-first\product --json D:\桌面\TraceGuard\traceguard\.traceguard-tmp\r5\review54-first\product-e2e.json
+exit=0 duration=15.1s
+
+======================================================================
+ TraceGuard product E2E @ 20261126-152548
+ python=D:\桌面\TraceGuard\traceguard\.venv\Scripts\python.exe
+ work=.traceguard-tmp\r5\review54-first\product
+======================================================================
+[OK  ] isolation-layout: work=.traceguard-tmp\r5\review54-first\product cases_before=0 outside_data_dir=0 platform_db=.traceguard-tmp\r5\review54-first\product\platform.db
+[OK  ] teamflow-isolated-up: url=http://127.0.0.1:57290 db=.traceguard-tmp\r5\review54-first\product\teamflow.db exists=True 
+[OK  ] platform-up: url=http://127.0.0.1:57304 db=.traceguard-tmp\r5\review54-first\product\platform.db store_dirs=6 cases_dir=.traceguard-tmp\r5\review54-first\product\cases 
+[OK  ] frontend-built: dist/index.html exists=True bytes=711 has_app_mount=True
+[OK  ] frontend-served: GET / -> 200 bytes=727 references_assets=True
+[OK  ] workbench-ui-loads: mount_children=1 text_len=589 console_errors=[]
+[OK  ] explore-real-browser: http=201 id=exp_7f198b30db0f status=COMPLETED goal=VERIFIED stop=GOAL_VERIFIED steps=5 policy=scripted is_llm=False inference=NOT_REAL_INFERENCE
+[OK  ] trace-structured: http=200 observations=5 actions=5 hash_hex_len=64 integrity=True no_plaintext_secret=True
+[OK  ] compile-candidate: http=201 candidate=cand_2d7065e72e status=PENDING_REVIEW steps=7 assertions=5 oracle_sources=['ui.url_path', 'ui.s5.passed', 'ui.s6.passed', 'ui.s7.passed', 'state.project_count'] checklist=3
+[OK  ] no-case-before-review: cases_in_library=[] POST /chains -> 404 blocked=NOT_FOUND
+[OK  ] human-approval: http=200 status=APPROVED case_file=TC-E2E-20261126152548.json reviewer=e2e-reviewer
+[OK  ] formal-case-written: http=200 version=1 approved_by=e2e-reviewer:R5-4-5-REV-20261126152548 compiled_from=compiler:1.2.0 sources=['ui.url_path', 'ui.s5.passed', 'ui.s6.passed', 'ui.s7.passed', 'state.project_count'] independent_api_oracle=True data_refs=1 value_ref_bound=True no_plaintext=True
+[OK  ] chain-executed: http=201 chain=chain_20261126152555984119_TC-E2E-20261126152548 run=run_20261126152555939918_272f78 run_status=COMPLETED verdict=PASSED exec=COMPLETED stages=['testcase', 'cleanup_pre', 'execution', 'verdict', 'graph', 'diagnosis', 'repair', 'cleanup', 'event_persistence', 'evidence_persistence', 'event_persistence', 'evidence_persistence'] persistence=OK graph_errors=[]
+[OK  ] oracle-business-verdict: verdict=PASSED state_oracle=a5:PASSED url_oracle=PASSED evaluated=5/5 observed_path='/projects'
+[OK  ] events-persisted: http=200 rows=42 own_run=42 written=27 duplicates=0 status=OK
+[OK  ] evidence-persisted: http=200 records=15 types=['dom_snapshot', 'network_response', 'screenshot'] written=15 duplicates=0 blobs=7 status=OK
+[OK  ] blob-integrity: blobs_checked=7 full_sha256=True problems=[]
+[OK  ] graph-query: nodes=10 subgraph_nodes=9 subgraph_edges=8 run_node_present=True
+[OK  ] diagnosis-query: http=200 diagnosis_status=INCONCLUSIVE disposition=NEEDS_MORE_EVIDENCE
+[OK  ] run-details: http=200 status=COMPLETED steps=7 verdict=PASSED report_stages=['testcase', 'cleanup_pre', 'execution', 'verdict', 'graph', 'diagnosis', 'repair', 'cleanup', 'event_persistence', 'evidence_persistence', 'event_persistence', 'evidence_persistence']
+[OK  ] negative-control: http=201 verdict=FAILED run=run_20261126152559385409_ceebd2 failed_assertions=['a5'] actions_ok=True action_steps=4
+[OK  ] cancel-and-recover: observed_state=PREPARING cancelled_run=run_20261126152601515624_f7b40f run_status=CANCELLED verdict=None cleanup_stage=True | retry_run=run_20261126152601729941_989c75 retry_verdict=PASSED evidence_written=15 new_run_id=True
+[OK  ] no-plaintext-secret: files_scanned=14 leaks=[]
+[OK  ] product-data-untouched: path=data\traceguard.db identical=True
+
+======================================================================
+  PASS isolation-layout           work=.traceguard-tmp\r5\review54-first\product cases_before=0 outside_data_dir=0
+  PASS teamflow-isolated-up       url=http://127.0.0.1:57290 db=.traceguard-tmp\r5\review54-first\product\teamflow
+  PASS platform-up                url=http://127.0.0.1:57304 db=.traceguard-tmp\r5\review54-first\product\platform
+  PASS frontend-built             dist/index.html exists=True bytes=711 has_app_mount=True
+  PASS frontend-served            GET / -> 200 bytes=727 references_assets=True
+  PASS workbench-ui-loads         mount_children=1 text_len=589 console_errors=[]
+  PASS explore-real-browser       http=201 id=exp_7f198b30db0f status=COMPLETED goal=VERIFIED stop=GOAL_VERIFIED s
+  PASS trace-structured           http=200 observations=5 actions=5 hash_hex_len=64 integrity=True no_plaintext_se
+  PASS compile-candidate          http=201 candidate=cand_2d7065e72e status=PENDING_REVIEW steps=7 assertions=5 or
+  PASS no-case-before-review      cases_in_library=[] POST /chains -> 404 blocked=NOT_FOUND
+  PASS human-approval             http=200 status=APPROVED case_file=TC-E2E-20261126152548.json reviewer=e2e-revie
+  PASS formal-case-written        http=200 version=1 approved_by=e2e-reviewer:R5-4-5-REV-20261126152548 compiled_f
+  PASS chain-executed             http=201 chain=chain_20261126152555984119_TC-E2E-20261126152548 run=run_20261126
+  PASS oracle-business-verdict    verdict=PASSED state_oracle=a5:PASSED url_oracle=PASSED evaluated=5/5 observed_p
+  PASS events-persisted           http=200 rows=42 own_run=42 written=27 duplicates=0 status=OK
+  PASS evidence-persisted         http=200 records=15 types=['dom_snapshot', 'network_response', 'screenshot'] wri
+  PASS blob-integrity             blobs_checked=7 full_sha256=True problems=[]
+  PASS graph-query                nodes=10 subgraph_nodes=9 subgraph_edges=8 run_node_present=True
+  PASS diagnosis-query            http=200 diagnosis_status=INCONCLUSIVE disposition=NEEDS_MORE_EVIDENCE
+  PASS run-details                http=200 status=COMPLETED steps=7 verdict=PASSED report_stages=['testcase', 'cle
+  PASS negative-control           http=201 verdict=FAILED run=run_20261126152559385409_ceebd2 failed_assertions=['
+  PASS cancel-and-recover         observed_state=PREPARING cancelled_run=run_20261126152601515624_f7b40f run_statu
+  PASS no-plaintext-secret        files_scanned=14 leaks=[]
+  PASS product-data-untouched     path=data\traceguard.db identical=True
+======================================================================
+ total=24 passed=24 failed=0 skipped=0
+ report: .traceguard-tmp\r5\review54-first\product\result.md
+ RESULT: PASS

@@ -1,0 +1,6 @@
+# python.exe -m mypy packages apps benchmark --ignore-missing-imports
+exit=1 duration=1.1s
+
+packages\agents\goal_assertions.py:368: error: Argument 1 to "get" of "dict" has incompatible type "Any | None"; expected "str"  [arg-type]
+packages\agents\goal_assertions.py:368: error: Argument 2 to "get" of "dict" has incompatible type "Any | str"; expected "None"  [arg-type]
+Found 2 errors in 1 file (checked 85 source files)

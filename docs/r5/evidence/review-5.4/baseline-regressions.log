@@ -1,0 +1,17 @@
+Baseline 8064c945; post-fix regression tests against original runtime modules
+Traceback (most recent call last):
+  File "D:\桌面\TraceGuard\traceguard\.traceguard-tmp\r5\review54-baseline\baseline.py", line 12, in <module>
+    spec.loader.exec_module(module)
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "D:\桌面\TraceGuard\traceguard\.traceguard-tmp\r5\review54-baseline\apps.api.main.py", line 182, in <module>
+    app = build_app()
+  File "D:\桌面\TraceGuard\traceguard\.traceguard-tmp\r5\review54-baseline\apps.api.main.py", line 40, in build_app
+    require_authorized_startup(settings)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "D:\桌面\TraceGuard\traceguard\packages\core\config.py", line 79, in require_authorized_startup
+    raise RuntimeError(
+        "services must be started by the validated official scripts.serve entrypoint"
+    )
+RuntimeError: services must be started by the validated official scripts.serve entrypoint
