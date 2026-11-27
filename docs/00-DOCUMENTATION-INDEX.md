@@ -2,7 +2,7 @@
 
 本目录汇集项目全部规格、设计、调研与验收文档。按阅读顺序组织。
 
-最新增量验收：[R5-5.5 实施与验收总报告](r5/R5-5.5-实施与验收总报告.md)；包含独立业务状态证据、SUT 与 Sandbox 数据隔离、shared/separate 离线备份恢复、真实浏览器手工 Repair/Rollback 闭环，以及 C/D 设计决策包。Windows 本机 all-mode aggregate 已通过（Python 973 / 4 skipped、Security 216、Product 24、Browser 150）；新提交 CI 状态以推送后的核验结果补充。此前 [R5-5.3 F6/F7 最终攻坚验收记录](r5/R5-5.3-F6-F7-最终攻坚验收记录.md) 保留为历史事实。
+最新增量验收：[R5-5.5 实施与验收总报告](r5/R5-5.5-实施与验收总报告.md)；包含独立业务状态证据、SUT 与 Sandbox 数据隔离、shared/separate 离线备份恢复、真实浏览器手工 Repair/Rollback 闭环，以及 C/D 设计决策包。Windows 本机 all-mode aggregate 已通过（Python 973 / 4 skipped、Security 216、Product 24、Browser 150）；代码提交 `a17e5e8` 的 GitHub Actions run `45959725118` 为 5/5 jobs success。此前 [R5-5.3 F6/F7 最终攻坚验收记录](r5/R5-5.3-F6-F7-最终攻坚验收记录.md) 保留为历史事实。
 
 ## 1. 项目规格与设计（docs/design/，原始资料保留）
 
