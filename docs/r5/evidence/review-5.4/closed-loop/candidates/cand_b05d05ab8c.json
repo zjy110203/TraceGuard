@@ -1,0 +1,560 @@
+{
+  "candidate_id": "cand_b05d05ab8c",
+  "case_id": "TC-CAND-93EF679899",
+  "title": "compiled from exp_adf4f371baab",
+  "intent": {
+    "intent_id": "journey:login",
+    "description": "登录 TeamFlow 并进入项目列表",
+    "source_ref": "journey:login",
+    "goal": "登录 TeamFlow 并进入项目列表",
+    "expected_outcomes": [
+      "项目列表"
+    ],
+    "target": "/projects",
+    "required_assertions": [],
+    "constraints": [
+      "只允许访问 base_url 的 origin，禁止跳转到外部站点",
+      "凭据只从受信配置读取，动作记录必须脱敏",
+      "每次探索必须有步数与时长上限，超限即停止"
+    ]
+  },
+  "steps": [
+    {
+      "step_id": "s1",
+      "action": "navigate",
+      "target": "http://127.0.0.1:60638/",
+      "value": "",
+      "expected": "",
+      "value_ref": ""
+    },
+    {
+      "step_id": "s2",
+      "action": "fill",
+      "target": "[data-testid=username]",
+      "value": "tester",
+      "expected": "",
+      "value_ref": ""
+    },
+    {
+      "step_id": "s3",
+      "action": "fill",
+      "target": "[data-testid=password]",
+      "value": "",
+      "expected": "",
+      "value_ref": "teamflow.password"
+    },
+    {
+      "step_id": "s4",
+      "action": "click",
+      "target": "[data-testid=login-submit]",
+      "value": "",
+      "expected": "",
+      "value_ref": ""
+    },
+    {
+      "step_id": "s5",
+      "action": "assert_visible",
+      "target": "[data-testid=new-project-link]",
+      "value": "",
+      "expected": "",
+      "value_ref": ""
+    },
+    {
+      "step_id": "s6",
+      "action": "assert_not_visible",
+      "target": "[data-testid=login-submit]",
+      "value": "",
+      "expected": "",
+      "value_ref": ""
+    },
+    {
+      "step_id": "s7",
+      "action": "assert_text",
+      "target": "body",
+      "value": "项目列表",
+      "expected": "",
+      "value_ref": ""
+    }
+  ],
+  "assertions": [
+    {
+      "assertion_id": "a1",
+      "description": "页面到达目标路径 /projects",
+      "required": true,
+      "source_ref": "",
+      "notes": []
+    },
+    {
+      "assertion_id": "a2",
+      "description": "目标页面元素 new-project-link 可见",
+      "required": true,
+      "source_ref": "",
+      "notes": []
+    },
+    {
+      "assertion_id": "a3",
+      "description": "来源页面控件 login-submit 已不再显示（状态已完成切换）",
+      "required": true,
+      "source_ref": "",
+      "notes": []
+    },
+    {
+      "assertion_id": "a4",
+      "description": "页面显示预期结果：项目列表",
+      "required": true,
+      "source_ref": "",
+      "notes": []
+    }
+  ],
+  "oracle_bindings": [
+    {
+      "assertion_id": "a1",
+      "primary": {
+        "oracle_id": "o-url-path",
+        "source_type": "ui",
+        "source_ref": "ui.url_path",
+        "expected": "PASSED",
+        "version": "1.0.0",
+        "source": "intent.target (human-declared); observed in exp_adf4f371baab",
+        "approved_by": "",
+        "approved": false,
+        "expected_value": "/projects"
+      },
+      "supporting": [],
+      "adjudication_rule": "frozen_fallback_inconclusive_on_conflict"
+    },
+    {
+      "assertion_id": "a2",
+      "primary": {
+        "oracle_id": "o-s5-visible",
+        "source_type": "ui",
+        "source_ref": "ui.s5.passed",
+        "expected": "PASSED",
+        "version": "1.0.0",
+        "source": "observed in trace exp_adf4f371baab after /projects",
+        "approved_by": "",
+        "approved": false,
+        "expected_value": true
+      },
+      "supporting": [],
+      "adjudication_rule": "frozen_fallback_inconclusive_on_conflict"
+    },
+    {
+      "assertion_id": "a3",
+      "primary": {
+        "oracle_id": "o-s6-hidden",
+        "source_type": "ui",
+        "source_ref": "ui.s6.passed",
+        "expected": "PASSED",
+        "version": "1.0.0",
+        "source": "observed before/after transition in exp_adf4f371baab",
+        "approved_by": "",
+        "approved": false,
+        "expected_value": true
+      },
+      "supporting": [],
+      "adjudication_rule": "frozen_fallback_inconclusive_on_conflict"
+    },
+    {
+      "assertion_id": "a4",
+      "primary": {
+        "oracle_id": "o-s7-text",
+        "source_type": "ui",
+        "source_ref": "ui.s7.passed",
+        "expected": "PASSED",
+        "version": "1.0.0",
+        "source": "intent.expected_outcomes (human) + observed text",
+        "approved_by": "",
+        "approved": false,
+        "expected_value": true
+      },
+      "supporting": [],
+      "adjudication_rule": "frozen_fallback_inconclusive_on_conflict"
+    }
+  ],
+  "cleanup": {
+    "strategy": "eval_reset",
+    "reset_endpoint": "/__eval__/data/reset"
+  },
+  "source_exploration_id": "exp_adf4f371baab",
+  "source_trace_hash": "sha256:d480858946f04ed528d449094341fc467396460583307eaa66658393ef679899",
+  "compiler_version": "1.2.0",
+  "prompt_version": "none",
+  "model_version": "deterministic-rules-NOT-LLM",
+  "locator_strategy_version": "1.0.0",
+  "reviewer": "journey-reviewer",
+  "approval_record": "REV-JOURNEY-001",
+  "uncertainty_notes": [
+    "s3: sensitive input bound to data ref 'teamflow.password'; plaintext is supplied by the test-data provider at run time",
+    "s5: snapshot is observation-only, not an assertion",
+    "business persistence NOT verified (no independent state assertion supplied in intent.required_assertions)"
+  ],
+  "created_at": "2026-11-26T15:12:27.057536+00:00",
+  "target": "/projects",
+  "observations": [
+    {
+      "url": "http://127.0.0.1:60638/",
+      "url_path": "/",
+      "title": "TeamFlow 登录",
+      "visible_testids": [
+        "username",
+        "password",
+        "login-submit"
+      ],
+      "visible_elements": [
+        {
+          "tag": "input",
+          "testid": "username",
+          "name": "username",
+          "type": "",
+          "role": "",
+          "sensitive": false,
+          "visible": true,
+          "disabled": false
+        },
+        {
+          "tag": "input",
+          "testid": "password",
+          "name": "«redacted»",
+          "role": "",
+          "sensitive": true,
+          "visible": true,
+          "disabled": false
+        },
+        {
+          "tag": "button",
+          "testid": "login-submit",
+          "name": "登录",
+          "type": "submit",
+          "role": "",
+          "sensitive": false,
+          "visible": true,
+          "disabled": false
+        }
+      ],
+      "dom_counts": {
+        "table_row_count": 0,
+        "list_item_count": 0,
+        "button_count": 1,
+        "input_count": 2
+      },
+      "dom_relations": [],
+      "attrs": [
+        {
+          "testid": "username",
+          "role": "",
+          "sensitive": false,
+          "href": ""
+        },
+        {
+          "testid": "password",
+          "role": "",
+          "sensitive": true
+        },
+        {
+          "testid": "login-submit",
+          "role": "",
+          "sensitive": false,
+          "href": ""
+        }
+      ],
+      "selector_counts": {},
+      "page_state": "loaded",
+      "previous_url_path": "/",
+      "text_excerpt": "TeamFlow\n\n受控被测应用 · 项目协作最小闭环\n\n用户名 \n密码 \n登录",
+      "state_summary": "TeamFlow 登录 @ / | 3 testids | 3 elements",
+      "observed_at": "2026-11-26T15:12:26.453920+00:00",
+      "step_index": 2,
+      "step_id": "step-2",
+      "phase": "post",
+      "evidence_ref": "",
+      "observation_ref": "obs_1dc5b15f2acd988238b47ce6"
+    },
+    {
+      "url": "http://127.0.0.1:60638/",
+      "url_path": "/",
+      "title": "TeamFlow 登录",
+      "visible_testids": [
+        "username",
+        "password",
+        "login-submit"
+      ],
+      "visible_elements": [
+        {
+          "tag": "input",
+          "testid": "username",
+          "name": "username",
+          "type": "",
+          "role": "",
+          "sensitive": false,
+          "visible": true,
+          "disabled": false
+        },
+        {
+          "tag": "input",
+          "testid": "password",
+          "name": "«redacted»",
+          "role": "",
+          "sensitive": true,
+          "visible": true,
+          "disabled": false
+        },
+        {
+          "tag": "button",
+          "testid": "login-submit",
+          "name": "登录",
+          "type": "submit",
+          "role": "",
+          "sensitive": false,
+          "visible": true,
+          "disabled": false
+        }
+      ],
+      "dom_counts": {
+        "table_row_count": 0,
+        "list_item_count": 0,
+        "button_count": 1,
+        "input_count": 2
+      },
+      "dom_relations": [],
+      "attrs": [
+        {
+          "testid": "username",
+          "role": "",
+          "sensitive": false,
+          "href": ""
+        },
+        {
+          "testid": "password",
+          "role": "",
+          "sensitive": true
+        },
+        {
+          "testid": "login-submit",
+          "role": "",
+          "sensitive": false,
+          "href": ""
+        }
+      ],
+      "selector_counts": {},
+      "page_state": "loaded",
+      "previous_url_path": "/",
+      "text_excerpt": "TeamFlow\n\n受控被测应用 · 项目协作最小闭环\n\n用户名 \n密码 \n登录",
+      "state_summary": "TeamFlow 登录 @ / | 3 testids | 3 elements",
+      "observed_at": "2026-11-26T15:12:26.472828+00:00",
+      "step_index": 3,
+      "step_id": "step-3",
+      "phase": "post",
+      "evidence_ref": "",
+      "observation_ref": "obs_652c47c116c4ad9dd56cb5a1"
+    },
+    {
+      "url": "http://127.0.0.1:60638/projects",
+      "url_path": "/projects",
+      "title": "项目列表 · TeamFlow",
+      "visible_testids": [
+        "new-project-link",
+        "project-list"
+      ],
+      "visible_elements": [
+        {
+          "tag": "a",
+          "testid": "new-project-link",
+          "name": "新建项目",
+          "type": "",
+          "role": "",
+          "sensitive": false,
+          "visible": true,
+          "disabled": false
+        },
+        {
+          "tag": "a",
+          "testid": "",
+          "name": "退出",
+          "type": "",
+          "role": "",
+          "sensitive": false,
+          "visible": true,
+          "disabled": false
+        },
+        {
+          "tag": "ul",
+          "testid": "project-list",
+          "name": "",
+          "type": "",
+          "role": "",
+          "sensitive": false,
+          "visible": true,
+          "disabled": false
+        }
+      ],
+      "dom_counts": {
+        "table_row_count": 0,
+        "list_item_count": 0,
+        "button_count": 0,
+        "input_count": 0
+      },
+      "dom_relations": [],
+      "attrs": [
+        {
+          "testid": "new-project-link",
+          "role": "",
+          "sensitive": false,
+          "href": "/projects/new"
+        },
+        {
+          "testid": "project-list",
+          "role": "",
+          "sensitive": false,
+          "href": ""
+        }
+      ],
+      "selector_counts": {},
+      "page_state": "loaded",
+      "previous_url_path": "/",
+      "text_excerpt": "项目列表\n新建项目 | 退出",
+      "state_summary": "项目列表 · TeamFlow @ /projects | 2 testids | 3 elements",
+      "observed_at": "2026-11-26T15:12:26.644558+00:00",
+      "step_index": 4,
+      "step_id": "step-4",
+      "phase": "post",
+      "evidence_ref": "",
+      "observation_ref": "obs_c726f83ae4fdfe32c9728f54"
+    },
+    {
+      "url": "http://127.0.0.1:60638/projects",
+      "url_path": "/projects",
+      "title": "项目列表 · TeamFlow",
+      "visible_testids": [
+        "new-project-link",
+        "project-list"
+      ],
+      "visible_elements": [
+        {
+          "tag": "a",
+          "testid": "new-project-link",
+          "name": "新建项目",
+          "type": "",
+          "role": "",
+          "sensitive": false,
+          "visible": true,
+          "disabled": false
+        },
+        {
+          "tag": "a",
+          "testid": "",
+          "name": "退出",
+          "type": "",
+          "role": "",
+          "sensitive": false,
+          "visible": true,
+          "disabled": false
+        },
+        {
+          "tag": "ul",
+          "testid": "project-list",
+          "name": "",
+          "type": "",
+          "role": "",
+          "sensitive": false,
+          "visible": true,
+          "disabled": false
+        }
+      ],
+      "dom_counts": {
+        "table_row_count": 0,
+        "list_item_count": 0,
+        "button_count": 0,
+        "input_count": 0
+      },
+      "dom_relations": [],
+      "attrs": [
+        {
+          "testid": "new-project-link",
+          "role": "",
+          "sensitive": false,
+          "href": "/projects/new"
+        },
+        {
+          "testid": "project-list",
+          "role": "",
+          "sensitive": false,
+          "href": ""
+        }
+      ],
+      "selector_counts": {},
+      "page_state": "loaded",
+      "previous_url_path": "/projects",
+      "text_excerpt": "项目列表\n新建项目 | 退出",
+      "state_summary": "项目列表 · TeamFlow @ /projects | 2 testids | 3 elements",
+      "observed_at": "2026-11-26T15:12:26.664178+00:00",
+      "step_index": 4,
+      "step_id": "step-4",
+      "phase": "post",
+      "evidence_ref": "",
+      "observation_ref": "obs_4d11582c1f122c7bca6eb661"
+    }
+  ],
+  "data_refs": [
+    {
+      "ref_id": "teamflow.password",
+      "locator": "[data-testid=password]",
+      "value": ""
+    }
+  ],
+  "review_checklist": [
+    {
+      "id": "chk-target-path",
+      "text": "确认目标路径 '/projects' 是人类声明的业务成功页面（来源：intent.target，非探索观察结果）",
+      "required": true
+    },
+    {
+      "id": "chk-destination-marker",
+      "text": "确认 new-project-link 是目标页面的稳定标识（而非临时元素）",
+      "required": true
+    },
+    {
+      "id": "chk-oracle-basis",
+      "text": "逐条确认每个正式 Oracle 的来源与预期值（value_ref / expected_value / source）",
+      "required": true
+    }
+  ],
+  "goal_status": "VERIFIED",
+  "goal_checks": [
+    {
+      "name": "target_path",
+      "expected": "/projects",
+      "observed": "/projects",
+      "ok": true,
+      "evaluated": true,
+      "deferred": false,
+      "evidence": "observations[4].url_path",
+      "note": ""
+    },
+    {
+      "name": "expected_outcome",
+      "expected": "项目列表",
+      "observed": "项目列表\n新建项目 | 退出",
+      "ok": true,
+      "evaluated": true,
+      "deferred": false,
+      "evidence": "observations[4].text_excerpt",
+      "note": ""
+    }
+  ],
+  "goal_reason": "",
+  "status": "APPROVED",
+  "compiled_from": "exploration:exp_adf4f371baab",
+  "case_file": "TC-CAND-93EF679899.json",
+  "reviewed_at": "2026-11-26T15:12:27.835264+00:00",
+  "rejection_reason": "",
+  "trace_integrity_verified": true,
+  "reviewer_is_local_audit_field": true,
+  "review_confirmed": [
+    "chk-destination-marker",
+    "chk-oracle-basis",
+    "chk-target-path"
+  ],
+  "uncertainty_acknowledged": true,
+  "review_transaction_id": "aa3d426bb7ea4f72bd87391c7a3dab91"
+}

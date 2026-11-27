@@ -1,0 +1,73 @@
+{
+  "workspace": "D:\\桌面\\TraceGuard\\traceguard\\.traceguard-tmp\\r5\\f7-closed-loop\\c980608576fe4417b72cfed2aef90256",
+  "stages": {
+    "initial_run": "PASSED",
+    "failed_run": "FAILED",
+    "diagnosis": "PROBABLE",
+    "validate": "VALIDATED",
+    "submit": "PENDING_APPROVAL",
+    "replay": "PASSED",
+    "promotion": "PROMOTED",
+    "regression": "PASSED",
+    "rollback": "ROLLED_BACK",
+    "rollback_execution": "FAILED (expected: v1 selector under v2 UI)"
+  },
+  "restarts": [
+    {
+      "after_promotion": "PASS",
+      "file_hashes": {
+        "TC-CAND-93EF679899.json": "5952bd4231698f8d39839f755e8a8ed30668ee0fb2c3493042ad25ee3afccaaa",
+        "TC-CAND-93EF679899.v2.json": "b9621d21019fb68b215ed536e9217ef46356045ad995cee01211200b4bcad02f"
+      }
+    },
+    {
+      "after_rollback": "PASS",
+      "immutable_history": "PASS"
+    }
+  ],
+  "explorer_id": "exp_adf4f371baab",
+  "candidate_id": "cand_b05d05ab8c",
+  "testcase_id": "TC-CAND-93EF679899",
+  "failed_run_id": "run_20261126151231393446_33f572",
+  "diagnosis_id": "dg_run_20261126151231393446_33f572",
+  "hypothesis_id": "h-locator-missing",
+  "evidence_refs": [
+    "evd_13d47b016f6a",
+    "evd_b4ef6b9cff37"
+  ],
+  "repair_proposal_id": "rp_4ae536cab2c1",
+  "replay_id": "replay_2805edb58cf2436db017a767dbdc6303",
+  "promotion_id": "promotion_f36d78a125f9438fb32659e94430eeaa",
+  "regression_run_id": "run_20261126151320904112_385750",
+  "rollback_id": "rollback_9dcb980277774a10a74de435a3c14773",
+  "rollback_run_id": "run_20261126151325486162_a6b1db",
+  "candidate_transaction_id": "aa3d426bb7ea4f72bd87391c7a3dab91",
+  "persistent_hashes": {
+    "cases\\TC-CAND-93EF679899.json": "5952bd4231698f8d39839f755e8a8ed30668ee0fb2c3493042ad25ee3afccaaa",
+    "cases\\TC-CAND-93EF679899.v2.json": "b9621d21019fb68b215ed536e9217ef46356045ad995cee01211200b4bcad02f",
+    "cases\\TC-CAND-93EF679899.v3.json": "094a375a7ddd92740facfcb5f867d1002baec8b524dd7737528672f964a5aceb",
+    "candidates\\cand_b05d05ab8c.json": "b3a81e2e327c39d4c1144a078683e168dc0b023a752c9c9c63fd6b07e216d321",
+    "candidates\\transactions\\cand_b05d05ab8c.json": "709c0ed9529f636ead7e7892c236f9004d28a47605ccdf110a426f15190fb748",
+    "chains\\chain_20261126151228041797_TC-CAND-93EF679899.json": "e5a00535d95fc1c1e0392823b93230b971439f6b9144714b44bb75e66113d982",
+    "chains\\chain_20261126151231434705_TC-CAND-93EF679899.json": "8548c37c776383bc694f2f708582173aa9bba1fe52fe55943e48207202c4fe4c",
+    "chains\\chain_20261126151320930327_TC-CAND-93EF679899.json": "db22f8959082b6fde49a24cd0675b53dfe9ce5b26ea4b93c19fe57cf19c08024",
+    "chains\\chain_20261126151325509523_TC-CAND-93EF679899.json": "11e0b27031cd4ef536e82dbda6d63257a3bdf92f9a48786873fbccd614648a3a",
+    "explorations\\exp_adf4f371baab.json": "c803562866925d6c701e17641b00a8c8e735d5de96eec391fc37349d4cce0371",
+    "benchmark\\repairs.jsonl": "7cc6557e8b79aa66743c3773fd4f9788aa3b948e392c33d15a3b3b993f84dde2",
+    "benchmark\\diagnoses\\dg_run_20261126151228004802_c97638.json": "3a269741097c855d3a04865831b3c9e87e65b93c7ad22d5b958755a19c51217a",
+    "benchmark\\diagnoses\\dg_run_20261126151231393446_33f572.json": "f91468d59c1fb0e1a2de21c496933405c7cc7c3788fcada532b89a1f8b6d2e17"
+  },
+  "status": "PASS",
+  "review_audit": {
+    "reviewer": "journey-reviewer",
+    "reviewed_at": "2026-11-26T15:12:27.835264+00:00",
+    "approval_record": "REV-JOURNEY-001",
+    "review_confirmed": [
+      "chk-destination-marker",
+      "chk-oracle-basis",
+      "chk-target-path"
+    ],
+    "uncertainty_acknowledged": true
+  },
+  "candidate_formal_sha256": "5952bd4231698f8d39839f755e8a8ed30668ee0fb2c3493042ad25ee3afccaaa"
+}

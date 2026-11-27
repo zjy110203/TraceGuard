@@ -1,0 +1,42 @@
+{
+  "base": "8064c945962b4de91936cea82adc9bd94849009e",
+  "reviewed": "425148946604804a946664c4dabe627884dd004e",
+  "unchanged": {
+    "packages/agents/scenarios.py": true,
+    "packages/agents/scenario_paths_v21.py": true,
+    "packages/agents/compiler.py": true,
+    "apps/api/candidate_api.py": true
+  },
+  "default_scenarios": [
+    {
+      "id": "teamflow-login",
+      "version": "2.0.0",
+      "digest": "8d6adfa14b0dd93f6bcfa1e150399f81adfd0db608e2c820b55a58fc22387d30"
+    },
+    {
+      "id": "project-create",
+      "version": "2.0.0",
+      "digest": "e6acbbb7e158b28277ef32a4e4425ccdb5ae53cca17cff717bb3b5801687d826"
+    },
+    {
+      "id": "project-query",
+      "version": "2.0.0",
+      "digest": "901435173065204fe484caf2a654f54102a44f182f40645d7dc6458b1fe8f179"
+    },
+    {
+      "id": "page-navigation",
+      "version": "2.0.0",
+      "digest": "add3d349dbe73bb74356346344f2a61513cec2468d0fd708f81e27d16abfa4d9"
+    },
+    {
+      "id": "project-edit",
+      "version": "2.0.0",
+      "digest": "a91d8119da924ba506c2ae61ce38aa7922ea86d5bde02b43217f69867c849509"
+    },
+    {
+      "id": "form-validation",
+      "version": "1.0.0",
+      "digest": "e0fff7ae5b7b0c50d23182f04f0921139e1107d16e740163dbdc9101637399af"
+    }
+  ]
+}
